@@ -98,7 +98,8 @@ class ScriptedModel:
         request = next(m["content"] for m in messages if m["role"] == "user")
         name, result = _last_tool_exchange(messages)
         if name is None:
-            query = re.sub(r"\b(buy|me|a|an|the|please|under|below|for|\d[\d,]*|₹|inr|usd|\$)\b", " ", request.lower())
+            query = re.sub(r"[₹€$]", " ", request.lower())
+            query = re.sub(r"\b(buy|me|a|an|the|please|under|below|for|\d[\d,]*|inr|usd|eur)\b", " ", query)
             return self._tool("search_products", {"query": " ".join(query.split()) or request, "limit": 5},
                               "Looking through the merchant's catalogue.")
         if result is not None and "error" in result and name != "get_offer":

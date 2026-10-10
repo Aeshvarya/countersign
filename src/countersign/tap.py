@@ -188,7 +188,7 @@ def verify(
     if tag not in TAGS:
         return Rejection("unknown tag")
     if require_tag and tag != require_tag:
-        return Rejection(f"this action needs a {require_tag} signature, not {tag}")
+        return Rejection(f"this action is tagged {tag}; it needs {require_tag}")
     if not (isinstance(nonce, str) and nonce and isinstance(key_id, str) and key_id):
         return Rejection("the signature has no nonce or key id")
     if not (isinstance(created, int) and isinstance(expires, int)):
