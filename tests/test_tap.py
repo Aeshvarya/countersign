@@ -52,6 +52,18 @@ class WireFormatTest(unittest.TestCase):
         key.public_key().verify(raw, base.encode())  # raises if wrong
 
 
+    def test_fixed_vector_checked_against_visas_reference_code(self):
+        # Same inputs verified by Visa's cdn-proxy and tap-agent in scripts/tap_interop.py
+        # (2026-10-11). Ed25519 is deterministic, so any change to the wire format breaks this.
+        key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+        s = tap.sign(key, authority="shop.example", path="/checkout", key_id="k1",
+                     signature_agent="https://agents.example", tag=tap.PAY, now=1793000000, nonce="vector-1")
+        self.assertEqual(
+            s.signature,
+            "sig2=:vt3Uuo7lVDi9+ctR1S+5JII2+u1ht60REWuHoLZO+6ODL+JmShSLpbfiVD4fPxZsZ8aQDcSWZAN5tRJMkbyhBw==:",
+        )
+
+
 class VerifyTest(unittest.TestCase):
     def test_a_signed_agent_is_accepted(self):
         key, d, n = setup()
