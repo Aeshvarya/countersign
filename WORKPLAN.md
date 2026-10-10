@@ -19,9 +19,9 @@ Every task is written so either builder can pick it up cold: why it exists, what
 |---|---|---|---|---|---|
 | A1 | Contracts C1–C7 and the offline core | tech | 6 | Sat 10-10 | done 10-10 |
 | A2 | Rate-lock spike on the sandbox | tech | 2 | Mon 10-12 | todo |
-| A3 | TAP interop with Visa's reference verifier | tech | 2 | Tue 10-13 | todo |
-| A4 | The shopping agent (Claude) | tech | 6 | offline Sat 10-17, live Sun 11-01 | todo |
-| A5 | Shopper screens: approve and ask-again | tech | 4 | Sun 10-18, final Thu 11-05 | todo |
+| A3 | TAP interop with Visa's reference verifier | tech | 2 | Tue 10-13 | done 10-11: both directions pass (`scripts/tap_interop.py`), fixed vector in tests |
+| A4 | The shopping agent (Claude) | tech | 6 | offline Sat 10-17, live Sun 11-01 | offline done 10-11 (scripted model, in-process edge); `HttpShop` written against C7, waits on V2; live Claude run waits on an API key |
+| A5 | Shopper screens: approve and ask-again | tech | 4 | Sun 10-18, final Thu 11-05 | v1 done 10-11: `uvicorn countersign.web.app:app`; identity from V8 still to apply |
 | A6 | Payment: intent + rate lock + hosted component | tech | 4 | spike Sat 10-24, done Mon 11-02 | todo |
 | A7 | Hosted demo | tech | 3 | Fri 11-06 | todo |
 | A8 | Application text, with V ✍ | non-tech | 1.5 | Tue 10-20 | todo |
@@ -45,7 +45,7 @@ V = Varunika, A = Aeshvarya. One point ≈ one focused hour; estimates for balan
 2. **Small commits, pushed as they happen.** The message says why. Each builder commits as themselves. No trailers.
 3. **Merge with a merge commit** (`git merge --no-ff`), never a squash, so authorship survives.
 4. **Self-merge** when CI is green and the branch touches only your paths (see Ownership). Touching the other's paths needs their review; no reply in 24 hours counts as approval.
-5. **Contracts C1–C7 freeze Sun 2026-10-18.** Changing one after that needs the other builder's OK in PROGRESS.md first.
+5. **Contracts C1–C8 freeze Sun 2026-10-18.** Changing one after that needs the other builder's OK in PROGRESS.md first.
 6. **Tests run offline:** no network, no keys. Live calls sit behind CLI flags or env, and tests use the fakes.
 7. **Secrets never land** in the repo, a log, a screenshot or a recording.
 8. **Feature freeze Tue 2026-11-10.** After that, only fixes.
@@ -57,11 +57,12 @@ V = Varunika, A = Aeshvarya. One point ≈ one focused hour; estimates for balan
 |---|---|
 | `terms.py`, `decide.py`, `checkout.py`, `wire.py` | Aeshvarya (contracts: changes need V's OK after 10-18) |
 | `tap.py` | Shared. Aeshvarya owns `sign`; Varunika owns `verify`, the directory and the nonce cache |
-| `fx.py`, `airwallex.py` | Aeshvarya |
+| `fx.py`, `airwallex.py`, `receipt.py` | Aeshvarya |
 | `merchant.py` | Shared. Interface and `FakeMerchant`: Aeshvarya. `AirwallexMerchant` (new file `airwallex_merchant.py`): Varunika |
 | `agent/` (new) | Aeshvarya |
 | `edge/` (new: the merchant HTTP API) | Varunika |
-| `web/` (new: shopper screens) | Aeshvarya; visual identity applied by Varunika |
+| `web/` (shopper screens + demo app) | Aeshvarya; visual identity applied by Varunika |
+| `scripts/tap_interop.py` | Aeshvarya |
 | `tests/` | Each builder the tests for their own modules |
 | `.github/`, `Dockerfile` | Aeshvarya |
 | `SPEC.md` claim, README top | Varunika |
@@ -81,6 +82,7 @@ The seams between the two halves. They are on `main` now, in code, with tests, s
 | C5 | `decide(approval, live, now) → Decision` (proceed / reask / refuse) | `decide.py` | `test_decide.py` |
 | C6 | `countersign(merchant, approval, key, now) → Result`: idempotency first, then offer, decide, pay | `checkout.py` | `test_checkout.py` |
 | C7 | JSON on the wire; amounts as strings; the merchant HTTP API below | `wire.py` | `test_wire.py` |
+| C8 | Countersigned receipt: the merchant signs agent identity + approval hash + charge + order number; `receipt.verify` checks it offline | `receipt.py` | `test_receipt.py` |
 
 ### C7 · Merchant HTTP API (proposed; V2 builds it, A4 calls it)
 
@@ -90,10 +92,10 @@ Every request carries TAP headers. A failed check returns `401 {"refused": "<rea
 |---|---|---|
 | `GET /products?q=&limit=` | `agent-browser-auth` | → `[product]` |
 | `POST /offers` | `agent-browser-auth` | `{"cart": {"sku": qty}, "shopper_currency": "INR"}` → `terms` |
-| `POST /checkout` | `agent-payer-auth` | `{"approval": approval, "idempotency_key": "..."}` → `{"decision": decision, "order": order or null}` |
+| `POST /checkout` | `agent-payer-auth` | `{"approval": approval, "idempotency_key": "..."}` → `{"decision": decision, "order": order or null, "receipt": receipt or null}` |
 | `GET /orders/{idempotency_key}` | `agent-payer-auth` | → `order` or `404` |
 
-Shapes are the `*_to_json` functions in `wire.py`.
+Shapes are the `*_to_json` functions in `wire.py`; the receipt is `receipt.sign(...)`'s output. The TAP-signed path is the request path **including its query string** (Visa's proxy signs `req.url`). The agent side of this contract is already written: `agent/shop.py` `HttpShop`. V2 is done when `HttpShop` pointed at the edge passes the same flow `LocalShop` does in `tests/test_agent.py`.
 
 ## Aeshvarya's tasks
 

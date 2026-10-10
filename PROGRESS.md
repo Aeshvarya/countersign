@@ -13,10 +13,10 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-10-10_
+_Updated 2026-10-11_
 
-- **State:** the offline core runs end to end. `python -m countersign demo` shows both contrast pairs: same cart → proceeds when the rate moves under the ceiling, asks again past it or when delivery slips; same checkout → a TAP-signed agent is accepted, an unsigned bot, a replayed signature and a signature for another page are refused. 35 tests pass offline. Nothing has run against Airwallex yet.
-- **Next action:** Varunika: V1 (confirm or counter the split, by Mon 10-12), then V2. Aeshvarya: A2 with sandbox keys, then A3.
+- **State:** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 55 tests pass offline. Nothing has run against Airwallex yet.
+- **Next action:** Varunika: accept the repo invite, V1 (by Mon 10-12), then V2: the C7 edge; `HttpShop` is already written to call it. Aeshvarya: sandbox keys into `.env`, then A2.
 - **Waiting on:** Airwallex devhelp for merchant-side Agentic Commerce enablement and Airi CLI access (requested 2026-10-10, auto-reply only).
 - **Deadline:** Fri 2026-11-13 23:59 IST. **Target submission: Thu 2026-11-12.** Plan: [WORKPLAN.md](WORKPLAN.md).
 
@@ -30,6 +30,9 @@ _Updated 2026-10-10_
 - **2026-10-10** Python ≥ 3.11. Core is the standard library plus `cryptography`; Claude, FastAPI and uvicorn are extras. Tests are offline with fakes. (Aeshvarya)
 - **2026-10-10** The model never sets an amount, a limit or an outcome. (Aeshvarya)
 - **2026-10-10** Repo `Aeshvarya/countersign`, private until 2026-11-11. Each builder commits as themselves. (Aeshvarya)
+- **2026-10-11** The merchant signs a receipt at charge time (C8): agent identity, approval hash and ceiling, the charge at the locked rate, and the order number, under the merchant's Ed25519 key. It answers "my agent bought this without asking" offline, for the shopper, their bank or a dispute team. (Aeshvarya; new contract before the 10-18 freeze, Varunika to confirm with V1)
+- **2026-10-11** The agent is a manual tool loop so it can pause for the shopper's approval between web requests. Its tools never take an amount: approval screens and checkout read the merchant's stored offer. Default model `claude-opus-5` (env `COUNTERSIGN_AGENT_MODEL`), with the API's server-side refusal fallback on. (Aeshvarya)
+- **2026-10-11** A refusal at the merchant's edge is a tool result the agent reports, never an exception that ends the session. (Aeshvarya)
 
 ## Open questions
 
@@ -51,6 +54,12 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-10-11
+- **A3 done** (Aeshvarya): `scripts/tap_interop.py` runs Visa's own cdn-proxy against our signatures (accepted; replay, wrong page and unsigned refused) and Visa's own tap-agent signer against our `verify` (accepted). A fixed Ed25519 vector now guards the wire format.
+- **C8 receipts** (Aeshvarya): `receipt.py`; `countersign()` signs one on PROCEED and returns the same one on retry; `python -m countersign verify-receipt`; the demo ends with a dispute settled by the receipt.
+- **A4 offline** (Aeshvarya): `agent/`: tool loop with the approval pause, strict tool schemas, `LocalShop` (in-process merchant behind a TAP-verifying edge) and `HttpShop` (C7). Found and fixed: an edge refusal during search crashed the session.
+- **A5 v1** (Aeshvarya): the demo app (FastAPI + one page). `/?q=...` starts a session, `/?s=<id>` attaches a second screen to it.
 
 ### 2026-10-10
 - **Repo created, A1 done** (Aeshvarya): contracts C1–C7 in code with tests (terms + hash, TAP sign/verify, merchant interface + 100-product synthetic catalog, rate locks, the decision, the countersign step, JSON wire format), an Airwallex REST client, `python -m countersign demo | keygen | fx`. 35 tests, offline.

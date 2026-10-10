@@ -6,15 +6,18 @@ A merchant checkout that countersigns a verified agent and the shopper's approve
 
 ## Status
 
-Pre-build. The core runs offline end to end: approvals bound to the terms a shopper saw, the decision that charges or asks again, Visa Trusted Agent Protocol signing and verification, rate locks, and a 100-product synthetic merchant. Nothing has run against the Airwallex merchant-side Agentic Commerce APIs yet; that needs enablement from Airwallex.
+Pre-build. The product runs offline end to end: approvals bound to the terms a shopper saw, the decision that charges or asks again, Visa Trusted Agent Protocol signing and verification, rate locks, and a 100-product synthetic merchant. Nothing has run against the Airwallex merchant-side Agentic Commerce APIs yet; that needs enablement from Airwallex.
 
 ## Quickstart
 
 ```bash
 uv venv && uv pip install -e '.[dev]'
-.venv/bin/python -m countersign demo          # both contrast pairs, offline, no keys
-.venv/bin/python -m unittest discover -s tests # tests, offline
+.venv/bin/python -m countersign demo                    # the contrast pairs and a dispute, offline, no keys
+.venv/bin/uvicorn countersign.web.app:app --port 8000   # the demo app: http://127.0.0.1:8000
+.venv/bin/python -m unittest discover -s tests          # tests, offline
 ```
+
+The app uses Claude when `ANTHROPIC_API_KEY` is set, and a scripted stand-in otherwise (`COUNTERSIGN_MODEL=scripted` forces it). Open `/?q=Buy+me+a+kettle` to start straight away, or `/?s=<session id>` to watch a running session from a second screen.
 
 Against the Airwallex sandbox (copy `.env.example` to `.env` and fill it in):
 
@@ -29,6 +32,9 @@ set -a; . ./.env; set +a
 2. **The shopper approves exact terms.** Merchant, items, delivery, totals and a ceiling in the shopper's own currency, hashed. `src/countersign/terms.py`
 3. **The merchant countersigns before it charges.** It rebuilds the live offer with a fresh rate lock and runs one deterministic function: proceed, ask again, or refuse. No model output reaches it. `src/countersign/decide.py`, `src/countersign/checkout.py`
 4. **The charge happens in the shopper's currency at the locked rate**, through Airwallex Multi-Currency Pricing, and returns the merchant's order number. `src/countersign/fx.py`, `src/countersign/merchant.py`
+5. **The merchant signs a receipt** binding the agent's identity, the approval's hash and ceiling, the charge and the order number. Anyone with the merchant's public key can check it later, offline: `python -m countersign verify-receipt`. `src/countersign/receipt.py`
+
+TAP interop with Visa's reference implementation is checked in both directions by `scripts/tap_interop.py`.
 
 ## Layout
 
@@ -40,7 +46,11 @@ set -a; . ./.env; set +a
 | `src/countersign/fx.py` | C4 rate locks: Airwallex conversion quotes, offline fake |
 | `src/countersign/decide.py` | C5 the decision |
 | `src/countersign/checkout.py` | C6 the countersign step |
+| `src/countersign/receipt.py` | C8 the countersigned receipt |
+| `src/countersign/agent/` | the shopping agent: tool loop, approval pause, TAP-signed shop clients |
+| `src/countersign/web/` | the demo app |
 | `src/countersign/airwallex.py` | Airwallex REST client |
+| `scripts/tap_interop.py` | interop check against Visa's TAP reference code |
 | `PROGRESS.md`, `WORKPLAN.md` | where the work stands, who does what |
 
 ## Licence
