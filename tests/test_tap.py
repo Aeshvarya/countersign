@@ -81,7 +81,7 @@ class VerifyTest(unittest.TestCase):
             "future": (check(signed(key, now=NOW + 3600, nonce="n-4").headers(), d, n), "future"),
             "unknown key": (check(signed(Ed25519PrivateKey.generate(), nonce="n-5", key_id="k9").headers(), d, n), "not in the directory"),
             "wrong key for a known id": (check(signed(Ed25519PrivateKey.generate(), nonce="n-7").headers(), d, n), "does not match"),
-            "browse tag at checkout": (check(signed(key, tag=tap.BROWSE, nonce="n-6").headers(), d, n, require_tag=tap.PAY), "needs a"),
+            "browse tag at checkout": (check(signed(key, tag=tap.BROWSE, nonce="n-6").headers(), d, n, require_tag=tap.PAY), "it needs agent-payer-auth"),
         }
         for name, (result, words) in cases.items():
             with self.subTest(name):
