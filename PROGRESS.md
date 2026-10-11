@@ -42,6 +42,7 @@ _Updated 2026-10-11_
 - **Does Airwallex round the shopper amount half-up?** A2 compares their payment intent amount with `computed_shopper_total()`.
 - **Live Visa TAP key directory or VIC sandbox for teams?** V3 asks.
 - **Merchant-side enablement:** when, and does it include the Agent Trust & Risk SDK?
+- **Does code written before the 10-25 build start count?** Most of the product was built 10-10 to 10-11. The rules tab is behind the HackerEarth login; whoever is logged in, copy the exact rule here.
 
 ## Quick reference
 
