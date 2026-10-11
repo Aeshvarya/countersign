@@ -56,6 +56,7 @@ uv venv && uv pip install -e '.[dev]'
 Newest first.
 
 ### 2026-10-11
+- **V2 done** (Varunika), branch `varunika/v2-edge`: `edge/` serves C7 behind a TAP check on every route, verified against the merchant's own host, not the caller's `Host`. Browse vs payer tags per route; a broken approval is a REFUSE, not a 500. Found and fixed: two simultaneous checkouts under one key both reached `pay()` (now serialised per key). Orders and receipts are shown only to the agent that placed them. `HttpShop` passes the four agent flows against a live edge. Hand-off (C6, `checkout.py`): a key reused with a different approval still returns the old order.
 - **A3 done** (Aeshvarya): `scripts/tap_interop.py` runs Visa's own cdn-proxy against our signatures (accepted; replay, wrong page and unsigned refused) and Visa's own tap-agent signer against our `verify` (accepted). A fixed Ed25519 vector now guards the wire format.
 - **C8 receipts** (Aeshvarya): `receipt.py`; `countersign()` signs one on PROCEED and returns the same one on retry; `python -m countersign verify-receipt`; the demo ends with a dispute settled by the receipt.
 - **A4 offline** (Aeshvarya): `agent/`: tool loop with the approval pause, strict tool schemas, `LocalShop` (in-process merchant behind a TAP-verifying edge) and `HttpShop` (C7). Found and fixed: an edge refusal during search crashed the session.
