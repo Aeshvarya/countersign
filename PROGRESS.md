@@ -16,7 +16,7 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 _Updated 2026-10-11_
 
 - **State:** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 55 tests pass offline. Nothing has run against Airwallex yet.
-- **Next action:** Varunika: accept the repo invite, V1 (by Mon 10-12), then V2: the C7 edge; `HttpShop` is already written to call it. Aeshvarya: sandbox keys into `.env`, then A2.
+- **Next action:** Varunika: V1 (by Mon 10-12), then merge `varunika/v2-edge` (the C7 edge, CI green, 84 tests; `main` has 55). Aeshvarya: sandbox keys into `.env`, then A2; the edge is ready for A7 to serve.
 - **Waiting on:** Airwallex devhelp for merchant-side Agentic Commerce enablement and Airi CLI access (requested 2026-10-10, auto-reply only).
 - **Deadline:** Fri 2026-11-13 23:59 IST. **Target submission: Thu 2026-11-12.** Plan: [WORKPLAN.md](WORKPLAN.md).
 
