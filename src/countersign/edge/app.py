@@ -12,6 +12,7 @@ here just because the caller says it is somewhere else.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -92,6 +93,14 @@ def create_app(
     app = FastAPI(title="Countersign merchant edge", docs_url=None, redoc_url=None, openapi_url=None)
     nonce_cache = nonces if nonces is not None else tap.MemoryNonceCache()
     receipt_store = store if store is not None else MemoryReceiptStore()
+    # Requests run in parallel threads, so "check for an order, then pay" must not
+    # interleave for one key: a retry that lands mid-charge waits, then finds the order.
+    key_locks: dict[str, threading.Lock] = {}
+    key_locks_guard = threading.Lock()
+
+    def lock_for(idempotency_key: str) -> threading.Lock:
+        with key_locks_guard:
+            return key_locks.setdefault(idempotency_key, threading.Lock())
     edge_log: list[dict[str, Any]] = []
     app.state.edge_log = edge_log
 
@@ -132,8 +141,9 @@ def create_app(
             approval = read_approval(body.approval)
         except ValueError as err:
             return checkout_json(Decision(Outcome.REFUSE, str(err)))
-        result = countersign(merchant, approval, body.idempotency_key, clock(),
-                             agent=request.state.agent, signer=signer, store=receipt_store)
+        with lock_for(body.idempotency_key):
+            result = countersign(merchant, approval, body.idempotency_key, clock(),
+                                 agent=request.state.agent, signer=signer, store=receipt_store)
         return checkout_json(result.decision, result.order, result.receipt)
 
     @app.get("/orders/{idempotency_key}")

@@ -1,3 +1,5 @@
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -30,11 +32,13 @@ class Clock:
 
 @unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
 class EdgeTest(unittest.TestCase):
+    merchant_class = FakeMerchant
+
     def setUp(self):
         self.key = Ed25519PrivateKey.generate()
         self.clock = Clock()
         self.fx = FakeFx("84.10")
-        self.merchant = FakeMerchant(self.fx)
+        self.merchant = self.merchant_class(self.fx)
         directory = tap.StaticDirectory({(AGENT, "k1"): self.key.public_key()})
         self.merchant_key = Ed25519PrivateKey.generate()
         self.app = create_app(self.merchant, directory, authority=AUTHORITY, clock=self.clock,
@@ -147,7 +151,21 @@ class OffersTest(EdgeTest):
         self.assertEqual(self.post("/offers", {"cart": {sku: 1}, "shopper_currency": "rupees"}).status_code, 422)
 
 
-class CheckoutTest(EdgeTest):
+class SlowMerchant(FakeMerchant):
+    """Rebuilding the offer takes a while, as it will on a real merchant; counts charge attempts."""
+
+    pays = 0
+
+    def offer(self, *args, **kwargs):
+        time.sleep(0.2)
+        return super().offer(*args, **kwargs)
+
+    def pay(self, terms, decision, idempotency_key):
+        self.pays += 1
+        return super().pay(terms, decision, idempotency_key)
+
+
+class CheckoutBase(EdgeTest):
     def setUp(self):
         super().setUp()
         self.sku = self.merchant.search("mechanical keyboard")[0].sku
@@ -161,6 +179,8 @@ class CheckoutTest(EdgeTest):
                 "idempotency_key": key}
         return self.post("/checkout", body, tag=tag, headers=headers)
 
+
+class CheckoutTest(CheckoutBase):
     def test_an_approved_checkout_is_charged_with_an_order_number_and_a_receipt(self):
         r = self.checkout()
         self.assertEqual(r.status_code, 200)
@@ -225,6 +245,21 @@ class CheckoutTest(EdgeTest):
         self.assertEqual(self.get("/orders/order-1", tag=tap.PAY).json(), order)
         self.assertEqual(self.get("/orders/order-1", tag=tap.BROWSE).status_code, 401)
         self.assertEqual(self.get("/orders/order-9", tag=tap.PAY).status_code, 404)
+
+
+class ConcurrentRetryTest(CheckoutBase):
+    merchant_class = SlowMerchant
+
+    def test_two_checkouts_with_one_key_at_the_same_moment_charge_once(self):
+        answers = []
+        threads = [threading.Thread(target=lambda: answers.append(self.checkout().json())) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(self.merchant.pays, 1)
+        self.assertEqual(answers[0]["order"], answers[1]["order"])
+        self.assertEqual(answers[0]["receipt"], answers[1]["receipt"])
 
 
 if __name__ == "__main__":
