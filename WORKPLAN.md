@@ -28,7 +28,7 @@ Every task is written so either builder can pick it up cold: why it exists, what
 | A9 | Video production | non-tech | 4 | Wed 11-11 | todo |
 | A10 | Compliance and submission | non-tech | 1.5 | checklist Sun 11-08, submit Thu 11-12 | todo |
 | V1 | Confirm or counter this split | non-tech | 0.5 | Mon 10-12 | todo |
-| V2 | Merchant edge: HTTP API (C7) behind TAP | tech | 6 | Sat 10-17 | todo |
+| V2 | Merchant edge: HTTP API (C7) behind TAP | tech | 6 | Sat 10-17 | done 10-11 on `varunika/v2-edge` (CI green): `HttpShop` passes the agent flows against a live edge; not merged yet |
 | V3 | Visa access and the key directory | tech | 3 | Wed 10-14, registry Sat 10-24 | todo |
 | V4 | Airwallex merchant enablement and catalog | tech | 3 | follow-up Wed 10-14, upload within 2 days of access | todo |
 | V5 | `AirwallexMerchant` (C3 on the real APIs) | tech | 6 | Wed 11-04 | todo |
