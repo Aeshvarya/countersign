@@ -1,9 +1,10 @@
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from countersign import tap
+from countersign import tap, wire
 from countersign.fx import FakeFx
 from countersign.merchant import FakeMerchant
 
@@ -107,6 +108,40 @@ class EdgeCheckTest(EdgeTest):
         self.assertEqual([e["ok"] for e in log], [True, False])
         self.assertEqual(log[0]["detail"], "k1")
         self.assertEqual(log[0]["tag"], tap.BROWSE)
+
+
+class OffersTest(EdgeTest):
+    def post(self, path, body, tag=tap.BROWSE, headers=None):
+        return self.client.post(path, json=body, headers=self.sign(path, tag) if headers is None else headers)
+
+    def test_an_offer_carries_a_rate_lock_and_round_trips_as_terms(self):
+        sku = self.merchant.search("kettle")[0].sku
+        r = self.post("/offers", {"cart": {sku: 2}, "shopper_currency": "INR"})
+        self.assertEqual(r.status_code, 200)
+        terms = wire.terms_from_json(r.json())
+        self.assertEqual(terms.items[0].quantity, 2)
+        self.assertEqual(terms.fx.rate, Decimal("84.10"))
+        self.assertEqual(terms.shopper_total, terms.computed_shopper_total())
+
+    def test_offers_need_a_browse_signature(self):
+        sku = self.merchant.search("kettle")[0].sku
+        self.assertEqual(self.post("/offers", {"cart": {sku: 1}, "shopper_currency": "INR"}, headers={}).status_code, 401)
+
+    def test_an_unknown_sku_is_not_found(self):
+        r = self.post("/offers", {"cart": {"NOPE-1": 1}, "shopper_currency": "INR"})
+        self.assertEqual(r.status_code, 404)
+        self.assertIn("NOPE-1", r.json()["error"])
+
+    def test_more_than_the_stock_is_a_conflict(self):
+        product = self.merchant.search("kettle")[0]
+        r = self.post("/offers", {"cart": {product.sku: product.stock + 1}, "shopper_currency": "INR"})
+        self.assertEqual(r.status_code, 409)
+
+    def test_broken_carts_are_rejected(self):
+        sku = self.merchant.search("kettle")[0].sku
+        self.assertEqual(self.post("/offers", {"cart": {}, "shopper_currency": "INR"}).status_code, 422)
+        self.assertEqual(self.post("/offers", {"cart": {sku: 0}, "shopper_currency": "INR"}).status_code, 400)
+        self.assertEqual(self.post("/offers", {"cart": {sku: 1}, "shopper_currency": "rupees"}).status_code, 422)
 
 
 if __name__ == "__main__":

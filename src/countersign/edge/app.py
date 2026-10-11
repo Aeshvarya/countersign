@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from .. import tap, wire
 from ..merchant import MerchantGateway
@@ -42,6 +43,11 @@ def signed_path(request: Request) -> str:
     raw = request.scope.get("raw_path") or request.url.path.encode()
     query = request.scope.get("query_string") or b""
     return raw.decode("latin-1") + (f"?{query.decode('latin-1')}" if query else "")
+
+
+class OfferRequest(BaseModel):
+    cart: dict[str, int] = Field(min_length=1)
+    shopper_currency: str = Field(pattern=r"^[A-Z]{3}$")
 
 
 def create_app(
@@ -74,5 +80,17 @@ def create_app(
     @app.get("/products")
     def products(q: str = "", limit: int = Query(5, ge=1, le=50)) -> list[dict[str, Any]]:
         return [wire.product(p) for p in merchant.search(q, limit)]
+
+    @app.post("/offers")
+    def offers(body: OfferRequest):
+        if any(qty < 1 for qty in body.cart.values()):
+            return JSONResponse({"error": "every quantity must be at least 1"}, status_code=400)
+        try:
+            terms = merchant.offer(body.cart, body.shopper_currency, clock())
+        except KeyError as err:
+            return JSONResponse({"error": f"no product with sku {err.args[0]}"}, status_code=404)
+        except LookupError as err:
+            return JSONResponse({"error": str(err)}, status_code=409)
+        return wire.terms_to_json(terms)
 
     return app
