@@ -43,6 +43,7 @@ _Updated 2026-10-11_
 - **Live Visa TAP key directory or VIC sandbox for teams?** V3 asks.
 - **Merchant-side enablement:** when, and does it include the Agent Trust & Risk SDK?
 - **Does code written before the 10-25 build start count?** Most of the product was built 10-10 to 10-11. The rules tab is behind the HackerEarth login; whoever is logged in, copy the exact rule here.
+- **C2: should payment requests bind the body?** The `/checkout` signature covers `@authority` and `@path` only, so the approval it carries is not bound to the agent's signature. Airwallex's starter Kit 10 (`everyai-com/airwallex-hackathon`, `src/core/tap.ts`) covers an RFC 9421 `content-digest` on payment requests. Decide before the 10-18 freeze; interop with Visa's reference verifier (A3) would need re-checking.
 
 ## Quick reference
 
