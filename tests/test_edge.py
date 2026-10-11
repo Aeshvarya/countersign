@@ -39,14 +39,15 @@ class EdgeTest(unittest.TestCase):
         self.clock = Clock()
         self.fx = FakeFx("84.10")
         self.merchant = self.merchant_class(self.fx)
-        directory = tap.StaticDirectory({(AGENT, "k1"): self.key.public_key()})
+        self.other_key = Ed25519PrivateKey.generate()  # a second registered agent
+        directory = tap.StaticDirectory({(AGENT, "k1"): self.key.public_key(), (AGENT, "k2"): self.other_key.public_key()})
         self.merchant_key = Ed25519PrivateKey.generate()
         self.app = create_app(self.merchant, directory, authority=AUTHORITY, clock=self.clock,
                               signer=receipt.MerchantSigner(self.merchant_key, "m-1"))
         self.client = TestClient(self.app)
 
-    def sign(self, path, tag=tap.BROWSE, key=None, authority=AUTHORITY):
-        return tap.sign(key or self.key, authority=authority, path=path, key_id="k1",
+    def sign(self, path, tag=tap.BROWSE, key=None, authority=AUTHORITY, key_id="k1"):
+        return tap.sign(key or self.key, authority=authority, path=path, key_id=key_id,
                         signature_agent=AGENT, tag=tag).headers()
 
     def get(self, path, tag=tap.BROWSE, headers=None):
@@ -245,6 +246,17 @@ class CheckoutTest(CheckoutBase):
         self.assertEqual(self.get("/orders/order-1", tag=tap.PAY).json(), order)
         self.assertEqual(self.get("/orders/order-1", tag=tap.BROWSE).status_code, 401)
         self.assertEqual(self.get("/orders/order-9", tag=tap.PAY).status_code, 404)
+
+    def test_another_agent_cannot_see_or_take_over_an_order(self):
+        mine = self.checkout().json()
+        as_other = lambda path: self.sign(path, tap.PAY, key=self.other_key, key_id="k2")
+        self.assertEqual(self.get("/orders/order-1", headers=as_other("/orders/order-1")).status_code, 404)
+        theirs = self.checkout(headers=as_other("/checkout")).json()
+        self.assertEqual(theirs["decision"]["outcome"], "refuse")
+        self.assertIsNone(theirs["order"])
+        self.assertIsNone(theirs["receipt"])
+        self.assertEqual(self.get("/orders/order-1", tag=tap.PAY).json(), mine["order"])
+        self.assertEqual(len(self.merchant.orders), 1)
 
 
 class ConcurrentRetryTest(CheckoutBase):

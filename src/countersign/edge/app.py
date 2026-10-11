@@ -101,6 +101,13 @@ def create_app(
     def lock_for(idempotency_key: str) -> threading.Lock:
         with key_locks_guard:
             return key_locks.setdefault(idempotency_key, threading.Lock())
+
+    # Which agent placed the order under each key. An order and its receipt (which
+    # names the shopper) are only ever shown to the agent that placed it.
+    placed_by: dict[str, tuple[str, str]] = {}
+
+    def who(agent: tap.AgentIdentity) -> tuple[str, str]:
+        return agent.signature_agent, agent.key_id
     edge_log: list[dict[str, Any]] = []
     app.state.edge_log = edge_log
 
@@ -141,15 +148,21 @@ def create_app(
             approval = read_approval(body.approval)
         except ValueError as err:
             return checkout_json(Decision(Outcome.REFUSE, str(err)))
+        agent = request.state.agent
         with lock_for(body.idempotency_key):
+            if placed_by.get(body.idempotency_key, who(agent)) != who(agent):
+                return checkout_json(Decision(Outcome.REFUSE, "this idempotency key is already in use"))
             result = countersign(merchant, approval, body.idempotency_key, clock(),
-                                 agent=request.state.agent, signer=signer, store=receipt_store)
+                                 agent=agent, signer=signer, store=receipt_store)
+            if result.order is not None:
+                placed_by.setdefault(body.idempotency_key, who(agent))
         return checkout_json(result.decision, result.order, result.receipt)
 
     @app.get("/orders/{idempotency_key}")
-    def order(idempotency_key: str):
+    def order(idempotency_key: str, request: Request):
         found = merchant.find_order(idempotency_key)
-        if found is None:
+        mine = who(request.state.agent)
+        if found is None or placed_by.get(idempotency_key, mine) != mine:
             return JSONResponse({"error": "no order under this idempotency key"}, status_code=404)
         return wire.order_to_json(found)
 
