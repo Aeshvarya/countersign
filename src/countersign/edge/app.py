@@ -108,6 +108,7 @@ def create_app(
 
     def who(agent: tap.AgentIdentity) -> tuple[str, str]:
         return agent.signature_agent, agent.key_id
+
     edge_log: list[dict[str, Any]] = []
     app.state.edge_log = edge_log
 
