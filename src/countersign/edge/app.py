@@ -19,8 +19,12 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .. import receipt as receipts
 from .. import tap, wire
+from ..checkout import MemoryReceiptStore, ReceiptStore, countersign
+from ..decide import Decision, Outcome
 from ..merchant import MerchantGateway
+from ..terms import Approval, utc
 
 # The tag each route needs. Anything not listed still needs a valid signature.
 ROUTE_TAGS = (
@@ -50,16 +54,44 @@ class OfferRequest(BaseModel):
     shopper_currency: str = Field(pattern=r"^[A-Z]{3}$")
 
 
+class CheckoutRequest(BaseModel):
+    approval: dict[str, Any]
+    idempotency_key: str = Field(pattern=r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def read_approval(data: dict[str, Any]) -> Approval:
+    """The approval as sent, or ValueError: anything unreadable is refused, never guessed."""
+    try:
+        approval = wire.approval_from_json(data)
+        utc(approval.approved_at), utc(approval.expires_at)
+    except (KeyError, TypeError, ValueError, ArithmeticError) as err:
+        raise ValueError(f"the approval could not be read ({type(err).__name__})") from None
+    if not approval.terms.items:
+        raise ValueError("the approval has no items")
+    if not approval.ceiling.is_finite():
+        raise ValueError("the approval's ceiling is not a number")
+    return approval
+
+
+def checkout_json(decision: Decision, order=None, receipt=None) -> dict[str, Any]:
+    return {"decision": wire.decision_to_json(decision),
+            "order": wire.order_to_json(order) if order else None,
+            "receipt": receipt}
+
+
 def create_app(
     merchant: MerchantGateway,
     directory: tap.KeyDirectory,
     *,
     authority: str,
     nonces: tap.NonceCache | None = None,
+    signer: receipts.MerchantSigner | None = None,
+    store: ReceiptStore | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> FastAPI:
     app = FastAPI(title="Countersign merchant edge", docs_url=None, redoc_url=None, openapi_url=None)
     nonce_cache = nonces if nonces is not None else tap.MemoryNonceCache()
+    receipt_store = store if store is not None else MemoryReceiptStore()
     edge_log: list[dict[str, Any]] = []
     app.state.edge_log = edge_log
 
@@ -92,5 +124,23 @@ def create_app(
         except LookupError as err:
             return JSONResponse({"error": str(err)}, status_code=409)
         return wire.terms_to_json(terms)
+
+    @app.post("/checkout")
+    def checkout(body: CheckoutRequest, request: Request) -> dict[str, Any]:
+        # A broken approval is a refusal in the C7 shape, so the agent can say why.
+        try:
+            approval = read_approval(body.approval)
+        except ValueError as err:
+            return checkout_json(Decision(Outcome.REFUSE, str(err)))
+        result = countersign(merchant, approval, body.idempotency_key, clock(),
+                             agent=request.state.agent, signer=signer, store=receipt_store)
+        return checkout_json(result.decision, result.order, result.receipt)
+
+    @app.get("/orders/{idempotency_key}")
+    def order(idempotency_key: str):
+        found = merchant.find_order(idempotency_key)
+        if found is None:
+            return JSONResponse({"error": "no order under this idempotency key"}, status_code=404)
+        return wire.order_to_json(found)
 
     return app

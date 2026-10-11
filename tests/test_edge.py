@@ -1,12 +1,13 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from countersign import tap, wire
+from countersign import receipt, tap, wire
 from countersign.fx import FakeFx
 from countersign.merchant import FakeMerchant
+from countersign.terms import Approval
 
 try:
     from fastapi.testclient import TestClient
@@ -35,7 +36,9 @@ class EdgeTest(unittest.TestCase):
         self.fx = FakeFx("84.10")
         self.merchant = FakeMerchant(self.fx)
         directory = tap.StaticDirectory({(AGENT, "k1"): self.key.public_key()})
-        self.app = create_app(self.merchant, directory, authority=AUTHORITY, clock=self.clock)
+        self.merchant_key = Ed25519PrivateKey.generate()
+        self.app = create_app(self.merchant, directory, authority=AUTHORITY, clock=self.clock,
+                              signer=receipt.MerchantSigner(self.merchant_key, "m-1"))
         self.client = TestClient(self.app)
 
     def sign(self, path, tag=tap.BROWSE, key=None, authority=AUTHORITY):
@@ -44,6 +47,9 @@ class EdgeTest(unittest.TestCase):
 
     def get(self, path, tag=tap.BROWSE, headers=None):
         return self.client.get(path, headers=self.sign(path, tag) if headers is None else headers)
+
+    def post(self, path, body, tag=tap.BROWSE, headers=None):
+        return self.client.post(path, json=body, headers=self.sign(path, tag) if headers is None else headers)
 
 
 class PairTwoOverHttpTest(EdgeTest):
@@ -111,9 +117,6 @@ class EdgeCheckTest(EdgeTest):
 
 
 class OffersTest(EdgeTest):
-    def post(self, path, body, tag=tap.BROWSE, headers=None):
-        return self.client.post(path, json=body, headers=self.sign(path, tag) if headers is None else headers)
-
     def test_an_offer_carries_a_rate_lock_and_round_trips_as_terms(self):
         sku = self.merchant.search("kettle")[0].sku
         r = self.post("/offers", {"cart": {sku: 2}, "shopper_currency": "INR"})
@@ -142,6 +145,86 @@ class OffersTest(EdgeTest):
         self.assertEqual(self.post("/offers", {"cart": {}, "shopper_currency": "INR"}).status_code, 422)
         self.assertEqual(self.post("/offers", {"cart": {sku: 0}, "shopper_currency": "INR"}).status_code, 400)
         self.assertEqual(self.post("/offers", {"cart": {sku: 1}, "shopper_currency": "rupees"}).status_code, 422)
+
+
+class CheckoutTest(EdgeTest):
+    def setUp(self):
+        super().setUp()
+        self.sku = self.merchant.search("mechanical keyboard")[0].sku
+        terms = wire.terms_from_json(self.post("/offers", {"cart": {self.sku: 1}, "shopper_currency": "INR"}).json())
+        now = self.clock()
+        self.approval = Approval.grant(terms, terms.shopper_total * Decimal("1.02"), "shopper@example.com",
+                                       now, now + timedelta(minutes=30))
+
+    def checkout(self, approval=None, key="order-1", tag=tap.PAY, headers=None):
+        body = {"approval": approval if isinstance(approval, dict) else wire.approval_to_json(approval or self.approval),
+                "idempotency_key": key}
+        return self.post("/checkout", body, tag=tag, headers=headers)
+
+    def test_an_approved_checkout_is_charged_with_an_order_number_and_a_receipt(self):
+        r = self.checkout()
+        self.assertEqual(r.status_code, 200)
+        out = r.json()
+        self.assertEqual(out["decision"]["outcome"], "proceed")
+        self.assertEqual(out["order"]["order_number"], "ORD-1001")
+        self.assertEqual(out["order"]["currency"], "INR")
+        self.assertTrue(receipt.verify(out["receipt"], self.merchant_key.public_key(), self.approval).ok)
+        self.assertEqual(out["receipt"]["body"]["agent"]["key_id"], "k1")
+        self.assertEqual(out["receipt"]["body"]["agent"]["tag"], tap.PAY)
+
+    def test_paying_needs_a_payer_signature(self):
+        self.assertEqual(self.checkout(headers={}).status_code, 401)
+        r = self.checkout(tag=tap.BROWSE)
+        self.assertEqual(r.status_code, 401)
+        self.assertIn("needs agent-payer-auth", r.json()["refused"])
+        self.assertEqual(self.merchant.orders, {})
+
+    def test_a_rate_past_the_ceiling_asks_again_and_charges_nothing(self):
+        self.fx.rate = Decimal("88.40")
+        out = self.checkout().json()
+        self.assertEqual(out["decision"]["outcome"], "reask")
+        self.assertEqual(out["decision"]["changes"][0]["field"], "shopper_total")
+        self.assertIsNone(out["order"])
+        self.assertEqual(self.merchant.orders, {})
+
+    def test_a_retry_returns_the_same_order_and_receipt_and_never_charges_twice(self):
+        first = self.checkout().json()
+        second = self.checkout().json()
+        self.assertEqual(second["order"], first["order"])
+        self.assertEqual(second["receipt"], first["receipt"])
+        self.assertEqual(len(self.merchant.orders), 1)
+
+    def test_an_approval_edited_in_transit_is_refused(self):
+        data = wire.approval_to_json(self.approval)
+        data["ceiling"] = "999999.00"
+        out = self.checkout(data).json()
+        self.assertEqual(out["decision"]["outcome"], "refuse")
+        self.assertEqual(self.merchant.orders, {})
+
+    def test_an_unreadable_approval_is_refused_not_a_server_error(self):
+        broken = [
+            {},
+            {**wire.approval_to_json(self.approval), "ceiling": "lots"},
+            {**wire.approval_to_json(self.approval), "ceiling": "Infinity"},
+            {**wire.approval_to_json(self.approval), "expires_at": "2026-11-02T10:30:00"},  # no timezone
+            {**wire.approval_to_json(self.approval), "terms": {**wire.terms_to_json(self.approval.terms), "items": []}},
+        ]
+        for i, data in enumerate(broken):
+            with self.subTest(i):
+                r = self.checkout(data, key=f"broken-{i}")
+                self.assertEqual(r.status_code, 200)
+                self.assertEqual(r.json()["decision"]["outcome"], "refuse")
+        self.assertEqual(self.merchant.orders, {})
+
+    def test_an_idempotency_key_must_be_a_plain_token(self):
+        self.assertEqual(self.checkout(key="../../etc").status_code, 422)
+        self.assertEqual(self.checkout(key="").status_code, 422)
+
+    def test_an_order_can_be_looked_up_by_its_key_with_a_payer_signature(self):
+        order = self.checkout().json()["order"]
+        self.assertEqual(self.get("/orders/order-1", tag=tap.PAY).json(), order)
+        self.assertEqual(self.get("/orders/order-1", tag=tap.BROWSE).status_code, 401)
+        self.assertEqual(self.get("/orders/order-9", tag=tap.PAY).status_code, 404)
 
 
 if __name__ == "__main__":
