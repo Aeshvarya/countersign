@@ -57,6 +57,9 @@ uv venv && uv pip install -e '.[dev]'
 
 Newest first.
 
+### 2026-10-13
+- **V3 code** (Varunika), branch `varunika/v3-registry`, stacked on V2: `tap.RegistryDirectory` reads agent keys from a registry with the API of Visa's reference agent-registry. Visa's sample data gives two agents a key called `primary` and its `GET /keys/{key_id}` ignores deactivated agents, so keys are resolved per agent from `GET /agents`, falling back to `/keys/{key_id}` bound to `agent_domain`. Cached 60 s; an unreachable registry is a refusal with its own reason. Found and fixed: the edge checked TAP on its event loop, so one slow key lookup held other agents' requests (0.93 s in a test); now off the loop, nonce cache locked. Not yet run against Visa's real registry service.
+
 ### 2026-10-11
 - **V2 done** (Varunika), branch `varunika/v2-edge`: `edge/` serves C7 behind a TAP check on every route, verified against the merchant's own host, not the caller's `Host`. Browse vs payer tags per route; a broken approval is a REFUSE, not a 500. Found and fixed: two simultaneous checkouts under one key both reached `pay()` (now serialised per key). Orders and receipts are shown only to the agent that placed them. `HttpShop` passes the four agent flows against a live edge. Hand-off (C6, `checkout.py`): a key reused with a different approval still returns the old order.
 - **A3 done** (Aeshvarya): `scripts/tap_interop.py` runs Visa's own cdn-proxy against our signatures (accepted; replay, wrong page and unsigned refused) and Visa's own tap-agent signer against our `verify` (accepted). A fixed Ed25519 vector now guards the wire format.
