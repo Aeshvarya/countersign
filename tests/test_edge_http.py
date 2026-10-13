@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 import unittest
+import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -114,6 +115,43 @@ class HttpShopAgainstTheEdgeTest(unittest.TestCase):
         self.assertEqual(self.merchant.orders, {})
         self.assertFalse(self.edge.app.state.edge_log[0]["ok"])
         self.assertTrue(any(e["kind"] == "edge" for e in session.events))
+
+
+
+class SlowDirectory:
+    """One agent's key lookup takes a second, like a registry having a bad day."""
+
+    def __init__(self, keys):
+        self.keys = keys
+
+    def public_key(self, signature_agent, key_id):
+        if key_id == "slow-key":
+            time.sleep(1)
+        return self.keys.get((signature_agent, key_id))
+
+
+@unittest.skipIf(uvicorn is None, "needs the server extra: pip install -e '.[server]' httpx")
+class SlowDirectoryTest(unittest.TestCase):
+    def test_a_slow_key_lookup_does_not_hold_up_other_agents(self):
+        fast, slow = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
+        directory = SlowDirectory({(AGENT, "fast-key"): fast.public_key(), (AGENT, "slow-key"): slow.public_key()})
+        edge = LiveEdge(FakeMerchant(FakeFx("84.10")), directory, Clock(), None).start()
+        self.addCleanup(edge.stop)
+
+        def get(key, key_id):
+            path = "/products?q=kettle"
+            headers = tap.sign(key, authority=edge.authority, path=path, key_id=key_id,
+                               signature_agent=AGENT, tag=tap.BROWSE).headers()
+            with urllib.request.urlopen(urllib.request.Request(f"http://{edge.authority}{path}", headers=headers)) as r:
+                return r.status
+
+        slow_call = threading.Thread(target=get, args=(slow, "slow-key"))
+        slow_call.start()
+        time.sleep(0.1)
+        started = time.monotonic()
+        self.assertEqual(get(fast, "fast-key"), 200)
+        self.assertLess(time.monotonic() - started, 0.5)
+        slow_call.join()
 
 
 if __name__ == "__main__":
