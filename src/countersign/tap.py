@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import re
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from typing import Protocol
@@ -122,16 +123,21 @@ class NonceCache(Protocol):
 
 
 class MemoryNonceCache:
+    """Single-use nonces. Locked, because a server checks requests on parallel
+    threads and two copies of one signed request must not both pass."""
+
     def __init__(self) -> None:
         self._nonces: dict[str, int] = {}
+        self._lock = threading.Lock()
 
     def seen(self, nonce: str, expires: int) -> bool:
         now = int(time.time())
-        self._nonces = {n: e for n, e in self._nonces.items() if e >= now}
-        if nonce in self._nonces:
-            return True
-        self._nonces[nonce] = expires
-        return False
+        with self._lock:
+            self._nonces = {n: e for n, e in self._nonces.items() if e >= now}
+            if nonce in self._nonces:
+                return True
+            self._nonces[nonce] = expires
+            return False
 
 
 class StaticDirectory:
