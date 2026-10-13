@@ -24,12 +24,16 @@ reference verifier is what makes this TAP rather than TAP-shaped.
 from __future__ import annotations
 
 import base64
+import json
 import re
 import secrets
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Callable, Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
@@ -156,6 +160,101 @@ class StaticDirectory:
 
     def public_key(self, signature_agent: str, key_id: str) -> Ed25519PublicKey | None:
         return self._keys.get((signature_agent, key_id))
+
+
+_KEY_ID = re.compile(r"^[A-Za-z0-9._-]{1,100}$")  # the key ids Visa's proxy accepts
+
+
+class RegistryDirectory:
+    """Agent keys from a registry speaking the API of Visa's reference
+    agent-registry (github.com/visa/trusted-agent-protocol, agent-registry/main.py).
+
+    A key counts only for the agent named in Signature-Agent. Key ids are not
+    unique across agents (Visa's sample data gives two agents a "primary"), so
+    the registry's list of active agents, GET /agents, is read for the exact
+    (agent, key id) pair; that list also leaves out deactivated agents, which
+    GET /keys/{key_id} does not. A registry without the list falls back to
+    GET /keys/{key_id}, accepted only when its agent_domain is this agent.
+    Active Ed25519 keys only.
+
+    Answers are cached for `ttl` seconds: a new or revoked key takes effect
+    within that time, and a flood of unknown key ids costs the registry nothing.
+    """
+
+    def __init__(self, base_url: str, ttl: float = 60, timeout: float = 3,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.ttl = ttl
+        self.timeout = timeout
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._agents: tuple[float, list | None] | None = None
+        self._keys: dict[str, tuple[float, Any]] = {}
+
+    def public_key(self, signature_agent: str, key_id: str) -> Ed25519PublicKey | None:
+        if not _KEY_ID.match(key_id):
+            return None
+        agents = self._agent_list()
+        if agents is not None:
+            entry = next((k for a in agents if isinstance(a, dict) and a.get("domain") == signature_agent
+                          and a.get("is_active") == "true"
+                          for k in a.get("keys") or [] if isinstance(k, dict) and k.get("key_id") == key_id), None)
+        else:
+            entry = self._key(key_id)
+            if not isinstance(entry, dict) or entry.get("agent_domain") != signature_agent:
+                entry = None
+        return _ed25519(entry)
+
+    def _fresh(self, cached: tuple[float, Any] | None) -> bool:
+        return cached is not None and self.clock() - cached[0] < self.ttl
+
+    def _agent_list(self) -> list | None:
+        """The active agents with their keys, or None if this registry has no list."""
+        with self._lock:
+            if self._fresh(self._agents):
+                return self._agents[1]
+        agents = self._get("/agents")
+        if agents is not None and not isinstance(agents, list):
+            raise DirectoryUnavailable("the registry's agent list is not a list")
+        with self._lock:
+            self._agents = (self.clock(), agents)
+        return agents
+
+    def _key(self, key_id: str) -> Any:
+        with self._lock:
+            cached = self._keys.get(key_id)
+            if self._fresh(cached):
+                return cached[1]
+        entry = self._get(f"/keys/{urllib.parse.quote(key_id)}")
+        with self._lock:
+            if len(self._keys) >= 10_000:
+                self._keys.clear()
+            self._keys[key_id] = (self.clock(), entry)
+        return entry
+
+    def _get(self, path: str) -> Any:
+        """The JSON at path, None on 404, DirectoryUnavailable for anything else."""
+        try:
+            with urllib.request.urlopen(self.base_url + path, timeout=self.timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                return None
+            raise DirectoryUnavailable(f"the registry answered HTTP {err.code}") from None
+        except (OSError, ValueError) as err:  # refused, timed out, or not JSON
+            raise DirectoryUnavailable(f"the registry could not be read ({type(err).__name__})") from None
+
+
+def _ed25519(entry: Any) -> Ed25519PublicKey | None:
+    if not isinstance(entry, dict) or entry.get("is_active") != "true":
+        return None
+    if str(entry.get("algorithm", "")).lower() != "ed25519":
+        return None
+    try:
+        raw = base64.b64decode(str(entry.get("public_key", "")).strip(), validate=True)
+    except ValueError:
+        return None
+    return Ed25519PublicKey.from_public_bytes(raw) if len(raw) == 32 else None
 
 
 def parse_input(signature_input: str) -> tuple[list[str], dict[str, str | int]] | None:
