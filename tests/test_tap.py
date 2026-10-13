@@ -106,6 +106,16 @@ class VerifyTest(unittest.TestCase):
         headers["Signature-Input"] = headers["Signature-Input"].replace("expires=1793000480", "expires=1799999999")
         self.assertIn("does not match", check(headers, d, n).reason)
 
+    def test_an_unreachable_directory_is_a_refusal_with_its_own_reason(self):
+        class Down:
+            def public_key(self, signature_agent, key_id):
+                raise tap.DirectoryUnavailable("registry timed out")
+
+        key, _, n = setup()
+        result = check(signed(key).headers(), Down(), n)
+        self.assertIsInstance(result, tap.Rejection)
+        self.assertIn("could not be reached", result.reason)
+
     def test_keygen_round_trips(self):
         private, public = tap.new_keypair()
         key = tap.load_private_key(private)

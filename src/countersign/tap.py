@@ -111,9 +111,17 @@ class Rejection:
 
 
 class KeyDirectory(Protocol):
-    """Where the merchant looks up an agent's public key."""
+    """Where the merchant looks up an agent's public key.
+
+    None means the directory answered and has no such active key. A directory
+    that cannot be asked raises DirectoryUnavailable instead.
+    """
 
     def public_key(self, signature_agent: str, key_id: str) -> Ed25519PublicKey | None: ...
+
+
+class DirectoryUnavailable(Exception):
+    """The key directory could not be asked. The request is refused, never waved through."""
 
 
 class NonceCache(Protocol):
@@ -206,7 +214,10 @@ def verify(
     if expires < clock:
         return Rejection("the signature has expired")
 
-    public_key = directory.public_key(agent, key_id)
+    try:
+        public_key = directory.public_key(agent, key_id)
+    except DirectoryUnavailable:
+        return Rejection("the agent key directory could not be reached")
     if public_key is None:
         return Rejection("the agent's key is not in the directory")
 
