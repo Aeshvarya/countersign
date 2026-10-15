@@ -1,0 +1,173 @@
+"""V2: the merchant's edge, the C7 HTTP API behind a TAP check.
+
+Every request is verified before any route runs. A failed check answers
+401 {"refused": "<reason>"} and nothing else happens: no search, no offer, no
+charge. Browsing needs an agent-browser-auth signature; paying and looking up
+an order need agent-payer-auth.
+
+The authority checked is the merchant's own host, passed in, never the Host
+header the caller sends: a signature made for another merchant must not verify
+here just because the caller says it is somewhere else.
+"""
+
+from __future__ import annotations
+
+import threading
+from datetime import datetime, timezone
+from typing import Any, Callable
+
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+
+from .. import receipt as receipts
+from .. import tap, wire
+from ..checkout import MemoryReceiptStore, ReceiptStore, countersign
+from ..decide import Decision, Outcome
+from ..merchant import MerchantGateway
+from ..terms import Approval, utc
+
+# The tag each route needs. Anything not listed still needs a valid signature.
+ROUTE_TAGS = (
+    ("GET", "/products", tap.BROWSE),
+    ("POST", "/offers", tap.BROWSE),
+    ("POST", "/checkout", tap.PAY),
+    ("GET", "/orders/", tap.PAY),
+)
+
+
+def required_tag(method: str, path: str) -> str | None:
+    for m, prefix, tag in ROUTE_TAGS:
+        if method == m and (path == prefix or (prefix.endswith("/") and path.startswith(prefix))):
+            return tag
+    return None
+
+
+def signed_path(request: Request) -> str:
+    """The path as sent, query string included: what Visa's proxy signs (req.url)."""
+    raw = request.scope.get("raw_path") or request.url.path.encode()
+    query = request.scope.get("query_string") or b""
+    return raw.decode("latin-1") + (f"?{query.decode('latin-1')}" if query else "")
+
+
+class OfferRequest(BaseModel):
+    cart: dict[str, int] = Field(min_length=1)
+    shopper_currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+
+class CheckoutRequest(BaseModel):
+    approval: dict[str, Any]
+    idempotency_key: str = Field(pattern=r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def read_approval(data: dict[str, Any]) -> Approval:
+    """The approval as sent, or ValueError: anything unreadable is refused, never guessed."""
+    try:
+        approval = wire.approval_from_json(data)
+        utc(approval.approved_at), utc(approval.expires_at)
+    except (KeyError, TypeError, ValueError, ArithmeticError) as err:
+        raise ValueError(f"the approval could not be read ({type(err).__name__})") from None
+    if not approval.terms.items:
+        raise ValueError("the approval has no items")
+    if not approval.ceiling.is_finite():
+        raise ValueError("the approval's ceiling is not a number")
+    return approval
+
+
+def checkout_json(decision: Decision, order=None, receipt=None) -> dict[str, Any]:
+    return {"decision": wire.decision_to_json(decision),
+            "order": wire.order_to_json(order) if order else None,
+            "receipt": receipt}
+
+
+def create_app(
+    merchant: MerchantGateway,
+    directory: tap.KeyDirectory,
+    *,
+    authority: str,
+    nonces: tap.NonceCache | None = None,
+    signer: receipts.MerchantSigner | None = None,
+    store: ReceiptStore | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> FastAPI:
+    app = FastAPI(title="Countersign merchant edge", docs_url=None, redoc_url=None, openapi_url=None)
+    nonce_cache = nonces if nonces is not None else tap.MemoryNonceCache()
+    receipt_store = store if store is not None else MemoryReceiptStore()
+    # Requests run in parallel threads, so "check for an order, then pay" must not
+    # interleave for one key: a retry that lands mid-charge waits, then finds the order.
+    key_locks: dict[str, threading.Lock] = {}
+    key_locks_guard = threading.Lock()
+
+    def lock_for(idempotency_key: str) -> threading.Lock:
+        with key_locks_guard:
+            return key_locks.setdefault(idempotency_key, threading.Lock())
+
+    # Which agent placed the order under each key. An order and its receipt (which
+    # names the shopper) are only ever shown to the agent that placed it.
+    placed_by: dict[str, tuple[str, str]] = {}
+
+    def who(agent: tap.AgentIdentity) -> tuple[str, str]:
+        return agent.signature_agent, agent.key_id
+
+    edge_log: list[dict[str, Any]] = []
+    app.state.edge_log = edge_log
+
+    @app.middleware("http")
+    async def tap_check(request: Request, call_next):
+        path = signed_path(request)
+        tag = required_tag(request.method, request.url.path)
+        # Off the event loop: a key lookup can wait on a remote registry, and one
+        # slow agent must not hold up every other request at the edge.
+        result = await run_in_threadpool(tap.verify, dict(request.headers), authority=authority, path=path,
+                                         directory=directory, nonces=nonce_cache, require_tag=tag)
+        ok = isinstance(result, tap.AgentIdentity)
+        edge_log.append({"path": path, "tag": tag, "ok": ok, "detail": result.key_id if ok else result.reason})
+        del edge_log[:-500]
+        if not ok:
+            return JSONResponse({"refused": result.reason}, status_code=401)
+        request.state.agent = result
+        return await call_next(request)
+
+    @app.get("/products")
+    def products(q: str = "", limit: int = Query(5, ge=1, le=50)) -> list[dict[str, Any]]:
+        return [wire.product(p) for p in merchant.search(q, limit)]
+
+    @app.post("/offers")
+    def offers(body: OfferRequest):
+        if any(qty < 1 for qty in body.cart.values()):
+            return JSONResponse({"error": "every quantity must be at least 1"}, status_code=400)
+        try:
+            terms = merchant.offer(body.cart, body.shopper_currency, clock())
+        except KeyError as err:
+            return JSONResponse({"error": f"no product with sku {err.args[0]}"}, status_code=404)
+        except LookupError as err:
+            return JSONResponse({"error": str(err)}, status_code=409)
+        return wire.terms_to_json(terms)
+
+    @app.post("/checkout")
+    def checkout(body: CheckoutRequest, request: Request) -> dict[str, Any]:
+        # A broken approval is a refusal in the C7 shape, so the agent can say why.
+        try:
+            approval = read_approval(body.approval)
+        except ValueError as err:
+            return checkout_json(Decision(Outcome.REFUSE, str(err)))
+        agent = request.state.agent
+        with lock_for(body.idempotency_key):
+            if placed_by.get(body.idempotency_key, who(agent)) != who(agent):
+                return checkout_json(Decision(Outcome.REFUSE, "this idempotency key is already in use"))
+            result = countersign(merchant, approval, body.idempotency_key, clock(),
+                                 agent=agent, signer=signer, store=receipt_store)
+            if result.order is not None:
+                placed_by.setdefault(body.idempotency_key, who(agent))
+        return checkout_json(result.decision, result.order, result.receipt)
+
+    @app.get("/orders/{idempotency_key}")
+    def order(idempotency_key: str, request: Request):
+        found = merchant.find_order(idempotency_key)
+        mine = who(request.state.agent)
+        if found is None or placed_by.get(idempotency_key, mine) != mine:
+            return JSONResponse({"error": "no order under this idempotency key"}, status_code=404)
+        return wire.order_to_json(found)
+
+    return app
