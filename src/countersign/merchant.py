@@ -37,6 +37,7 @@ class Order:
     amount: Decimal
     currency: str
     idempotency_key: str
+    approval_hash: str | None = None  # the approval this order was charged under
 
 
 class MerchantGateway(Protocol):
@@ -53,7 +54,7 @@ class MerchantGateway(Protocol):
         """Check before retrying: a timeout is not proof the payment failed."""
         ...
 
-    def pay(self, terms: Terms, decision: Decision, idempotency_key: str) -> Order: ...
+    def pay(self, terms: Terms, decision: Decision, idempotency_key: str, approval_hash: str | None = None) -> Order: ...
 
 
 # ------------------------------------------------------------------ offline fake
@@ -146,7 +147,7 @@ class FakeMerchant:
     def find_order(self, idempotency_key: str) -> Order | None:
         return self.orders.get(idempotency_key)
 
-    def pay(self, terms: Terms, decision: Decision, idempotency_key: str) -> Order:
+    def pay(self, terms: Terms, decision: Decision, idempotency_key: str, approval_hash: str | None = None) -> Order:
         if decision.outcome is not Outcome.PROCEED:
             raise PermissionError(f"refusing to charge: {decision.reason}")
         existing = self.find_order(idempotency_key)
@@ -161,6 +162,7 @@ class FakeMerchant:
             amount=decision.charge,
             currency=decision.currency,
             idempotency_key=idempotency_key,
+            approval_hash=approval_hash,
         )
         self.orders[idempotency_key] = order
         return order

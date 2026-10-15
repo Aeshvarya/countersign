@@ -128,8 +128,10 @@ def order_to_json(o: Order) -> dict[str, Any]:
         "amount": _d(o.amount),
         "currency": o.currency,
         "idempotency_key": o.idempotency_key,
+        "approval_hash": o.approval_hash,
     }
 
 
 def order_from_json(d: dict[str, Any]) -> Order:
-    return Order(d["order_number"], d["payment_id"], d["status"], Decimal(d["amount"]), d["currency"], d["idempotency_key"])
+    return Order(d["order_number"], d["payment_id"], d["status"], Decimal(d["amount"]), d["currency"],
+                 d["idempotency_key"], d.get("approval_hash"))

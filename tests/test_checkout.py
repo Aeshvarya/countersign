@@ -43,6 +43,18 @@ class CountersignTest(unittest.TestCase):
         self.assertEqual(len(self.shop.orders), 1)
         self.assertEqual(self.shop.catalog[self.sku].stock, stock_after_first)
 
+    def test_the_same_key_under_a_different_approval_is_refused_not_reported_as_paid(self):
+        countersign(self.shop, self.approval, "k1", NOW)
+        other = Approval.grant(self.approval.terms, self.approval.ceiling + 50, "s", NOW, NOW + timedelta(hours=2))
+        r = countersign(self.shop, other, "k1", NOW)
+        self.assertEqual(r.decision.outcome, Outcome.REFUSE)
+        self.assertIsNone(r.order)
+        self.assertEqual(len(self.shop.orders), 1)
+
+    def test_the_order_records_the_approval_it_was_charged_under(self):
+        r = countersign(self.shop, self.approval, "k1", NOW)
+        self.assertEqual(r.order.approval_hash, self.approval.hash)
+
     def test_out_of_stock_asks_again_without_charging(self):
         self.shop.set_stock(self.sku, 0)
         r = countersign(self.shop, self.approval, "k1", NOW)

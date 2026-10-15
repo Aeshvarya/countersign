@@ -1,7 +1,7 @@
 """C6: the countersign step, run by the merchant just before it charges.
 
 1. Already paid under this idempotency key? Return that order and its receipt;
-   never pay twice.
+   never pay twice. The same key under a different approval is refused.
 2. Rebuild the live offer for the approved cart (fresh rate lock included).
 3. decide() the approval against it.
 4. Charge only on PROCEED, return the merchant's order number, and sign a
@@ -63,6 +63,10 @@ def countersign(
     store: ReceiptStore | None = None,
 ) -> Result:
     existing = merchant.find_order(idempotency_key)
+    if existing is not None and existing.approval_hash not in (None, approval.hash):
+        # The same key under a different approval is not a retry. Returning the old
+        # order would tell the agent "paid" for something the shopper never approved.
+        return Result(Decision(Outcome.REFUSE, "this idempotency key was already used for a different approval"))
     if existing is not None:
         return Result(
             Decision(Outcome.PROCEED, "already paid under this idempotency key; returning that order",
@@ -80,7 +84,7 @@ def countersign(
     if decision.outcome is not Outcome.PROCEED:
         return Result(decision)
 
-    order = merchant.pay(live, decision, idempotency_key)
+    order = merchant.pay(live, decision, idempotency_key, approval_hash=approval.hash)
     signed = None
     if signer is not None:
         body = receipts.build(approval=approval, live=live, decision=decision, order=order, agent=agent, decided_at=now)
