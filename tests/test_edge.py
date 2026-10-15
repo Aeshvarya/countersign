@@ -161,9 +161,9 @@ class SlowMerchant(FakeMerchant):
         time.sleep(0.2)
         return super().offer(*args, **kwargs)
 
-    def pay(self, terms, decision, idempotency_key):
+    def pay(self, terms, decision, idempotency_key, approval_hash=None):
         self.pays += 1
-        return super().pay(terms, decision, idempotency_key)
+        return super().pay(terms, decision, idempotency_key, approval_hash=approval_hash)
 
 
 class CheckoutBase(EdgeTest):
