@@ -59,6 +59,9 @@ uv venv && uv pip install -e '.[dev]'
 
 Newest first.
 
+### 2026-10-17
+- **Edge body cap** (Varunika), branch `varunika/edge-body-cap`, stacked on `aeshvarya/c2-content-digest`: with C2 the edge reads every POST body before the TAP check, so an unsigned caller could make it hold a body of any size. Now a body over 64 KiB is refused with 413 before it is read, and a chunked body with no `Content-Length` with 411. 105 tests pass, and still 105 with `a7-hosted-demo` merged on top. Touches only `edge/`; merges after c2.
+
 ### 2026-10-16
 - **Merged V2 + V3** (reviewed by Aeshvarya): `varunika/v3-registry` (with `v2-edge`) into `main`, 93 tests.
 - **C6 key reuse** (Aeshvarya, on `main`): a reused key under another approval is refused instead of reported as paid. Varunika's `SlowMerchant` test double updated for the new `pay(..., approval_hash=)` argument.
