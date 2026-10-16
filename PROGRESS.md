@@ -16,7 +16,7 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 _Updated 2026-10-17_
 
 - **State:** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 55 tests pass offline. Nothing has run against Airwallex yet.
-- **Next action:** Varunika: review `aeshvarya/c2-content-digest` (touches `tap.verify` and `edge/app.py`, your paths) and `aeshvarya/a7-hosted-demo` (stacked on it) before the C1–C8 freeze on Sun 10-18; no reply by Sat 10-17 20:00 IST counts as approval and Aeshvarya merges. Then `varunika/edge-body-cap` (stacked on c2, `edge/` only) merges after it. V1 is still open. Aeshvarya: sandbox keys into `.env`, then A2; deploy A7 once merged.
+- **Next action:** Aeshvarya: sandbox keys into `.env`, then `python scripts/payment_spike.py --shopper INR` (A2 + A6 live in one run); deploy A7 to Render. Varunika: V1; read the C9 proposal below before starting V5; V3 Visa Slack ask. Both: the application text (closes Fri 10-23).
 - **Waiting on:** Airwallex devhelp for merchant-side Agentic Commerce enablement and Airi CLI access (requested 2026-10-10, auto-reply only).
 - **Deadline:** Fri 2026-11-13 23:59 IST. **Target submission: Thu 2026-11-12.** Plan: [WORKPLAN.md](WORKPLAN.md).
 
@@ -34,6 +34,8 @@ _Updated 2026-10-17_
 - **2026-10-11** The agent is a manual tool loop so it can pause for the shopper's approval between web requests. Its tools never take an amount: approval screens and checkout read the merchant's stored offer. Default model `claude-opus-5` (env `COUNTERSIGN_AGENT_MODEL`), with the API's server-side refusal fallback on. (Aeshvarya)
 - **2026-10-11** A refusal at the merchant's edge is a tool result the agent reports, never an exception that ends the session. (Aeshvarya)
 - **2026-10-16** An idempotency key reused under a different approval is refused; orders record the approval hash they were charged under. (Aeshvarya, from Varunika's 10-11 hand-off)
+- **2026-10-17** C2 body binding and the A7 hosted demo merged after Varunika built `edge-body-cap` on them and tested all three together (105 tests). (Aeshvarya)
+- **2026-10-17** **C9, proposed for V5:** with a real card, payment completes in the shopper's browser. Countersign PROCEED → `payments.start()` creates the intent in the merchant currency (order number + approval hash in it, idempotency key as Airwallex `request_id`) → the browser mounts Drop-in with `quote_id` (Drop-in applies the quote; we do not attach it server-side) → the merchant fetches the intent and `check_paid()` compares status, amount and currency, order number, approval hash and rate lock → only then is the order paid and the receipt signed. Until V5, the demo keeps `FakeMerchant`'s instant payment. Varunika to confirm or counter before V5 starts. (Aeshvarya)
 - **2026-10-16** Proposed, needs Varunika's OK before the freeze: a request with a body signs its RFC 9530 `Content-Digest` (covered component `content-digest`), and the edge refuses a payment that does not. Requests without a body keep Visa's exact two-component format, so A3 interop is unchanged (re-run 10-16: passes). Branch `aeshvarya/c2-content-digest`. (Aeshvarya, answering Varunika's 10-11 question)
 
 ## Open questions
@@ -58,6 +60,11 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-10-17
+- **Merged** (Aeshvarya): `aeshvarya/c2-content-digest`, `aeshvarya/a7-hosted-demo`, `varunika/edge-body-cap`, in that order; 105 tests.
+- **A6 code done** (Aeshvarya): `payments.py`: `AirwallexPayments` (create, retrieve, attach_quote, `start` → Drop-in handoff) and `check_paid` (every field or no); `scripts/payment_spike.py` runs A2 + A6 against the sandbox in one command (real rate lock, real intent, Drop-in with the test card, server-side check, our rounding vs theirs). Waits on sandbox keys.
+- **A5** (Aeshvarya): a +1% rate nudge next to +5%, so the demo shows a move under the ceiling and one over it.
 
 ### 2026-10-17
 - **Edge body cap** (Varunika), branch `varunika/edge-body-cap`, stacked on `aeshvarya/c2-content-digest`: with C2 the edge reads every POST body before the TAP check, so an unsigned caller could make it hold a body of any size. Now a body over 64 KiB is refused with 413 before it is read, and a chunked body with no `Content-Length` with 411. 105 tests pass, and still 105 with `a7-hosted-demo` merged on top. Touches only `edge/`; merges after c2.

@@ -24,7 +24,10 @@ Against the Airwallex sandbox (copy `.env.example` to `.env` and fill it in):
 ```bash
 set -a; . ./.env; set +a
 .venv/bin/python -m countersign fx --merchant USD --shopper INR   # lock a real rate
+.venv/bin/python scripts/payment_spike.py --shopper INR          # rate lock + payment with the sandbox test card, checked end to end
 ```
+
+Deploy the demo: Render → New → Blueprint → this repository (`render.yaml`). Set `ANTHROPIC_API_KEY` there to run Claude as the agent.
 
 ## How it works
 
@@ -49,7 +52,10 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `src/countersign/receipt.py` | C8 the countersigned receipt |
 | `src/countersign/agent/` | the shopping agent: tool loop, approval pause, TAP-signed shop clients |
 | `src/countersign/web/` | the demo app |
+| `src/countersign/payments.py` | the card payment: Airwallex intent, Drop-in handoff, server-side check |
+| `src/countersign/edge/` | the merchant's HTTP API behind the TAP check |
 | `src/countersign/airwallex.py` | Airwallex REST client |
+| `scripts/payment_spike.py` | real rate lock + real payment on the Airwallex sandbox, in one command |
 | `scripts/tap_interop.py` | interop check against Visa's TAP reference code |
 | `PROGRESS.md`, `WORKPLAN.md` | where the work stands, who does what |
 

@@ -18,12 +18,12 @@ Every task is written so either builder can pick it up cold: why it exists, what
 | ID | Task | Type | Pts | Due | Status |
 |---|---|---|---|---|---|
 | A1 | Contracts C1–C7 and the offline core | tech | 6 | Sat 10-10 | done 10-10 |
-| A2 | Rate-lock spike on the sandbox | tech | 2 | Mon 10-12 | todo |
+| A2 | Rate-lock spike on the sandbox | tech | 2 | Mon 10-12 | script ready 10-17 (`scripts/payment_spike.py`); waits on sandbox keys |
 | A3 | TAP interop with Visa's reference verifier | tech | 2 | Tue 10-13 | done 10-11: both directions pass (`scripts/tap_interop.py`), fixed vector in tests |
 | A4 | The shopping agent (Claude) | tech | 6 | offline Sat 10-17, live Sun 11-01 | offline done 10-11 (scripted model, in-process edge); `HttpShop` written against C7, waits on V2; live Claude run waits on an API key |
 | A5 | Shopper screens: approve and ask-again | tech | 4 | Sun 10-18, final Thu 11-05 | v1 done 10-11: `uvicorn countersign.web.app:app`; identity from V8 still to apply |
-| A6 | Payment: intent + rate lock + hosted component | tech | 4 | spike Sat 10-24, done Mon 11-02 | todo |
-| A7 | Hosted demo | tech | 3 | Fri 11-06 | deploy-ready 10-16 on `aeshvarya/a7-hosted-demo` (Dockerfile, Render blueprint, keep-warm); live once merged and the host account exists |
+| A6 | Payment: intent + rate lock + hosted component | tech | 4 | spike Sat 10-24, done Mon 11-02 | code + tests done 10-17 (`payments.py`, C9 proposed); live run waits on keys |
+| A7 | Hosted demo | tech | 3 | Fri 11-06 | merged 10-17 (Dockerfile, Render blueprint, keep-warm); live once the Render account exists |
 | A8 | Application text, with V ✍ | non-tech | 1.5 | Tue 10-20 | todo |
 | A9 | Video production | non-tech | 4 | Wed 11-11 | todo |
 | A10 | Compliance and submission | non-tech | 1.5 | checklist Sun 11-08, submit Thu 11-12 | todo |
@@ -57,7 +57,7 @@ V = Varunika, A = Aeshvarya. One point ≈ one focused hour; estimates for balan
 |---|---|
 | `terms.py`, `decide.py`, `checkout.py`, `wire.py` | Aeshvarya (contracts: changes need V's OK after 10-18) |
 | `tap.py` | Shared. Aeshvarya owns `sign`; Varunika owns `verify`, the directory and the nonce cache |
-| `fx.py`, `airwallex.py`, `receipt.py` | Aeshvarya |
+| `fx.py`, `airwallex.py`, `receipt.py`, `payments.py` | Aeshvarya |
 | `merchant.py` | Shared. Interface and `FakeMerchant`: Aeshvarya. `AirwallexMerchant` (new file `airwallex_merchant.py`): Varunika |
 | `agent/` (new) | Aeshvarya |
 | `edge/` (new: the merchant HTTP API) | Varunika |
@@ -82,6 +82,7 @@ The seams between the two halves. They are on `main` now, in code, with tests, s
 | C5 | `decide(approval, live, now) → Decision` (proceed / reask / refuse) | `decide.py` | `test_decide.py` |
 | C6 | `countersign(merchant, approval, key, now) → Result`: idempotency first, then offer, decide, pay | `checkout.py` | `test_checkout.py` |
 | C7 | JSON on the wire; amounts as strings; the merchant HTTP API below | `wire.py` | `test_wire.py` |
+| C9 | Card payment (proposed 10-17): intent in merchant currency → Drop-in with `quote_id` → `check_paid` → paid + receipt | `payments.py` | `test_payments.py` |
 | C8 | Countersigned receipt: the merchant signs agent identity + approval hash + charge + order number; `receipt.verify` checks it offline | `receipt.py` | `test_receipt.py` |
 
 ### C7 · Merchant HTTP API (proposed; V2 builds it, A4 calls it)
