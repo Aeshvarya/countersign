@@ -16,6 +16,7 @@ try:
     from fastapi.testclient import TestClient
 
     from countersign.edge import create_app
+    from countersign.edge.app import MAX_BODY
 except ImportError:  # the server extra is not installed
     TestClient = None
 
@@ -214,6 +215,23 @@ class CheckoutTest(CheckoutBase):
         r = self.client.post("/checkout", content=data, headers={**unbound, "Content-Type": "application/json"})
         self.assertEqual(r.status_code, 401)
         self.assertIn("must sign its body", r.json()["refused"])
+
+    def test_an_oversized_body_is_refused_before_it_is_read(self):
+        data = b"x" * (MAX_BODY + 1)
+        for headers in ({}, self.sign("/checkout", tap.PAY, body=data)):  # unsigned, then signed
+            r = self.client.post("/checkout", content=data, headers={**headers, "Content-Type": "application/json"})
+            self.assertEqual(r.status_code, 413)
+            self.assertIn("over", r.json()["refused"])
+        self.assertEqual(self.merchant.orders, {})
+
+    def test_a_body_without_a_declared_length_is_refused(self):
+        data = json.dumps({"approval": wire.approval_to_json(self.approval), "idempotency_key": "order-1"}).encode()
+        headers = self.sign("/checkout", tap.PAY, body=data)
+        chunked = iter([data[:10], data[10:]])  # sent chunked, with no Content-Length
+        r = self.client.post("/checkout", content=chunked, headers={**headers, "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 411)
+        self.assertIn("Content-Length", r.json()["refused"])
+        self.assertEqual(self.merchant.orders, {})
 
     def test_paying_needs_a_payer_signature(self):
         self.assertEqual(self.checkout(headers={}).status_code, 401)

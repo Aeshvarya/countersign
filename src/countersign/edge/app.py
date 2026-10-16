@@ -44,6 +44,21 @@ def required_tag(method: str, path: str) -> str | None:
     return None
 
 
+# The largest body the edge reads. A payment signs its body, so the body is read
+# before the TAP check; without a cap, any caller, signed or not, could make the
+# edge hold an arbitrarily large body in memory. A real approval is a few KiB.
+MAX_BODY = 64 * 1024
+
+
+def body_refusal(content_length: str | None) -> tuple[int, str] | None:
+    """Why a request body is refused before a byte of it is read, or None."""
+    if content_length is None:  # chunked: the cap could not be checked up front
+        return 411, "a request body must declare its Content-Length"
+    if not content_length.isdigit() or int(content_length) > MAX_BODY:
+        return 413, f"the request body is over {MAX_BODY} bytes"
+    return None
+
+
 def signed_path(request: Request) -> str:
     """The path as sent, query string included: what Visa's proxy signs (req.url)."""
     raw = request.scope.get("raw_path") or request.url.path.encode()
@@ -120,7 +135,15 @@ def create_app(
         # A request with a body is checked against the body actually received, and a
         # payment must sign its body: otherwise the approval it carries could be swapped
         # under a valid signature.
-        body = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
+        body = None
+        if request.method in ("POST", "PUT", "PATCH"):
+            refusal = body_refusal(request.headers.get("content-length"))
+            if refusal is not None:
+                status, reason = refusal
+                edge_log.append({"path": path, "tag": tag, "ok": False, "detail": reason})
+                del edge_log[:-500]
+                return JSONResponse({"refused": reason}, status_code=status)
+            body = await request.body()
         # Off the event loop: a key lookup can wait on a remote registry, and one
         # slow agent must not hold up every other request at the edge.
         result = await run_in_threadpool(tap.verify, dict(request.headers), authority=authority, path=path,
