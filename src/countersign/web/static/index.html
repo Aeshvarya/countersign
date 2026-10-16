@@ -116,6 +116,7 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 .sec { margin-top: 18px; }
 .sec h4 { margin: 0 0 8px; font-size: 13px; font-weight: 900; color: var(--ink-3); }
 .levers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 420px) { .levers { grid-template-columns: 1fr; } }
 .receipt { border: 2px solid var(--line); border-radius: 14px; padding: 12px; font-size: 13.5px; font-weight: 700; }
 .receipt .rn { font-size: 17px; font-weight: 900; }
 .findings { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
@@ -169,7 +170,8 @@ header { display: flex; align-items: center; justify-content: space-between; gap
         <div class="edge" id="edge"></div>
         <div class="sec"><h4>Change the world before payment</h4>
           <div class="levers">
-            <button class="btn ghost small" data-lever="rate">Move the rate +5%</button>
+            <button class="btn ghost small" data-lever="rate" data-pct="1.01">Nudge the rate +1%</button>
+            <button class="btn ghost small" data-lever="rate" data-pct="1.05">Move the rate +5%</button>
             <button class="btn ghost small" data-lever="price">Raise price 12%</button>
             <button class="btn ghost small" data-lever="delivery">Delay delivery</button>
             <button class="btn ghost small" data-lever="bot">Send bots</button>
@@ -382,7 +384,7 @@ async function verify(i, tamper) {
 
 document.querySelectorAll("[data-lever]").forEach((b) => b.onclick = async () => {
   const lever = b.dataset.lever;
-  const body = lever === "rate" ? { value: (Number(state.rate) * 1.05).toFixed(2) } : {};
+  const body = lever === "rate" ? { value: (Number(state.rate) * Number(b.dataset.pct || 1.05)).toFixed(4) } : {};
   try { state = await api(`/api/sessions/${sid}/levers/${lever}`, body); render(); } catch (e) { toast(e.message); }
 });
 </script>
