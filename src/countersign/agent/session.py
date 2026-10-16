@@ -18,7 +18,7 @@ from typing import Any, Callable
 from ..decide import Outcome
 from ..terms import Approval, Terms, money
 from .model import Model
-from .shop import Refused, ShopClient, new_idempotency_key
+from .shop import MerchantError, Refused, ShopClient, new_idempotency_key
 
 SYSTEM = """You are a shopping agent buying on behalf of one shopper, from one merchant.
 
@@ -245,6 +245,10 @@ class AgentSession:
                 except Refused as err:
                     self._event("edge", f"Merchant edge refused the request: {err}")
                     payload = {"error": f"merchant edge refused: {err}"}
+                except MerchantError as err:
+                    detail = err.payload.get("error") if isinstance(err.payload, dict) else None
+                    self._event("tool", f"Merchant answered: {detail or err}")
+                    payload = {"error": detail or str(err)}
                 results.append(_result(block.id, payload))
 
             if self.pending is not None:
