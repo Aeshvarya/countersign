@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 import unittest
@@ -46,15 +47,18 @@ class EdgeTest(unittest.TestCase):
                               signer=receipt.MerchantSigner(self.merchant_key, "m-1"))
         self.client = TestClient(self.app)
 
-    def sign(self, path, tag=tap.BROWSE, key=None, authority=AUTHORITY, key_id="k1"):
+    def sign(self, path, tag=tap.BROWSE, key=None, authority=AUTHORITY, key_id="k1", body=None):
         return tap.sign(key or self.key, authority=authority, path=path, key_id=key_id,
-                        signature_agent=AGENT, tag=tag).headers()
+                        signature_agent=AGENT, tag=tag, body=body).headers()
 
     def get(self, path, tag=tap.BROWSE, headers=None):
         return self.client.get(path, headers=self.sign(path, tag) if headers is None else headers)
 
-    def post(self, path, body, tag=tap.BROWSE, headers=None):
-        return self.client.post(path, json=body, headers=self.sign(path, tag) if headers is None else headers)
+    def post(self, path, body, tag=tap.BROWSE, headers=None, agent_key=None, key_id="k1"):
+        # Bodies are signed (content-digest), so send the exact bytes that were signed.
+        data = json.dumps(body).encode()
+        signed = self.sign(path, tag, key=agent_key, key_id=key_id, body=data) if headers is None else headers
+        return self.client.post(path, content=data, headers={**signed, "Content-Type": "application/json"})
 
 
 class PairTwoOverHttpTest(EdgeTest):
@@ -175,10 +179,10 @@ class CheckoutBase(EdgeTest):
         self.approval = Approval.grant(terms, terms.shopper_total * Decimal("1.02"), "shopper@example.com",
                                        now, now + timedelta(minutes=30))
 
-    def checkout(self, approval=None, key="order-1", tag=tap.PAY, headers=None):
+    def checkout(self, approval=None, key="order-1", tag=tap.PAY, headers=None, agent_key=None, key_id="k1"):
         body = {"approval": approval if isinstance(approval, dict) else wire.approval_to_json(approval or self.approval),
                 "idempotency_key": key}
-        return self.post("/checkout", body, tag=tag, headers=headers)
+        return self.post("/checkout", body, tag=tag, headers=headers, agent_key=agent_key, key_id=key_id)
 
 
 class CheckoutTest(CheckoutBase):
@@ -192,6 +196,24 @@ class CheckoutTest(CheckoutBase):
         self.assertTrue(receipt.verify(out["receipt"], self.merchant_key.public_key(), self.approval).ok)
         self.assertEqual(out["receipt"]["body"]["agent"]["key_id"], "k1")
         self.assertEqual(out["receipt"]["body"]["agent"]["tag"], tap.PAY)
+
+    def test_an_approval_swapped_in_transit_is_refused(self):
+        signed_for = json.dumps({"approval": wire.approval_to_json(self.approval), "idempotency_key": "order-1"}).encode()
+        headers = self.sign("/checkout", tap.PAY, body=signed_for)
+        bigger = Approval.grant(self.approval.terms, self.approval.ceiling * 10, "shopper@example.com",
+                                self.approval.approved_at, self.approval.expires_at)
+        swapped = json.dumps({"approval": wire.approval_to_json(bigger), "idempotency_key": "order-1"}).encode()
+        r = self.client.post("/checkout", content=swapped, headers={**headers, "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 401)
+        self.assertIn("body does not match", r.json()["refused"])
+        self.assertEqual(self.merchant.orders, {})
+
+    def test_a_payment_must_sign_its_body(self):
+        data = json.dumps({"approval": wire.approval_to_json(self.approval), "idempotency_key": "order-1"}).encode()
+        unbound = self.sign("/checkout", tap.PAY)  # signs host and path only
+        r = self.client.post("/checkout", content=data, headers={**unbound, "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 401)
+        self.assertIn("must sign its body", r.json()["refused"])
 
     def test_paying_needs_a_payer_signature(self):
         self.assertEqual(self.checkout(headers={}).status_code, 401)
@@ -251,7 +273,7 @@ class CheckoutTest(CheckoutBase):
         mine = self.checkout().json()
         as_other = lambda path: self.sign(path, tap.PAY, key=self.other_key, key_id="k2")
         self.assertEqual(self.get("/orders/order-1", headers=as_other("/orders/order-1")).status_code, 404)
-        theirs = self.checkout(headers=as_other("/checkout")).json()
+        theirs = self.checkout(agent_key=self.other_key, key_id="k2").json()
         self.assertEqual(theirs["decision"]["outcome"], "refuse")
         self.assertIsNone(theirs["order"])
         self.assertIsNone(theirs["receipt"])

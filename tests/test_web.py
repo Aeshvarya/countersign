@@ -44,7 +44,7 @@ class WebFlowTest(unittest.TestCase):
         sid = self.client.post("/api/sessions", json={"request": "Buy me a kettle", "model": "scripted"}).json()["id"]
         self.wait(sid, "awaiting_approval")
         edge = self.client.post(f"/api/sessions/{sid}/levers/bot").json()["edge"]
-        self.assertEqual(sum(not e["ok"] for e in edge), 4)
+        self.assertEqual(sum(not e["ok"] for e in edge), 5)
 
 
 if __name__ == "__main__":
