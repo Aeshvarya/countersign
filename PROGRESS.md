@@ -13,10 +13,10 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-10-16_
+_Updated 2026-10-17_
 
 - **State:** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 55 tests pass offline. Nothing has run against Airwallex yet.
-- **Next action:** Varunika: review `aeshvarya/c2-content-digest` (touches `tap.verify` and `edge/app.py`, your paths) and `aeshvarya/a7-hosted-demo` (stacked on it) before the C1–C8 freeze on Sun 10-18; no reply by Sat 10-17 20:00 IST counts as approval and Aeshvarya merges. V1 is still open. Aeshvarya: sandbox keys into `.env`, then A2; deploy A7 once merged.
+- **Next action:** Varunika: review `aeshvarya/c2-content-digest` (touches `tap.verify` and `edge/app.py`, your paths) and `aeshvarya/a7-hosted-demo` (stacked on it) before the C1–C8 freeze on Sun 10-18; no reply by Sat 10-17 20:00 IST counts as approval and Aeshvarya merges. Then `varunika/edge-body-cap` (stacked on c2, `edge/` only) merges after it. V1 is still open. Aeshvarya: sandbox keys into `.env`, then A2; deploy A7 once merged.
 - **Waiting on:** Airwallex devhelp for merchant-side Agentic Commerce enablement and Airi CLI access (requested 2026-10-10, auto-reply only).
 - **Deadline:** Fri 2026-11-13 23:59 IST. **Target submission: Thu 2026-11-12.** Plan: [WORKPLAN.md](WORKPLAN.md).
 
