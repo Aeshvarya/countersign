@@ -2,6 +2,6 @@
 
 from .model import ClaudeModel, ScriptedModel
 from .session import AgentSession
-from .shop import AgentKey, HttpShop, LocalShop, Refused
+from .shop import AgentKey, HttpShop, InProcessShop, LocalShop, MerchantError, Refused
 
-__all__ = ["AgentKey", "AgentSession", "ClaudeModel", "HttpShop", "LocalShop", "Refused", "ScriptedModel"]
+__all__ = ["AgentKey", "AgentSession", "ClaudeModel", "HttpShop", "InProcessShop", "LocalShop", "MerchantError", "Refused", "ScriptedModel"]

@@ -48,6 +48,15 @@ class Refused(Exception):
     """The merchant's edge refused the request (TAP check failed)."""
 
 
+class MerchantError(Exception):
+    """The merchant answered with an error status other than a TAP refusal."""
+
+    def __init__(self, status: int, payload: Any):
+        self.status = status
+        self.payload = payload
+        super().__init__(f"merchant answered HTTP {status}: {payload}")
+
+
 class ShopClient(Protocol):
     def search(self, query: str, limit: int) -> list[Product]: ...
     def offer(self, cart: dict[str, int], shopper_currency: str) -> Terms: ...
@@ -112,22 +121,32 @@ class HttpShop:
         parsed = urllib.parse.urlsplit(base_url)
         self.base_url = base_url.rstrip("/")
         self.authority = parsed.netloc
+        self.base_path = parsed.path.rstrip("/")
         self.agent_key = agent_key
         self.timeout = timeout
 
-    def _call(self, method: str, path: str, tag: str, body: dict | None = None) -> Any:
-        data = json.dumps(body).encode() if body is not None else None
-        # A request with a body signs its Content-Digest, so the body cannot be swapped.
-        headers = {"Content-Type": "application/json", **self.agent_key.sign(self.authority, path, tag, data)}
-        req = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)
+    def _transport(self, method: str, url: str, data: bytes | None, headers: dict[str, str]) -> tuple[int, bytes]:
+        """Send one request; (status, body). Subclasses can route it elsewhere."""
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read() or b"null")
+                return resp.status, resp.read()
         except urllib.error.HTTPError as err:
-            payload = json.loads(err.read() or b"{}")
-            if err.code == 401:
-                raise Refused(payload.get("refused", "refused")) from None
-            raise
+            return err.code, err.read()
+
+    def _call(self, method: str, path: str, tag: str, body: dict | None = None) -> Any:
+        data = json.dumps(body).encode() if body is not None else None
+        # TAP signs the path the merchant actually receives, base path included.
+        signed_path = self.base_path + path
+        # A request with a body signs its Content-Digest, so the body cannot be swapped.
+        headers = {"Content-Type": "application/json", **self.agent_key.sign(self.authority, signed_path, tag, data)}
+        status, raw = self._transport(method, f"{self.base_url}{path}", data, headers)
+        payload = json.loads(raw or b"null")
+        if 200 <= status < 300:
+            return payload
+        if status == 401:
+            raise Refused((payload or {}).get("refused", "refused"))
+        raise MerchantError(status, payload)
 
     def search(self, query: str, limit: int) -> list[Product]:
         from decimal import Decimal
@@ -161,13 +180,32 @@ class HttpShop:
     def _existing(self, idempotency_key: str) -> Result | None:
         try:
             order = self._call("GET", f"/orders/{urllib.parse.quote(idempotency_key)}", tap.PAY)
-        except urllib.error.HTTPError as err:
-            if err.code == 404:
+        except MerchantError as err:
+            if err.status == 404:
                 return None
             raise
         o = wire.order_from_json(order)
         return Result(Decision(Outcome.PROCEED, "already paid under this idempotency key",
                                charge=o.amount, currency=o.currency), o)
+
+
+class InProcessShop(HttpShop):
+    """HttpShop against a merchant edge app running in this process.
+
+    Every call is a real HTTP request through the edge's whole stack (TAP
+    middleware, body binding, routing, per-key locks), only without a socket.
+    The demo app uses it so each visitor gets their own merchant and edge.
+    """
+
+    def __init__(self, edge_app: Any, agent_key: AgentKey, authority: str, currency: str = "USD"):
+        from fastapi.testclient import TestClient
+
+        super().__init__(f"http://{authority}", agent_key, currency)
+        self.client = TestClient(edge_app, base_url=f"http://{authority}")
+
+    def _transport(self, method: str, url: str, data: bytes | None, headers: dict[str, str]) -> tuple[int, bytes]:
+        response = self.client.request(method, url, content=data, headers=headers)
+        return response.status_code, response.content
 
 
 def new_idempotency_key() -> str:
