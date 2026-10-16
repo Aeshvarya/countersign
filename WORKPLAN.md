@@ -23,7 +23,7 @@ Every task is written so either builder can pick it up cold: why it exists, what
 | A4 | The shopping agent (Claude) | tech | 6 | offline Sat 10-17, live Sun 11-01 | offline done 10-11 (scripted model, in-process edge); `HttpShop` written against C7, waits on V2; live Claude run waits on an API key |
 | A5 | Shopper screens: approve and ask-again | tech | 4 | Sun 10-18, final Thu 11-05 | v1 done 10-11: `uvicorn countersign.web.app:app`; identity from V8 still to apply |
 | A6 | Payment: intent + rate lock + hosted component | tech | 4 | spike Sat 10-24, done Mon 11-02 | todo |
-| A7 | Hosted demo | tech | 3 | Fri 11-06 | todo |
+| A7 | Hosted demo | tech | 3 | Fri 11-06 | deploy-ready 10-16 on `aeshvarya/a7-hosted-demo` (Dockerfile, Render blueprint, keep-warm); live once merged and the host account exists |
 | A8 | Application text, with V ✍ | non-tech | 1.5 | Tue 10-20 | todo |
 | A9 | Video production | non-tech | 4 | Wed 11-11 | todo |
 | A10 | Compliance and submission | non-tech | 1.5 | checklist Sun 11-08, submit Thu 11-12 | todo |

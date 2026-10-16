@@ -13,10 +13,10 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-10-11_
+_Updated 2026-10-16_
 
 - **State:** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 55 tests pass offline. Nothing has run against Airwallex yet.
-- **Next action:** Varunika: V1 (was due Mon 10-12); merge `varunika/v2-edge`, then `varunika/v3-registry` (CI green, 93 tests; `main` has 55); V3 ask in the Visa Slack Wed 10-14. Aeshvarya: sandbox keys into `.env`, then A2; the edge is ready for A7 to serve.
+- **Next action:** Varunika: review `aeshvarya/c2-content-digest` (touches `tap.verify` and `edge/app.py`, your paths) and `aeshvarya/a7-hosted-demo` (stacked on it) before the C1–C8 freeze on Sun 10-18; no reply by Sat 10-17 20:00 IST counts as approval and Aeshvarya merges. V1 is still open. Aeshvarya: sandbox keys into `.env`, then A2; deploy A7 once merged.
 - **Waiting on:** Airwallex devhelp for merchant-side Agentic Commerce enablement and Airi CLI access (requested 2026-10-10, auto-reply only).
 - **Deadline:** Fri 2026-11-13 23:59 IST. **Target submission: Thu 2026-11-12.** Plan: [WORKPLAN.md](WORKPLAN.md).
 
@@ -33,6 +33,8 @@ _Updated 2026-10-11_
 - **2026-10-11** The merchant signs a receipt at charge time (C8): agent identity, approval hash and ceiling, the charge at the locked rate, and the order number, under the merchant's Ed25519 key. It answers "my agent bought this without asking" offline, for the shopper, their bank or a dispute team. (Aeshvarya; new contract before the 10-18 freeze, Varunika to confirm with V1)
 - **2026-10-11** The agent is a manual tool loop so it can pause for the shopper's approval between web requests. Its tools never take an amount: approval screens and checkout read the merchant's stored offer. Default model `claude-opus-5` (env `COUNTERSIGN_AGENT_MODEL`), with the API's server-side refusal fallback on. (Aeshvarya)
 - **2026-10-11** A refusal at the merchant's edge is a tool result the agent reports, never an exception that ends the session. (Aeshvarya)
+- **2026-10-16** An idempotency key reused under a different approval is refused; orders record the approval hash they were charged under. (Aeshvarya, from Varunika's 10-11 hand-off)
+- **2026-10-16** Proposed, needs Varunika's OK before the freeze: a request with a body signs its RFC 9530 `Content-Digest` (covered component `content-digest`), and the edge refuses a payment that does not. Requests without a body keep Visa's exact two-component format, so A3 interop is unchanged (re-run 10-16: passes). Branch `aeshvarya/c2-content-digest`. (Aeshvarya, answering Varunika's 10-11 question)
 
 ## Open questions
 
@@ -42,8 +44,8 @@ _Updated 2026-10-11_
 - **Does Airwallex round the shopper amount half-up?** A2 compares their payment intent amount with `computed_shopper_total()`.
 - **Live Visa TAP key directory or VIC sandbox for teams?** V3 asks.
 - **Merchant-side enablement:** when, and does it include the Agent Trust & Risk SDK?
-- **Does code written before the 10-25 build start count?** Most of the product was built 10-10 to 10-11. The rules tab is behind the HackerEarth login; whoever is logged in, copy the exact rule here.
-- **C2: should payment requests bind the body?** The `/checkout` signature covers `@authority` and `@path` only, so the approval it carries is not bound to the agent's signature. Airwallex's starter Kit 10 (`everyai-com/airwallex-hackathon`, `src/core/tap.ts`) covers an RFC 9421 `content-digest` on payment requests. Decide before the 10-18 freeze; interop with Visa's reference verifier (A3) would need re-checking.
+- **Does code written before the 10-25 build start count?** The public page is silent. Asked Airwallex devhelp directly on 2026-10-16 (same thread as the access request). Still worth copying the HackerEarth rules tab here.
+- **C2: should payment requests bind the body?** Answered by `aeshvarya/c2-content-digest` (see Decisions 2026-10-16); waiting on Varunika's review.
 
 ## Quick reference
 
@@ -56,6 +58,12 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-10-16
+- **Merged V2 + V3** (reviewed by Aeshvarya): `varunika/v3-registry` (with `v2-edge`) into `main`, 93 tests.
+- **C6 key reuse** (Aeshvarya, on `main`): a reused key under another approval is refused instead of reported as paid. Varunika's `SlowMerchant` test double updated for the new `pay(..., approval_hash=)` argument.
+- **C2 body binding** (Aeshvarya, branch `aeshvarya/c2-content-digest`, for review): `Content-Digest` signed on requests with a body; the edge requires it on payments; a swapped approval is refused at the edge. Interop with Visa's reference code re-run: passes (the script now runs Visa's proxy on a free upstream port).
+- **A7 ready to deploy** (Aeshvarya, branch `aeshvarya/a7-hosted-demo`, stacked on c2): every demo visitor gets their own merchant behind the real `edge` app; `InProcessShop` sends real HTTP requests through it without a socket; the bots lever fires five real attacks (unsigned, stranger's key, browse tag paying, approval swapped in transit, replay). Dockerfile, Render blueprint, `/healthz`, keep-warm ping. Container built and driven end to end locally.
 
 ### 2026-10-13
 - **V3 code** (Varunika), branch `varunika/v3-registry`, stacked on V2: `tap.RegistryDirectory` reads agent keys from a registry with the API of Visa's reference agent-registry. Visa's sample data gives two agents a key called `primary` and its `GET /keys/{key_id}` ignores deactivated agents, so keys are resolved per agent from `GET /agents`, falling back to `/keys/{key_id}` bound to `agent_domain`. Cached 60 s; an unreachable registry is a refusal with its own reason. Found and fixed: the edge checked TAP on its event loop, so one slow key lookup held other agents' requests (0.93 s in a test); now off the loop, nonce cache locked. Not yet run against Visa's real registry service.
