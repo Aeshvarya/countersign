@@ -224,6 +224,15 @@ class CheckoutTest(CheckoutBase):
             self.assertIn("over", r.json()["refused"])
         self.assertEqual(self.merchant.orders, {})
 
+    def test_a_body_without_a_declared_length_is_refused(self):
+        data = json.dumps({"approval": wire.approval_to_json(self.approval), "idempotency_key": "order-1"}).encode()
+        headers = self.sign("/checkout", tap.PAY, body=data)
+        chunked = iter([data[:10], data[10:]])  # sent chunked, with no Content-Length
+        r = self.client.post("/checkout", content=chunked, headers={**headers, "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 411)
+        self.assertIn("Content-Length", r.json()["refused"])
+        self.assertEqual(self.merchant.orders, {})
+
     def test_paying_needs_a_payer_signature(self):
         self.assertEqual(self.checkout(headers={}).status_code, 401)
         r = self.checkout(tag=tap.BROWSE)

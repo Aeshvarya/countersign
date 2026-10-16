@@ -52,7 +52,9 @@ MAX_BODY = 64 * 1024
 
 def body_refusal(content_length: str | None) -> tuple[int, str] | None:
     """Why a request body is refused before a byte of it is read, or None."""
-    if content_length is not None and (not content_length.isdigit() or int(content_length) > MAX_BODY):
+    if content_length is None:  # chunked: the cap could not be checked up front
+        return 411, "a request body must declare its Content-Length"
+    if not content_length.isdigit() or int(content_length) > MAX_BODY:
         return 413, f"the request body is over {MAX_BODY} bytes"
     return None
 
