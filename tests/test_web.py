@@ -45,6 +45,7 @@ class WebFlowTest(unittest.TestCase):
         self.wait(sid, "awaiting_approval")
         edge = self.client.post(f"/api/sessions/{sid}/levers/bot").json()["edge"]
         self.assertEqual(sum(not e["ok"] for e in edge), 5)
+        self.assertTrue(any("body does not match" in e["detail"] for e in edge))
 
 
 if __name__ == "__main__":

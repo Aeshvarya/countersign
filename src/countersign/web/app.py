@@ -3,8 +3,10 @@
     uvicorn countersign.web.app:app --reload        # http://127.0.0.1:8000
 
 The agent is Claude when ANTHROPIC_API_KEY is set (COUNTERSIGN_MODEL=scripted
-forces the offline stand-in). The merchant is in-process (FakeMerchant behind
-a TAP-verifying edge) until the Airwallex merchant lands (WORKPLAN V5).
+forces the offline stand-in). Each visitor gets their own merchant behind their
+own copy of the real merchant edge (countersign.edge): every agent request is a
+real HTTP request through the edge's TAP check, without a socket. The merchant
+is FakeMerchant until the Airwallex merchant lands (WORKPLAN V5).
 
 Each agent action runs in a background thread; the page polls the session.
 """
@@ -27,12 +29,15 @@ from pydantic import BaseModel
 
 from .. import receipt as receipts
 from .. import tap, wire
-from ..agent import AgentKey, AgentSession, ClaudeModel, LocalShop, ScriptedModel
+from ..agent import AgentKey, AgentSession, ClaudeModel, InProcessShop, ScriptedModel
+from ..edge import create_app as create_edge
 from ..fx import FakeFx
 from ..merchant import FakeMerchant
 
 STATIC = Path(__file__).parent / "static"
 AGENT_DIRECTORY = "https://agents.countersign.dev"
+MERCHANT_HOST = "shop.countersign.dev"
+MAX_WORLDS = 200
 
 
 class Clock:
@@ -54,8 +59,10 @@ class World:
         self.merchant = FakeMerchant(self.fx)
         self.agent_key = AgentKey(Ed25519PrivateKey.generate(), "agent-key-1", AGENT_DIRECTORY)
         self.merchant_key = Ed25519PrivateKey.generate()
-        self.shop = LocalShop(self.merchant, self.agent_key, self.clock,
-                              signer=receipts.MerchantSigner(self.merchant_key, "merchant-key-1"))
+        directory = tap.StaticDirectory({(AGENT_DIRECTORY, "agent-key-1"): self.agent_key.key.public_key()})
+        self.edge = create_edge(self.merchant, directory, authority=MERCHANT_HOST, clock=self.clock,
+                                signer=receipts.MerchantSigner(self.merchant_key, "merchant-key-1"))
+        self.shop = InProcessShop(self.edge, self.agent_key, MERCHANT_HOST, currency=self.merchant.currency)
         use_claude = model_name != "scripted" and bool(os.environ.get("ANTHROPIC_API_KEY"))
         self.model_label = "Claude" if use_claude else "scripted agent (offline)"
         model = ClaudeModel() if use_claude else ScriptedModel()
@@ -103,7 +110,7 @@ class World:
             "rate": format(self.fx.rate, "f"),
             "events": s.events,
             "pending": pending,
-            "edge": self.shop.edge_log[-30:],
+            "edge": self.edge.state.edge_log[-30:],
             "receipts": s.receipts,
             "merchant_key": self.merchant_public_b64(),
             "orders": [wire.order_to_json(o) for o in self.merchant.orders.values()],
@@ -135,6 +142,11 @@ class Lever(BaseModel):
     value: str | None = None
 
 
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
@@ -145,6 +157,8 @@ def start(body: Start) -> dict[str, Any]:
     if body.currency not in ("INR", "EUR"):
         raise HTTPException(400, "currency must be INR or EUR")
     w = World(body.request.strip()[:300], body.currency, body.model or os.environ.get("COUNTERSIGN_MODEL"))
+    while len(WORLDS) >= MAX_WORLDS:  # a public demo must not grow without bound
+        WORLDS.pop(next(iter(WORLDS)))
     WORLDS[w.session.id] = w
     w.background(w.session.start, w.request)
     return w.view()
@@ -223,37 +237,37 @@ def lever_time(session_id: str, body: Lever) -> dict[str, Any]:
 
 @app.post("/api/sessions/{session_id}/levers/bot")
 def lever_bot(session_id: str) -> dict[str, Any]:
-    """Callers hit /checkout that are not the shopper's agent, or tamper with its request."""
+    """Real HTTP requests at the merchant's edge that are not the shopper's agent, or tamper with it."""
+    import json
+
     w = world(session_id)
-    shop = w.shop
+    client = w.shop.client
+    approval = next(iter(w.session.approvals.values()), None)
+    body = json.dumps({"approval": wire.approval_to_json(approval) if approval else {}, "idempotency_key": "bot-1"}).encode()
+    stranger = Ed25519PrivateKey.generate()
+
+    def signed(key, tag, data=body, path="/checkout"):
+        return tap.sign(key, authority=MERCHANT_HOST, path=path, key_id="agent-key-1",
+                        signature_agent=AGENT_DIRECTORY, tag=tag, body=data).headers()
+
+    swapped = json.dumps({"approval": "a bigger one", "idempotency_key": "bot-1"}).encode()
     attempts = [
-        ("unsigned bot", {}),
-        ("stranger's key", tap.sign(Ed25519PrivateKey.generate(), authority=shop.authority, path="/checkout",
-                                     key_id="agent-key-1", signature_agent=AGENT_DIRECTORY, tag=tap.PAY).headers()),
-        ("browse signature reused to pay", tap.sign(w.agent_key.key, authority=shop.authority, path="/checkout",
-                                                    key_id="agent-key-1", signature_agent=AGENT_DIRECTORY,
-                                                    tag=tap.BROWSE).headers()),
+        ("unsigned bot", {}, body),
+        ("stranger's key", signed(stranger, tap.PAY), body),
+        ("browse signature used to pay", signed(w.agent_key.key, tap.BROWSE), body),
+        ("approval swapped in transit", signed(w.agent_key.key, tap.PAY), swapped),
     ]
-    # A real agent's signed checkout, with the approval inside it swapped on the way.
-    import json as _json
-    signed_body = _json.dumps({"approval": "the one the shopper approved"}).encode()
-    swapped = tap.sign(w.agent_key.key, authority=shop.authority, path="/checkout", key_id="agent-key-1",
-                       signature_agent=AGENT_DIRECTORY, tag=tap.PAY, body=signed_body).headers()
-    try:
-        shop._edge("/checkout", tap.PAY, swapped, body=_json.dumps({"approval": "a bigger one"}).encode())
-    except Exception as err:
-        w.session._event("edge", f"Refused approval swapped in transit: {err}")
-    good = w.agent_key.sign(shop.authority, "/checkout", tap.PAY)
-    for name, headers in attempts:
-        try:
-            shop._edge("/checkout", tap.PAY, headers)
-        except Exception as err:
-            w.session._event("edge", f"Refused {name}: {err}")
-    shop._edge("/checkout", tap.PAY, good)  # the real agent, once
-    try:
-        shop._edge("/checkout", tap.PAY, good)  # the same signature, replayed
-    except Exception as err:
-        w.session._event("edge", f"Refused replayed signature: {err}")
+    for name, headers, data in attempts:
+        r = client.post("/checkout", content=data, headers={**headers, "Content-Type": "application/json"})
+        if r.status_code == 401:
+            w.session._event("edge", f"Refused {name}: {r.json()['refused']}")
+    # The real agent's signature for a harmless lookup, sent twice: the second is a replay.
+    lookup = tap.sign(w.agent_key.key, authority=MERCHANT_HOST, path="/orders/bot-1", key_id="agent-key-1",
+                      signature_agent=AGENT_DIRECTORY, tag=tap.PAY).headers()
+    client.get("/orders/bot-1", headers=lookup)
+    r = client.get("/orders/bot-1", headers=lookup)
+    if r.status_code == 401:
+        w.session._event("edge", f"Refused replayed signature: {r.json()['refused']}")
     return w.view()
 
 
