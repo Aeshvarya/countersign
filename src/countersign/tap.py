@@ -24,6 +24,7 @@ reference verifier is what makes this TAP rather than TAP-shaped.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import secrets
@@ -52,30 +53,38 @@ class Signed:
     signature_agent: str
     signature_input: str
     signature: str
+    content_digest: str | None = None
 
     def headers(self) -> dict[str, str]:
-        return {
+        headers = {
             "Signature-Agent": f'"{self.signature_agent}"',
             "Signature-Input": self.signature_input,
             "Signature": self.signature,
         }
+        if self.content_digest is not None:
+            headers["Content-Digest"] = self.content_digest
+        return headers
 
 
-def signature_params(created: int, expires: int, key_id: str, nonce: str, tag: str) -> str:
+def content_digest(body: bytes) -> str:
+    """RFC 9530 Content-Digest for a body: sha-256=:<base64>:"""
+    return f"sha-256=:{base64.b64encode(hashlib.sha256(body).digest()).decode()}:"
+
+
+def signature_params(created: int, expires: int, key_id: str, nonce: str, tag: str, *, with_body: bool = False) -> str:
+    covered = '"@authority" "@path" "content-digest"' if with_body else '"@authority" "@path"'
     return (
-        f'("@authority" "@path"); created={created}; expires={expires}; '
+        f'({covered}); created={created}; expires={expires}; '
         f'keyId="{key_id}"; alg="ed25519"; nonce="{nonce}"; tag="{tag}"'
     )
 
 
-def signature_base(authority: str, path: str, params: str) -> str:
-    return "\n".join(
-        [
-            f'"@authority": {authority}',
-            f'"@path": {path}',
-            f'"@signature-params": {params}',
-        ]
-    )
+def signature_base(authority: str, path: str, params: str, digest: str | None = None) -> str:
+    lines = [f'"@authority": {authority}', f'"@path": {path}']
+    if digest is not None:
+        lines.append(f'"content-digest": {digest}')
+    lines.append(f'"@signature-params": {params}')
+    return "\n".join(lines)
 
 
 def sign(
@@ -89,13 +98,19 @@ def sign(
     now: int | None = None,
     ttl: int = 480,
     nonce: str | None = None,
+    body: bytes | None = None,
 ) -> Signed:
+    """Sign a request. With a body, the signature also covers its Content-Digest,
+    so the body cannot be swapped under a valid signature. Without one, the
+    format is exactly Visa's reference sample."""
     if tag not in TAGS:
         raise ValueError(f"tag must be one of {TAGS}")
     created = int(time.time()) if now is None else now
-    params = signature_params(created, created + ttl, key_id, nonce or secrets.token_urlsafe(16), tag)
-    raw = key.sign(signature_base(authority, path, params).encode("utf-8"))
-    return Signed(signature_agent, f"sig2={params}", f"sig2=:{base64.b64encode(raw).decode()}:")
+    digest = content_digest(body) if body is not None else None
+    params = signature_params(created, created + ttl, key_id, nonce or secrets.token_urlsafe(16), tag,
+                              with_body=digest is not None)
+    raw = key.sign(signature_base(authority, path, params, digest).encode("utf-8"))
+    return Signed(signature_agent, f"sig2={params}", f"sig2=:{base64.b64encode(raw).decode()}:", digest)
 
 
 # ----------------------------------------------------------------- verifying
@@ -278,8 +293,14 @@ def verify(
     require_tag: str | None = None,
     now: int | None = None,
     skew: int = 60,
+    body: bytes | None = None,
+    require_body: bool = False,
 ) -> AgentIdentity | Rejection:
-    """Check one request. Every failure says why, so the refusal can be shown."""
+    """Check one request. Every failure says why, so the refusal can be shown.
+
+    A signature may also cover "content-digest"; then the Content-Digest header
+    must match the body actually received. `require_body` refuses a request
+    whose signature does not cover its body (the edge sets it for payments)."""
     lower = {k.lower(): v for k, v in headers.items()}
     agent = lower.get("signature-agent", "").strip().strip('"')
     signature_input = lower.get("signature-input", "")
@@ -292,8 +313,17 @@ def verify(
     if parsed is None or sig is None:
         return Rejection("the signature headers are not in TAP format")
     components, attrs = parsed
-    if components != ["@authority", "@path"]:
-        return Rejection("the signature must cover @authority and @path")
+    if components not in (["@authority", "@path"], ["@authority", "@path", "content-digest"]):
+        return Rejection("the signature must cover @authority and @path, and optionally content-digest")
+    digest = None
+    if "content-digest" in components:
+        digest = lower.get("content-digest", "").strip()
+        if not digest:
+            return Rejection("the signature covers content-digest but the request has no Content-Digest header")
+        if body is None or digest != content_digest(body):
+            return Rejection("the body does not match the signed content digest")
+    elif require_body:
+        return Rejection("a payment must sign its body: cover content-digest")
     if attrs.get("alg") != "ed25519":
         return Rejection("only ed25519 signatures are accepted")
     tag, nonce, key_id = attrs.get("tag"), attrs.get("nonce"), attrs.get("keyId")
@@ -322,7 +352,7 @@ def verify(
 
     params = signature_input.strip()[len("sig2="):]
     try:
-        public_key.verify(base64.b64decode(sig["b64"]), signature_base(authority, path, params).encode("utf-8"))
+        public_key.verify(base64.b64decode(sig["b64"]), signature_base(authority, path, params, digest).encode("utf-8"))
     except (InvalidSignature, ValueError):
         return Rejection("the signature does not match this merchant and page")
 

@@ -19,7 +19,9 @@ import ast
 import base64
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -32,6 +34,7 @@ from pathlib import Path
 from countersign import tap
 
 KEY_ID = "countersign-interop-1"
+PAGE_PORT = 3907  # Visa's proxy forwards to localhost:3000; a patched copy forwards here instead
 AGENT_DIR = "https://agents.countersign.dev"
 
 
@@ -83,8 +86,14 @@ def get(url: str, headers: dict[str, str]) -> int:
 def ours_to_visa(visa: Path, private_b64: str, public_b64: str) -> bool:
     key = tap.load_private_key(private_b64)
     registry = serve(9002, registry_handler(public_b64))
-    page = serve(3000, Page)
-    proxy = subprocess.Popen(["node", "server.js"], cwd=visa / "cdn-proxy", env={**os.environ, "PORT": "3001"},
+    page = serve(PAGE_PORT, Page)
+    # Run an unmodified copy of Visa's proxy except for its hardcoded upstream port,
+    # so the check works on machines where something else already holds :3000.
+    workdir = Path(tempfile.mkdtemp(prefix="visa-cdn-proxy-"))
+    source = (visa / "cdn-proxy" / "server.js").read_text().replace("http://localhost:3000", f"http://localhost:{PAGE_PORT}")
+    (workdir / "server.js").write_text(source)
+    (workdir / "node_modules").symlink_to(visa / "cdn-proxy" / "node_modules")
+    proxy = subprocess.Popen(["node", "server.js"], cwd=workdir, env={**os.environ, "PORT": "3001"},
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(50):
@@ -119,6 +128,7 @@ def ours_to_visa(visa: Path, private_b64: str, public_b64: str) -> bool:
         proxy.terminate()
         registry.shutdown()
         page.shutdown()
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def visa_to_ours(visa: Path, private_b64: str, public_b64: str) -> bool:

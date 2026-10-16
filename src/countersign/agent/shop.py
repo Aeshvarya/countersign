@@ -39,9 +39,9 @@ class AgentKey:
     key_id: str
     signature_agent: str
 
-    def sign(self, authority: str, path: str, tag: str) -> dict[str, str]:
+    def sign(self, authority: str, path: str, tag: str, body: bytes | None = None) -> dict[str, str]:
         return tap.sign(self.key, authority=authority, path=path, key_id=self.key_id,
-                        signature_agent=self.signature_agent, tag=tag).headers()
+                        signature_agent=self.signature_agent, tag=tag, body=body).headers()
 
 
 class Refused(Exception):
@@ -76,10 +76,12 @@ class LocalShop:
     def currency(self) -> str:
         return self.merchant.currency
 
-    def _edge(self, path: str, tag: str, headers: dict[str, str] | None = None) -> tap.AgentIdentity:
-        signed = headers if headers is not None else self.agent_key.sign(self.authority, path, tag)
+    def _edge(self, path: str, tag: str, headers: dict[str, str] | None = None,
+              body: bytes | None = None) -> tap.AgentIdentity:
+        signed = headers if headers is not None else self.agent_key.sign(self.authority, path, tag, body)
         result = tap.verify(signed, authority=self.authority, path=path, directory=self.directory,
-                            nonces=self.nonces, require_tag=tag)
+                            nonces=self.nonces, require_tag=tag, body=body,
+                            require_body=tag == tap.PAY and body is not None)
         self.edge_log.append({"path": path, "tag": tag, "ok": isinstance(result, tap.AgentIdentity),
                               "detail": result.key_id if isinstance(result, tap.AgentIdentity) else result.reason})
         if isinstance(result, tap.Rejection):
@@ -95,7 +97,9 @@ class LocalShop:
         return self.merchant.offer(cart, shopper_currency, self.clock())
 
     def checkout(self, approval: Approval, idempotency_key: str) -> Result:
-        identity = self._edge("/checkout", tap.PAY)
+        # The same bytes the HTTP client would send, so the signature binds the approval.
+        body = json.dumps({"approval": wire.approval_to_json(approval), "idempotency_key": idempotency_key}).encode()
+        identity = self._edge("/checkout", tap.PAY, body=body)
         return countersign(self.merchant, approval, idempotency_key, self.clock(),
                            agent=identity, signer=self.signer, store=self.store)
 
@@ -112,8 +116,9 @@ class HttpShop:
         self.timeout = timeout
 
     def _call(self, method: str, path: str, tag: str, body: dict | None = None) -> Any:
-        headers = {"Content-Type": "application/json", **self.agent_key.sign(self.authority, path, tag)}
         data = json.dumps(body).encode() if body is not None else None
+        # A request with a body signs its Content-Digest, so the body cannot be swapped.
+        headers = {"Content-Type": "application/json", **self.agent_key.sign(self.authority, path, tag, data)}
         req = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:

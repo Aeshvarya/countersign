@@ -223,7 +223,7 @@ def lever_time(session_id: str, body: Lever) -> dict[str, Any]:
 
 @app.post("/api/sessions/{session_id}/levers/bot")
 def lever_bot(session_id: str) -> dict[str, Any]:
-    """Three callers hit /checkout that are not the shopper's agent."""
+    """Callers hit /checkout that are not the shopper's agent, or tamper with its request."""
     w = world(session_id)
     shop = w.shop
     attempts = [
@@ -234,6 +234,15 @@ def lever_bot(session_id: str) -> dict[str, Any]:
                                                     key_id="agent-key-1", signature_agent=AGENT_DIRECTORY,
                                                     tag=tap.BROWSE).headers()),
     ]
+    # A real agent's signed checkout, with the approval inside it swapped on the way.
+    import json as _json
+    signed_body = _json.dumps({"approval": "the one the shopper approved"}).encode()
+    swapped = tap.sign(w.agent_key.key, authority=shop.authority, path="/checkout", key_id="agent-key-1",
+                       signature_agent=AGENT_DIRECTORY, tag=tap.PAY, body=signed_body).headers()
+    try:
+        shop._edge("/checkout", tap.PAY, swapped, body=_json.dumps({"approval": "a bigger one"}).encode())
+    except Exception as err:
+        w.session._event("edge", f"Refused approval swapped in transit: {err}")
     good = w.agent_key.sign(shop.authority, "/checkout", tap.PAY)
     for name, headers in attempts:
         try:

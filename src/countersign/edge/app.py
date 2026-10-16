@@ -117,10 +117,15 @@ def create_app(
     async def tap_check(request: Request, call_next):
         path = signed_path(request)
         tag = required_tag(request.method, request.url.path)
+        # A request with a body is checked against the body actually received, and a
+        # payment must sign its body: otherwise the approval it carries could be swapped
+        # under a valid signature.
+        body = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
         # Off the event loop: a key lookup can wait on a remote registry, and one
         # slow agent must not hold up every other request at the edge.
         result = await run_in_threadpool(tap.verify, dict(request.headers), authority=authority, path=path,
-                                         directory=directory, nonces=nonce_cache, require_tag=tag)
+                                         directory=directory, nonces=nonce_cache, require_tag=tag,
+                                         body=body, require_body=tag == tap.PAY and body is not None)
         ok = isinstance(result, tap.AgentIdentity)
         edge_log.append({"path": path, "tag": tag, "ok": ok, "detail": result.key_id if ok else result.reason})
         del edge_log[:-500]

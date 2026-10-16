@@ -124,5 +124,50 @@ class VerifyTest(unittest.TestCase):
         self.assertIsNotNone(key.public_key())
 
 
+class BodyBindingTest(unittest.TestCase):
+    def setUp(self):
+        self.key, self.d, self.n = setup()
+
+    def signed_with(self, body, nonce="b-1"):
+        return tap.sign(self.key, authority="shop.example", path="/checkout", key_id="k1", signature_agent=AGENT,
+                        tag=tap.PAY, now=NOW, nonce=nonce, body=body).headers()
+
+    def check(self, headers, body, require_body=True):
+        return check(headers, self.d, self.n, body=body, require_body=require_body)
+
+    def test_a_signed_body_verifies(self):
+        body = b'{"approval": {"ceiling": "10979.00"}}'
+        headers = self.signed_with(body)
+        self.assertEqual(headers["Content-Digest"], tap.content_digest(body))
+        self.assertIn('"content-digest"', headers["Signature-Input"])
+        self.assertIsInstance(self.check(headers, body), tap.AgentIdentity)
+
+    def test_a_swapped_body_is_refused(self):
+        headers = self.signed_with(b'{"ceiling": "10979.00"}')
+        r = self.check(headers, b'{"ceiling": "99999.00"}')
+        self.assertIn("body does not match", r.reason)
+
+    def test_a_swapped_body_with_a_matching_digest_header_still_fails_the_signature(self):
+        headers = self.signed_with(b'{"ceiling": "10979.00"}')
+        forged = b'{"ceiling": "99999.00"}'
+        headers["Content-Digest"] = tap.content_digest(forged)
+        self.assertIn("does not match this merchant", self.check(headers, forged).reason)
+
+    def test_a_covered_digest_needs_the_header(self):
+        headers = self.signed_with(b"{}")
+        del headers["Content-Digest"]
+        self.assertIn("no Content-Digest header", self.check(headers, b"{}").reason)
+
+    def test_a_payment_that_does_not_sign_its_body_is_refused_when_required(self):
+        headers = signed(self.key).headers()  # Visa's two-component format, no body
+        self.assertIn("must sign its body", self.check(headers, b"{}").reason)
+
+    def test_without_a_body_the_format_is_still_exactly_visas(self):
+        s = tap.sign(self.key, authority="shop.example", path="/checkout", key_id="k1", signature_agent=AGENT,
+                     tag=tap.PAY, now=NOW, nonce="v")
+        self.assertTrue(s.signature_input.startswith('sig2=("@authority" "@path"); created='))
+        self.assertNotIn("Content-Digest", s.headers())
+
+
 if __name__ == "__main__":
     unittest.main()
