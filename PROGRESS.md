@@ -43,7 +43,7 @@ _Updated 2026-10-17_
 - **Work split:** proposed in WORKPLAN.md. Varunika confirms or counters by Mon 2026-10-12.
 - **Application fields** for the 10-23 close: copy them from the HackerEarth Submissions tab into this section.
 - **Is INR a convertible shopper currency** on our sandbox? A2 answers it.
-- **Does Airwallex round the shopper amount half-up?** A2 compares their payment intent amount with `computed_shopper_total()`.
+- **Does Airwallex round the shopper amount half-up?** A2 compares their payment intent amount with `computed_shopper_total()`. Their MCP docs (read 2026-10-19) say half to even, on the cart total; A2's live run confirms it.
 - **Live Visa TAP key directory or VIC sandbox for teams?** V3 asks.
 - **Merchant-side enablement:** when, and does it include the Agent Trust & Risk SDK?
 - **Does code written before the 10-25 build start count?** The public page is silent. Asked Airwallex devhelp directly on 2026-10-16 (same thread as the access request). Still worth copying the HackerEarth rules tab here.
