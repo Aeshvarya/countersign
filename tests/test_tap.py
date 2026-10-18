@@ -88,6 +88,15 @@ class VerifyTest(unittest.TestCase):
                 self.assertIsInstance(result, tap.Rejection)
                 self.assertIn(words, result.reason)
 
+    def test_a_signature_valid_for_longer_than_visas_eight_minutes_is_refused(self):
+        key, d, n = setup()
+        long = tap.sign(key, authority="shop.example", path="/checkout", key_id="k1", signature_agent=AGENT,
+                        tag=tap.PAY, now=NOW, nonce="w-1", ttl=3600)
+        self.assertIn("valid for more than 480 seconds", check(long.headers(), d, n).reason)
+        exact = tap.sign(key, authority="shop.example", path="/checkout", key_id="k1", signature_agent=AGENT,
+                         tag=tap.PAY, now=NOW, nonce="w-2", ttl=tap.MAX_WINDOW)
+        self.assertIsInstance(check(exact.headers(), d, n), tap.AgentIdentity)
+
     def test_a_replayed_signature_is_refused(self):
         key, d, n = setup()
         headers = signed(key).headers()

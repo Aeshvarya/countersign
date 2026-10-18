@@ -43,6 +43,11 @@ BROWSE = "agent-browser-auth"
 PAY = "agent-payer-auth"
 TAGS = (BROWSE, PAY)
 
+# The longest a signature may stay valid, in seconds: the 8 minutes Visa's own
+# tap-agent signs for. The nonce cache lives in memory and empties on restart,
+# so a longer window is a longer stretch in which a captured signature replays.
+MAX_WINDOW = 8 * 60
+
 _INPUT = re.compile(r'^sig2=\((?P<components>[^)]*)\);\s*(?P<attrs>.+)$')
 _ATTR = re.compile(r'(\w+)=("[^"]*"|\d+)')
 _SIG = re.compile(r"^sig2=:(?P<b64>[A-Za-z0-9+/=]+):$")
@@ -295,6 +300,7 @@ def verify(
     skew: int = 60,
     body: bytes | None = None,
     require_body: bool = False,
+    max_window: int = MAX_WINDOW,
 ) -> AgentIdentity | Rejection:
     """Check one request. Every failure says why, so the refusal can be shown.
 
@@ -336,6 +342,8 @@ def verify(
         return Rejection("the signature has no nonce or key id")
     if not (isinstance(created, int) and isinstance(expires, int)):
         return Rejection("the signature has no validity window")
+    if expires - created > max_window:
+        return Rejection(f"the signature is valid for more than {max_window} seconds")
 
     clock = int(time.time()) if now is None else now
     if created > clock + skew:
