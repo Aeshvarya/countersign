@@ -103,7 +103,8 @@ class VerifyTest(unittest.TestCase):
     def test_tampered_params_break_the_signature(self):
         key, d, n = setup()
         headers = signed(key).headers()
-        headers["Signature-Input"] = headers["Signature-Input"].replace("expires=1793000480", "expires=1799999999")
+        # Shortened rather than stretched, so the window cap does not refuse it first.
+        headers["Signature-Input"] = headers["Signature-Input"].replace("expires=1793000480", "expires=1793000400")
         self.assertIn("does not match", check(headers, d, n).reason)
 
     def test_an_unreachable_directory_is_a_refusal_with_its_own_reason(self):
