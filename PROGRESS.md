@@ -63,7 +63,7 @@ uv venv && uv pip install -e '.[dev]'
 Newest first.
 
 ### 2026-10-19
-- **TAP validity cap** (Varunika), branch `varunika/tap-window-cap`: `tap.verify` refuses a signature valid for more than 480 s, the window Visa's own tap-agent signs with (`created + 8 * 60` in `agent_app.py`). The nonce cache lives in memory and empties on every restart, so a longer window is a longer replay window. 112 tests. It changes C2 after the freeze, so it merges only after Aeshvarya's OK here.
+- **TAP validity cap** (Varunika), branch `varunika/tap-window-cap`: `tap.verify` refuses a signature valid for more than 480 s, the window Visa's own tap-agent signs with (`created + 8 * 60` in `agent_app.py`). The nonce cache lives in memory and empties on every restart, so a longer window is a longer replay window. 112 tests. It changes C2 after the freeze; merged by Varunika the same day, before Aeshvarya's OK (see Decisions).
 - **Airwallex MCP docs, read for C9** (Varunika): once a quote is applied, the payment intent reads back in the shopper's currency and amount, as `check_paid` assumes; a create retried with the same `request_id` returns the original intent, as `start` assumes; the shopper total is `round_half_even(merchant total × rate)`, while `terms.money` rounds half up, so on an exact tie our shown total is one minor unit above the charge (the ceiling still holds). Their rounding page also lists HUF, TWD and ISK as zero-decimal, which `_MINOR_UNITS` does not. INR and EUR are unaffected.
 
 ### 2026-10-17
