@@ -16,7 +16,7 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 _Updated 2026-10-19_
 
 - **State:** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 111 tests pass offline. Nothing has run against Airwallex yet.
-- **Next action:** Aeshvarya: sandbox keys into `.env`, then `python scripts/payment_spike.py --shopper INR` (A2 + A6 live in one run); deploy A7 to Render. Varunika: V1; read the C9 proposal below before starting V5; V3 Visa Slack ask. `varunika/tap-window-cap` waits on Aeshvarya's OK (C2 after the freeze). Both: the application text (closes Fri 10-23).
+- **Next action:** Aeshvarya: sandbox keys into `.env`, then `python scripts/payment_spike.py --shopper INR` (A2 + A6 live in one run); deploy A7 to Render. Varunika: V1; read the C9 proposal below before starting V5; V3 Visa Slack ask. Aeshvarya: the TAP validity cap is merged (see Decisions 2026-10-19); object there if it should come out. Both: the application text (closes Fri 10-23).
 - **Waiting on:** Airwallex devhelp for merchant-side Agentic Commerce enablement and Airi CLI access (requested 2026-10-10, auto-reply only).
 - **Deadline:** Fri 2026-11-13 23:59 IST. **Target submission: Thu 2026-11-12.** Plan: [WORKPLAN.md](WORKPLAN.md).
 
