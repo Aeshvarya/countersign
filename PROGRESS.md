@@ -37,6 +37,7 @@ _Updated 2026-10-19_
 - **2026-10-17** C2 body binding and the A7 hosted demo merged after Varunika built `edge-body-cap` on them and tested all three together (105 tests). (Aeshvarya)
 - **2026-10-17** **C9, proposed for V5:** with a real card, payment completes in the shopper's browser. Countersign PROCEED → `payments.start()` creates the intent in the merchant currency (order number + approval hash in it, idempotency key as Airwallex `request_id`) → the browser mounts Drop-in with `quote_id` (Drop-in applies the quote; we do not attach it server-side) → the merchant fetches the intent and `check_paid()` compares status, amount and currency, order number, approval hash and rate lock → only then is the order paid and the receipt signed. Until V5, the demo keeps `FakeMerchant`'s instant payment. Varunika to confirm or counter before V5 starts. (Aeshvarya)
 - **2026-10-16** Proposed, needs Varunika's OK before the freeze: a request with a body signs its RFC 9530 `Content-Digest` (covered component `content-digest`), and the edge refuses a payment that does not. Requests without a body keep Visa's exact two-component format, so A3 interop is unchanged (re-run 10-16: passes). Branch `aeshvarya/c2-content-digest`. (Aeshvarya, answering Varunika's 10-11 question)
+- **2026-10-19** C2: `tap.verify` refuses a signature valid for more than 480 s (`tap.MAX_WINDOW`, Visa's tap-agent window). Merged by Varunika after the freeze without Aeshvarya's OK first; he can object here and it comes back out. (Varunika)
 
 ## Open questions
 
