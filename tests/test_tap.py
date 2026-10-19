@@ -88,6 +88,15 @@ class VerifyTest(unittest.TestCase):
                 self.assertIsInstance(result, tap.Rejection)
                 self.assertIn(words, result.reason)
 
+    def test_a_signature_valid_for_longer_than_visas_eight_minutes_is_refused(self):
+        key, d, n = setup()
+        long = tap.sign(key, authority="shop.example", path="/checkout", key_id="k1", signature_agent=AGENT,
+                        tag=tap.PAY, now=NOW, nonce="w-1", ttl=3600)
+        self.assertIn("valid for more than 480 seconds", check(long.headers(), d, n).reason)
+        exact = tap.sign(key, authority="shop.example", path="/checkout", key_id="k1", signature_agent=AGENT,
+                         tag=tap.PAY, now=NOW, nonce="w-2", ttl=tap.MAX_WINDOW)
+        self.assertIsInstance(check(exact.headers(), d, n), tap.AgentIdentity)
+
     def test_a_replayed_signature_is_refused(self):
         key, d, n = setup()
         headers = signed(key).headers()
@@ -103,7 +112,8 @@ class VerifyTest(unittest.TestCase):
     def test_tampered_params_break_the_signature(self):
         key, d, n = setup()
         headers = signed(key).headers()
-        headers["Signature-Input"] = headers["Signature-Input"].replace("expires=1793000480", "expires=1799999999")
+        # Shortened rather than stretched, so the window cap does not refuse it first.
+        headers["Signature-Input"] = headers["Signature-Input"].replace("expires=1793000480", "expires=1793000400")
         self.assertIn("does not match", check(headers, d, n).reason)
 
     def test_an_unreachable_directory_is_a_refusal_with_its_own_reason(self):
