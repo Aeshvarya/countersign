@@ -6,6 +6,83 @@ Every task is written so either builder can pick it up cold: why it exists, what
 
 **Status: proposed by Aeshvarya 2026-10-10. Varunika confirms or counters by Mon 2026-10-12** (V1).
 
+**Build phase (from 2026-10-27): start at the Build phase board below.** Airwallex published the Merchant Onboarding API, and it changes where Countersign sits. The original board stays as the record.
+
+## Build phase board (from 2026-10-27)
+
+### What changed
+
+Airwallex's Merchant Onboarding API ([airwallexdev.com/agentic-commerce](https://airwallexdev.com/agentic-commerce/), read 2026-10-27):
+
+- The merchant onboards once (`POST /api/v1/pa/agentic_commerce/onboard`) with its PSP keys, a **`create_checkout` HTTPS URL** and an **HMAC-SHA256 secret**.
+- Airwallex then hosts a merchant MCP per merchant (`/pa/ai/<merchantId>/acp/mcp`, also `ucp`) with `managed_payment: true`.
+- Products go up as **Google Merchant Center JSON** (`POST /api/v1/pa/agentic_commerce/products`, at most 300 per call, `"price": "51.99 USD"`).
+- Claude connects with `claude mcp add --transport http agentic-commerce https://api.sandbox.airwallex.com/pa/ai/<merchantId>/acp/mcp` and a bearer token.
+
+**So Airwallex calls our `create_checkout` when an agent checks out, and that call is the countersign.** Countersign becomes the merchant's checkout service behind Airwallex's own merchant MCP. The C7 API stays as the direct, TAP-only door.
+
+```
+Claude ⇄ Airwallex merchant MCP (our catalogue) → create_checkout (HMAC) → Countersign service
+   verify HMAC → verify agent (TAP envelope, C12) → live terms + fresh rate lock → decide
+   → PROCEED: Airwallex payment (C9) → order number + signed receipt (C8)
+   → REASK: ACP-style message, Claude asks the shopper again → REFUSE: nothing charged
+```
+
+Kit 10 checklist from the builder guide (the test for "done"):
+
+| # | Requirement | 10-27 |
+|---|---|---|
+| R1 | Merchant-side access and a sandbox storefront | no keys, no enablement yet |
+| R2 | At least 100 synthetic products uploaded in Airwallex's format | catalogue in code; GMC export not built |
+| R3 | The merchant MCP configured in Claude locally; Claude searches the catalogue through it | not yet |
+| R4 | Confirm merchant, product, quantity, delivery and total before payment; ask again if any of them changes | done (`decide.py`) |
+| R5 | Card details only in Airwallex's hosted component; none in Claude's context or logs | written (A6), never run |
+| R6 | Merchant order number returned with the payment outcome | done offline |
+| R7 | One changed-price, unavailable or declined path, with no duplicate payment | price + stock offline; declined not built |
+| R8 | Video: setup, Claude configuration, purchase, exception, order confirmation | storyboard to redo |
+| R9 | Follow Airwallex's retry rules; stop if the first attempt can't be verified | idempotency done; adapt to their contract |
+
+**Still unknown, asked in the hackathon Slack 10-27:** the `create_checkout` request and response, the HMAC header and signed string, the order and retry contract, test-payment and decline instructions, whether `/onboard` works on a plain sandbox account, and the MCP bearer token. **If onboarding is still blocked on Sat 11-01:** we serve an ACP-shaped merchant MCP ourselves over the same checkout service, with Airwallex payment intents and Drop-in, and the README and video say exactly which part is ours.
+
+### Phases
+
+| Phase | Dates | Done when |
+|---|---|---|
+| 0 · Unblock | Tue 10-27 → Thu 10-29 | Sandbox keys in `.env` · `payment_spike.py` prints a real lock and intent · onboard probe result recorded · Render URL live (HTTPS, needed for `create_checkout`) |
+| 1 · Spine on Airwallex | Fri 10-30 → Mon 11-02 | 120 products visible through the merchant MCP in Claude Code · one purchase end to end with an order number from our service · **C10–C12 frozen Sun 11-02** · fallback decided Sat 11-01 |
+| 2 · Exceptions + identity | Tue 11-03 → Fri 11-06 | Price change, out of stock and declined card each recorded with no duplicate charge · TAP across the MCP hop · merchant console live |
+| 3 · Story | Sat 11-07 → **Tue 11-10 freeze** | Video v1 (11-08) · SPEC and README narrative · audit 1 (11-08) |
+| 4 · Ship | Wed 11-11 → Thu 11-12 | Repo public after audit 2 · video up · **submitted Thu 11-12** |
+
+Aeshvarya's time is light until Fri 10-30 (another deadline). V4′ and V10 need no keys because the formats are public, so they can start now.
+
+### Tasks
+
+| ID | Task | Owner | Due | Status |
+|---|---|---|---|---|
+| A11 | Airwallex liaison in the hackathon Slack: the Kit 10 asks, every follow-up | A | today, ongoing | todo |
+| A12 | Sandbox account, API key into `.env`, `scripts/ac_probe.py` (read config, try onboard), result in PROGRESS | A | Wed 10-28 | todo |
+| A2/A6 | Live rate lock, intent, Drop-in run (`payment_spike.py --shopper INR`) | A | Wed 10-28 | waits on A12 |
+| A7 | Render deploy: the HTTPS URL that `create_checkout` points at | A | Thu 10-29 | todo |
+| V4′ | **C11 catalogue in GMC format:** `catalog_gmc.py` maps `synthetic_catalog()` to GMC JSON (120 products, some variants via `item_group_id`); `scripts/upload_catalog.py` upserts at most 300 per call and is safe to re-run. Offline tests now, live the day keys land | V | code Thu 10-29 | todo |
+| V10 | **C10 checkout callback:** an `edge/` route for Airwallex's `create_checkout`: HMAC-SHA256 check with a time window, ACP-shaped session (create, update, complete; `messages` for out of stock and price change), `countersign` on complete, order number and receipt back, idempotent on retry. ACP parsing in one adapter so the core never changes when Airwallex confirms the exact shape | V | offline Sun 11-01, live Tue 11-03 | todo |
+| A14 | **C12 TAP across the MCP hop:** the agent signs the checkout body exactly as C2 does now (Content-Digest), the signature travels in the checkout payload or headers, and the merchant runs the same `tap.verify`. Proposal in PROGRESS first | A | proposal Fri 10-30, code Thu 11-05 | todo |
+| A13 | Claude configuration and run book: `claude mcp add`, the token, a purchase prompt that works every time | A | Mon 11-02 | waits on A12 |
+| V5′ | `AirwallexMerchant`: C3 over the onboarding API and C9 payments; `find_order` by idempotency key | V | Wed 11-04 | todo |
+| A16 | Declined path: a declining test card means no order, no retry, Claude reports it, and no duplicate charge | A | Wed 11-04 | todo |
+| V6 | Change events on the real catalogue through upsert (price, stock, delivery), driven from the console | V | Fri 11-06 | todo |
+| A15 | Merchant console: `web/` shows live checkout calls, decisions and receipts; the levers call V6 | A | Fri 11-06 | todo |
+| V3′ | Registry shaped like Visa's agent directory (keep the reference-registry API); ask in Slack for a Visa contact | V | Fri 11-06 | todo |
+| V8 | Visual identity: palette Wed 10-28, applied to the console and receipt Fri 11-06 | V | 11-06 | todo |
+| V7 ✍ | SPEC claim and README narrative | V | Mon 11-09 | todo |
+| V9 ✍ | Video script and voice: outline Mon 11-02, voice Mon 11-09 | V | 11-09 | todo |
+| A9 | Video production: setup, Claude configuration, purchase, exception, order confirmation, receipt, bots | A | v1 Sun 11-08, final Wed 11-11 | todo |
+| A10 | Audits 11-08, 11-11, 11-12; submission | A | Thu 11-12 | todo |
+
+New contracts: **C10** checkout callback (Varunika), **C11** GMC catalogue mapping (Varunika), **C12** TAP envelope across the MCP hop (Aeshvarya). They freeze Sun 11-02; C1–C9 stay frozen. Same rules as before: one branch per task, `--no-ff` merges, offline tests, no secrets.
+
+**Cut order if behind:** console polish → V3′ → C12 code (keep the proposal and a test vector) → the V6 lever (run the upsert by script). **Never cut:** R1–R9, the countersign, TAP at the edge, receipts, the video.
+
 ## How to use this file
 
 1. Read the **Board** and your own tasks. Read the other builder's only where yours depend on them.
