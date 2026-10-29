@@ -6,7 +6,15 @@ A merchant checkout that countersigns a verified agent and the shopper's approve
 
 ## Status
 
-Pre-build. The product runs offline end to end: approvals bound to the terms a shopper saw, the decision that charges or asks again, Visa Trusted Agent Protocol signing and verification, rate locks, and a 100-product synthetic merchant. Nothing has run against the Airwallex merchant-side Agentic Commerce APIs yet; that needs enablement from Airwallex.
+Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: approvals bound to the terms a shopper saw, the decision that charges or asks again, Visa Trusted Agent Protocol signing and verification, rate locks, and a 100-product synthetic merchant.
+
+| Piece | State |
+|---|---|
+| Catalogue for Airwallex's merchant MCP, in Google Merchant Center format (C11) | done offline; live upload waits on sandbox keys and Kit 10 onboarding |
+| Public product pages and images the catalogue links to | done |
+| Checkout callback Airwallex calls (`create_checkout`, C10) | in progress |
+| Real card payments through Airwallex (C9) | code written; first live run waits on sandbox keys |
+| Shopper passkey approval (U1, C13) | planned |
 
 ## Quickstart
 
@@ -25,7 +33,11 @@ Against the Airwallex sandbox (copy `.env.example` to `.env` and fill it in):
 set -a; . ./.env; set +a
 .venv/bin/python -m countersign fx --merchant USD --shopper INR   # lock a real rate
 .venv/bin/python scripts/payment_spike.py --shopper INR          # rate lock + payment with the sandbox test card, checked end to end
+.venv/bin/python scripts/upload_catalog.py --dry-run             # build and check the 100 catalogue rows, call nothing
+.venv/bin/python scripts/upload_catalog.py --base-url https://<public host>   # upsert them to Airwallex
 ```
+
+The upload sends whole products per call (an upsert replaces a product with all its variants) and never uses the file-ingest replace mode. It exits 1 if any row failed. `COUNTERSIGN_PUBLIC_URL` can stand in for `--base-url`; that host must serve the edge's `/p/<sku>` and `/img/<sku>.svg`.
 
 Deploy the demo: Render → New → Blueprint → this repository (`render.yaml`). Set `ANTHROPIC_API_KEY` there to run Claude as the agent.
 
@@ -53,10 +65,12 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `src/countersign/agent/` | the shopping agent: tool loop, approval pause, TAP-signed shop clients |
 | `src/countersign/web/` | the demo app |
 | `src/countersign/payments.py` | the card payment: Airwallex intent, Drop-in handoff, server-side check |
-| `src/countersign/edge/` | the merchant's HTTP API behind the TAP check |
+| `src/countersign/edge/` | the merchant's HTTP API behind the TAP check, plus the public product pages (`edge/pages.py`) |
+| `src/countersign/catalog_gmc.py` | C11 the catalogue as GMC rows, chunking that keeps a product's variants together, the upload |
 | `src/countersign/airwallex.py` | Airwallex REST client |
 | `scripts/payment_spike.py` | real rate lock + real payment on the Airwallex sandbox, in one command |
 | `scripts/tap_interop.py` | interop check against Visa's TAP reference code |
+| `scripts/upload_catalog.py` | upload the catalogue to Airwallex (dry run without keys) |
 | `PROGRESS.md`, `WORKPLAN.md` | where the work stands, who does what |
 
 ## Licence
