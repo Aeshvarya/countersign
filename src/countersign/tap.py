@@ -149,8 +149,12 @@ class DirectoryUnavailable(Exception):
 
 
 class NonceCache(Protocol):
-    def seen(self, nonce: str, expires: int) -> bool:
-        """Record the nonce; return True if it had already been used."""
+    def seen(self, nonce: str, expires: int, now: int | None = None) -> bool:
+        """Record the nonce; return True if it had already been used.
+
+        `now` is the clock the signature was checked against. Expiry is judged on
+        that same clock, so a cache and its verifier can never disagree about
+        whether a nonce is still live."""
         ...
 
 
@@ -162,8 +166,8 @@ class MemoryNonceCache:
         self._nonces: dict[str, int] = {}
         self._lock = threading.Lock()
 
-    def seen(self, nonce: str, expires: int) -> bool:
-        now = int(time.time())
+    def seen(self, nonce: str, expires: int, now: int | None = None) -> bool:
+        now = int(time.time()) if now is None else now
         with self._lock:
             self._nonces = {n: e for n, e in self._nonces.items() if e >= now}
             if nonce in self._nonces:
@@ -365,7 +369,7 @@ def verify(
         return Rejection("the signature does not match this merchant and page")
 
     # Replay check last, so a forged request cannot burn a real agent's nonce.
-    if nonces.seen(nonce, expires):
+    if nonces.seen(nonce, expires, now=clock):
         return Rejection("this signature has already been used")
 
     return AgentIdentity(key_id=key_id, signature_agent=agent, tag=tag, nonce=nonce)

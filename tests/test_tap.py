@@ -103,6 +103,21 @@ class VerifyTest(unittest.TestCase):
         self.assertIsInstance(check(headers, d, n), tap.AgentIdentity)
         self.assertIn("already been used", check(headers, d, n).reason)
 
+    def test_nonce_expiry_follows_the_verifiers_clock_not_the_wall_clock(self):
+        # A signature checked at a fixed time must stay single-use whatever the real
+        # date is: the cache judges expiry on the clock verify was given.
+        key, d, n = setup()
+        headers = signed(key, nonce="c-1").headers()
+        self.assertIsInstance(check(headers, d, n, now=NOW + 5), tap.AgentIdentity)
+        self.assertIn("already been used", check(headers, d, n, now=NOW + 400).reason)
+
+    def test_an_expired_nonce_is_forgotten_on_the_same_clock(self):
+        n = tap.MemoryNonceCache()
+        self.assertFalse(n.seen("x", expires=100, now=50))
+        self.assertTrue(n.seen("x", expires=100, now=100))
+        self.assertFalse(n.seen("y", expires=300, now=101))  # prunes "x"
+        self.assertNotIn("x", n._nonces)
+
     def test_a_forged_request_does_not_burn_the_real_nonce(self):
         key, d, n = setup()
         forged = signed(Ed25519PrivateKey.generate()).headers()
