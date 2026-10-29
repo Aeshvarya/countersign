@@ -30,7 +30,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -61,6 +61,31 @@ class AcpConfig:
     require_shopper_signature: bool = False  # U1: completion needs the shopper's own signature
     default_currency: str = "USD"
     public_url: str | None = None  # for the approval link and the receipt link
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str]) -> "AcpConfig | None":
+        """The config for a deployed edge, or None: without a secret the routes are not mounted at all.
+
+        COUNTERSIGN_ACP_HMAC_SECRET   the secret given to Airwallex at onboarding (at least 32 bytes)
+        COUNTERSIGN_ACP_HMAC_SCHEME   airwallex (default) | acp | guess
+        COUNTERSIGN_ACP_OBSERVE       1 to log header names and body keys of refused calls
+        COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE  1 once U1 is live
+        COUNTERSIGN_ACP_CURRENCY      shopper currency when a session names none (default USD)
+        COUNTERSIGN_PUBLIC_URL        the edge's public https URL
+        """
+        secret = environ.get("COUNTERSIGN_ACP_HMAC_SECRET", "")
+        if not secret:
+            return None
+        if len(secret.encode()) < 32:
+            raise ValueError("COUNTERSIGN_ACP_HMAC_SECRET must be at least 32 bytes")
+        scheme = environ.get("COUNTERSIGN_ACP_HMAC_SCHEME", "airwallex")
+        if scheme not in hmac_auth.SCHEMES:
+            raise ValueError(f"COUNTERSIGN_ACP_HMAC_SCHEME must be one of {', '.join(hmac_auth.SCHEMES)}")
+        flag = lambda name: environ.get(name, "").strip().lower() in ("1", "true", "yes")
+        return cls(secret=secret.encode(), scheme=scheme, observe=flag("COUNTERSIGN_ACP_OBSERVE"),
+                   require_shopper_signature=flag("COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE"),
+                   default_currency=environ.get("COUNTERSIGN_ACP_CURRENCY", "USD").upper(),
+                   public_url=environ.get("COUNTERSIGN_PUBLIC_URL") or None)
 
 
 def to_minor(amount: Decimal, currency: str) -> int:

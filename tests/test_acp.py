@@ -285,6 +285,64 @@ class ShopperSignatureGateTest(unittest.TestCase):
 
 
 @unittest.skipIf(TestClient is None, "needs the server extra")
+class ObserveModeTest(unittest.TestCase):
+    """U4: a refused call teaches us the caller's contract without keeping any value."""
+
+    def make(self, observe):
+        app = create_app(FakeMerchant(FakeFx("84.10")), tap.StaticDirectory({}), authority="testserver",
+                         acp=AcpConfig(secret=SECRET, observe=observe))
+        return TestClient(app)
+
+    def unknown_call(self, client):
+        body = {"line_items": [{"sku": "AUD-018-0"}], "card_number": "4035501000000008", "address": "1 Secret Lane"}
+        return client.post(SESSIONS, content=json.dumps(body).encode(),
+                           headers={"X-Mystery-Signature": "value-must-not-be-logged", "Idempotency-Key": "o-1",
+                                    "content-type": "application/json"})
+
+    def test_names_and_keys_only(self):
+        with self.assertLogs("countersign.acp", level="WARNING") as logs:
+            r = self.unknown_call(self.make(observe=True))
+        self.assertEqual(r.status_code, 401)
+        line = "\n".join(logs.output)
+        self.assertIn("x-mystery-signature", line)
+        self.assertIn("idempotency-key", line)
+        self.assertIn("'address', 'card_number', 'line_items'", line)
+        for value in ("value-must-not-be-logged", "4035501000000008", "1 Secret Lane", "AUD-018-0", "o-1"):
+            self.assertNotIn(value, line)
+
+    def test_off_by_default(self):
+        logger = __import__("logging").getLogger("countersign.acp")
+        with self.assertNoLogs(logger, level="WARNING"):
+            self.assertEqual(self.unknown_call(self.make(observe=False)).status_code, 401)
+
+
+@unittest.skipIf(TestClient is None, "needs the server extra")
+class FromEnvTest(unittest.TestCase):
+    def test_no_secret_no_routes(self):
+        self.assertIsNone(AcpConfig.from_env({}))
+        app = create_app(FakeMerchant(FakeFx("84.10")), tap.StaticDirectory({}), authority="testserver",
+                         acp=AcpConfig.from_env({}))
+        raw = b"{}"
+        r = TestClient(app).post(SESSIONS, content=raw, headers={**hmac_auth.sign(raw, SECRET), "Idempotency-Key": "x"})
+        self.assertEqual(r.status_code, 401)  # still behind TAP: no ACP door at all
+        self.assertIn("refused", r.json())
+
+    def test_a_full_config(self):
+        cfg = AcpConfig.from_env({"COUNTERSIGN_ACP_HMAC_SECRET": "x" * 32, "COUNTERSIGN_ACP_HMAC_SCHEME": "acp",
+                                  "COUNTERSIGN_ACP_OBSERVE": "1", "COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE": "true",
+                                  "COUNTERSIGN_ACP_CURRENCY": "inr", "COUNTERSIGN_PUBLIC_URL": "https://shop.example"})
+        self.assertEqual((cfg.scheme, cfg.observe, cfg.require_shopper_signature, cfg.default_currency, cfg.public_url),
+                         ("acp", True, True, "INR", "https://shop.example"))
+        self.assertEqual(cfg.secret, b"x" * 32)
+
+    def test_a_short_secret_or_unknown_scheme_fails_loudly(self):
+        with self.assertRaises(ValueError):
+            AcpConfig.from_env({"COUNTERSIGN_ACP_HMAC_SECRET": "short"})
+        with self.assertRaises(ValueError):
+            AcpConfig.from_env({"COUNTERSIGN_ACP_HMAC_SECRET": "x" * 32, "COUNTERSIGN_ACP_HMAC_SCHEME": "any"})
+
+
+@unittest.skipIf(TestClient is None, "needs the server extra")
 class MinorUnitsTest(unittest.TestCase):
     def test_exact_conversion_only(self):
         self.assertEqual(to_minor(Decimal("12.34"), "USD"), 1234)
