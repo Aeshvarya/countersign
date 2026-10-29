@@ -15,7 +15,7 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 _Updated 2026-10-29_
 
-- **Split agreed 2026-10-29 (see Decisions).** Kit 10 onboarding is not live in sandbox yet: Airwallex says it starts once a sandbox issue is fixed. Questions on the `create_checkout` contract, sandbox payments, the fallback and the Visa Award were asked in the hackathon Slack 2026-10-29. Next: Aeshvarya A12 (sandbox in SG or UK, keys, `payment_spike.py --shopper INR`) and A7; Varunika V4′ then V10.
+- **Split agreed 2026-10-29 (see Decisions).** Kit 10 onboarding is not live in sandbox yet: Airwallex says it starts once a sandbox issue is fixed. Questions on the `create_checkout` contract, sandbox payments, the fallback and the Visa Award were asked in the hackathon Slack 2026-10-29. Next: Aeshvarya A12 (sandbox in SG or UK, keys, `payment_spike.py --shopper INR`) and A7, which must also serve the edge's `/p/<sku>` and `/img/<sku>.svg` on the public host; Varunika V10. V4′ is merged (offline); its live upload runs once keys, the public URL and onboarding exist.
 
 - **Build phase is on (10-27 → 11-13).** Airwallex published the Merchant Onboarding API: Airwallex hosts the merchant MCP, and our service is the merchant's `create_checkout`. **Work from the [Build phase board](WORKPLAN.md#build-phase-board-from-2026-10-27); it replaces Next action below.** Varunika: V4′ (GMC catalogue) and V10 (checkout callback) need no keys, so start there. Aeshvarya: A11 Kit 10 questions to Airwallex in the hackathon Slack, A12 sandbox keys + onboard probe, A7 Render.
 - **State (10-19):** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 111 tests pass offline. Nothing has run against Airwallex yet.
@@ -52,6 +52,10 @@ _Updated 2026-10-29_
 
 ## Open questions
 
+- **The public host must serve the catalogue pages** (2026-10-29): every GMC row links to `https://<host>/p/<sku>` and `/img/<sku>.svg`, which the edge app serves without TAP. The hosted demo runs the web app, whose edges are in-process, so those paths 404 there today. A7 decides how: mount the edge's public routes in the web app, or deploy the edge itself. Needed before the live upload (`COUNTERSIGN_PUBLIC_URL`).
+- **Does Airwallex accept SVG for `image_link`?** Google Merchant Center itself wants JPEG, PNG, GIF, WebP, BMP or TIFF. If the live upload fails rows on the image, render PNGs instead.
+- **Does Airwallex accept GMC fields beyond its example** (brand, condition, product_type, identifier_exists)? Sent only with `--extended` until confirmed.
+
 - **Work split:** proposed in WORKPLAN.md. Varunika confirms or counters by Mon 2026-10-12.
 - **Application fields** for the 10-23 close: copy them from the HackerEarth Submissions tab into this section.
 - **Is INR a convertible shopper currency** on our sandbox? A2 answers it.
@@ -75,6 +79,8 @@ Newest first.
 
 ### 2026-10-29
 - **Build-phase split agreed** (both): owners, C9 additions, U1 and C13, C12 dropped, the 11-01 fallback rule and the submission plan, all in Decisions. Hackathon Slack read in full; questions posted in `#help` and `#commerce-kits-9-and-10`. (Varunika)
+- **CI on main was red since about 10-26; fixed** (Varunika): `MemoryNonceCache` pruned on the wall clock while `tap.verify` used the clock it was given, so once the real date passed the fixed test time the replay test let a replay through. Live replays were still refused (one clock in production). The cache now takes verify's clock. 114 tests.
+- **V4′ done offline** (Varunika): `catalog_gmc.py` maps the 100 SKUs to GMC rows (Airwallex's documented 8 fields; 4 more behind `--extended`), the upload packs whole products per call because an upsert replaces a product with all its variants, `scripts/upload_catalog.py` (dry run without keys, exit 1 on any failed row), and public `/p/<sku>` and `/img/<sku>.svg` pages at the edge, the only routes without TAP. 151 tests. Live upload waits on sandbox keys and Kit 10 onboarding.
 
 ### 2026-10-27
 - **Build phase planned** (Aeshvarya): Kit 10 guide and the Merchant Onboarding API read again. Countersign moves behind Airwallex's merchant MCP as the merchant's `create_checkout` service. New board in WORKPLAN: R1–R9 checklist, phases, tasks, contracts C10–C12 (freeze 11-02), fallback decision on 11-01.
