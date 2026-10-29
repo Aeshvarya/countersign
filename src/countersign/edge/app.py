@@ -28,6 +28,7 @@ from ..checkout import MemoryReceiptStore, ReceiptStore, countersign
 from ..decide import Decision, Outcome
 from ..merchant import MerchantGateway, Product
 from ..terms import Approval, utc
+from . import acp as acp_api
 from . import pages
 
 # The tag each route needs. Anything not listed still needs a valid signature.
@@ -108,6 +109,7 @@ def create_app(
     store: ReceiptStore | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     products: Callable[[str], Product | None] | None = None,
+    acp: acp_api.AcpConfig | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Countersign merchant edge", docs_url=None, redoc_url=None, openapi_url=None)
     nonce_cache = nonces if nonces is not None else tap.MemoryNonceCache()
@@ -138,6 +140,16 @@ def create_app(
         # to. Anyone may look; nothing there can offer, charge or show an order.
         if pages.is_public(request.method, request.url.path):
             return await call_next(request)
+        # The checkout API Airwallex calls (C10): a platform, not an agent, so it is
+        # authenticated by the shared HMAC secret in its own routes, not by TAP.
+        # The body cap still applies. Without an ACP config these paths stay behind TAP.
+        if acp is not None and acp_api.is_acp(request.url.path):
+            if request.method in ("POST", "PUT", "PATCH"):
+                refusal = body_refusal(request.headers.get("content-length"))
+                if refusal is not None:
+                    status, reason = refusal
+                    return JSONResponse({"refused": reason}, status_code=status)
+            return await call_next(request)
         path = signed_path(request)
         tag = required_tag(request.method, request.url.path)
         # A request with a body is checked against the body actually received, and a
@@ -164,6 +176,10 @@ def create_app(
             return JSONResponse({"refused": result.reason}, status_code=401)
         request.state.agent = result
         return await call_next(request)
+
+    if acp is not None:
+        app.state.acp = acp_api.AcpApi(merchant, acp, clock=clock, signer=signer, store=receipt_store)
+        app.include_router(acp_api.router(app.state.acp))
 
     @app.get("/p/{sku}")
     def product_page(sku: str):
