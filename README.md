@@ -12,7 +12,7 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 |---|---|
 | Catalogue for Airwallex's merchant MCP, in Google Merchant Center format (C11) | done offline; live upload waits on sandbox keys and Kit 10 onboarding |
 | Public product pages and images the catalogue links to | done |
-| Checkout callback Airwallex calls (`create_checkout`, C10) | in progress |
+| Checkout API Airwallex calls (`create_checkout`, C10), on ACP 2026-04-17 | done offline; live run waits on sandbox keys, a public host and Kit 10 onboarding |
 | Real card payments through Airwallex (C9) | code written; first live run waits on sandbox keys |
 | Shopper passkey approval (U1, C13) | planned |
 
@@ -38,6 +38,8 @@ set -a; . ./.env; set +a
 ```
 
 The upload sends whole products per call (an upsert replaces a product with all its variants) and never uses the file-ingest replace mode. It exits 1 if any row failed. `COUNTERSIGN_PUBLIC_URL` can stand in for `--base-url`; that host must serve the edge's `/p/<sku>` and `/img/<sku>.svg`.
+
+The checkout API Airwallex calls (`create_checkout` = `https://<host>/acp/checkout_sessions`) is mounted when the edge is built with `acp=AcpConfig.from_env(os.environ)`; set `COUNTERSIGN_ACP_HMAC_SECRET` (the secret given to Airwallex at onboarding). Without it the routes do not exist. `COUNTERSIGN_ACP_OBSERVE=1` logs the header names and body keys of a refused call, never values, to learn an unpublished contract from the first call.
 
 Deploy the demo: Render → New → Blueprint → this repository (`render.yaml`). Set `ANTHROPIC_API_KEY` there to run Claude as the agent.
 
@@ -66,6 +68,8 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `src/countersign/web/` | the demo app |
 | `src/countersign/payments.py` | the card payment: Airwallex intent, Drop-in handoff, server-side check |
 | `src/countersign/edge/` | the merchant's HTTP API behind the TAP check, plus the public product pages (`edge/pages.py`) |
+| `src/countersign/edge/acp.py` | C10 the checkout API Airwallex calls: sessions, complete runs the countersign, REASK messages |
+| `src/countersign/edge/hmac_auth.py`, `edge/idempotency.py` | the platform HMAC check (one scheme by config) and ACP idempotency rules |
 | `src/countersign/catalog_gmc.py` | C11 the catalogue as GMC rows, chunking that keeps a product's variants together, the upload |
 | `src/countersign/airwallex.py` | Airwallex REST client |
 | `scripts/payment_spike.py` | real rate lock + real payment on the Airwallex sandbox, in one command |
