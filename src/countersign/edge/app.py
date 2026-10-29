@@ -17,16 +17,18 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import receipt as receipts
 from .. import tap, wire
+from ..catalog_gmc import lookup
 from ..checkout import MemoryReceiptStore, ReceiptStore, countersign
 from ..decide import Decision, Outcome
-from ..merchant import MerchantGateway
+from ..merchant import MerchantGateway, Product
 from ..terms import Approval, utc
+from . import pages
 
 # The tag each route needs. Anything not listed still needs a valid signature.
 ROUTE_TAGS = (
@@ -105,10 +107,12 @@ def create_app(
     signer: receipts.MerchantSigner | None = None,
     store: ReceiptStore | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    products: Callable[[str], Product | None] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Countersign merchant edge", docs_url=None, redoc_url=None, openapi_url=None)
     nonce_cache = nonces if nonces is not None else tap.MemoryNonceCache()
     receipt_store = store if store is not None else MemoryReceiptStore()
+    find_product = products if products is not None else lookup(merchant)
     # Requests run in parallel threads, so "check for an order, then pay" must not
     # interleave for one key: a retry that lands mid-charge waits, then finds the order.
     key_locks: dict[str, threading.Lock] = {}
@@ -130,6 +134,10 @@ def create_app(
 
     @app.middleware("http")
     async def tap_check(request: Request, call_next):
+        # The shop window: the product pages and images that the catalogue rows link
+        # to. Anyone may look; nothing there can offer, charge or show an order.
+        if pages.is_public(request.method, request.url.path):
+            return await call_next(request)
         path = signed_path(request)
         tag = required_tag(request.method, request.url.path)
         # A request with a body is checked against the body actually received, and a
@@ -156,6 +164,22 @@ def create_app(
             return JSONResponse({"refused": result.reason}, status_code=401)
         request.state.agent = result
         return await call_next(request)
+
+    @app.get("/p/{sku}")
+    def product_page(sku: str):
+        product = find_product(sku)
+        if product is None:
+            return HTMLResponse("<!doctype html><title>Not found</title><p>No such product.</p>", status_code=404)
+        return HTMLResponse(pages.product_page(product, merchant.currency),
+                            headers={"Cache-Control": "public, max-age=60"})
+
+    @app.get("/img/{sku}.svg")
+    def product_image(sku: str):
+        product = find_product(sku)
+        if product is None:
+            return Response(status_code=404)
+        return Response(pages.product_svg(product), media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=3600"})
 
     @app.get("/products")
     def products(q: str = "", limit: int = Query(5, ge=1, le=50)) -> list[dict[str, Any]]:
