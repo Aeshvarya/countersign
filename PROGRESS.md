@@ -13,7 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-10-27_
+_Updated 2026-10-29_
+
+- **Split agreed 2026-10-29 (see Decisions).** Kit 10 onboarding is not live in sandbox yet: Airwallex says it starts once a sandbox issue is fixed. Questions on the `create_checkout` contract, sandbox payments, the fallback and the Visa Award were asked in the hackathon Slack 2026-10-29. Next: Aeshvarya A12 (sandbox in SG or UK, keys, `payment_spike.py --shopper INR`) and A7; Varunika V4′ then V10.
 
 - **Build phase is on (10-27 → 11-13).** Airwallex published the Merchant Onboarding API: Airwallex hosts the merchant MCP, and our service is the merchant's `create_checkout`. **Work from the [Build phase board](WORKPLAN.md#build-phase-board-from-2026-10-27); it replaces Next action below.** Varunika: V4′ (GMC catalogue) and V10 (checkout callback) need no keys, so start there. Aeshvarya: A11 Kit 10 questions to Airwallex in the hackathon Slack, A12 sandbox keys + onboard probe, A7 Render.
 - **State (10-19):** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 111 tests pass offline. Nothing has run against Airwallex yet.
@@ -39,6 +41,14 @@ _Updated 2026-10-27_
 - **2026-10-17** **C9, proposed for V5:** with a real card, payment completes in the shopper's browser. Countersign PROCEED → `payments.start()` creates the intent in the merchant currency (order number + approval hash in it, idempotency key as Airwallex `request_id`) → the browser mounts Drop-in with `quote_id` (Drop-in applies the quote; we do not attach it server-side) → the merchant fetches the intent and `check_paid()` compares status, amount and currency, order number, approval hash and rate lock → only then is the order paid and the receipt signed. Until V5, the demo keeps `FakeMerchant`'s instant payment. Varunika to confirm or counter before V5 starts. (Aeshvarya)
 - **2026-10-16** Proposed, needs Varunika's OK before the freeze: a request with a body signs its RFC 9530 `Content-Digest` (covered component `content-digest`), and the edge refuses a payment that does not. Requests without a body keep Visa's exact two-component format, so A3 interop is unchanged (re-run 10-16: passes). Branch `aeshvarya/c2-content-digest`. (Aeshvarya, answering Varunika's 10-11 question)
 - **2026-10-19** C2: `tap.verify` refuses a signature valid for more than 480 s (`tap.MAX_WINDOW`, Visa's tap-agent window). Merged by Varunika after the freeze without Aeshvarya's OK first; he can object here and it comes back out. (Varunika)
+- **2026-10-29** Build-phase split, agreed by both. Aeshvarya: A12 sandbox + keys + onboarding probe, A2/A6 live run, A7 Render (cold start + Claude spend cap), A11 Slack follow-ups, V5′ `AirwallexMerchant` (moved from Varunika), A15 console, A9 video, A10 audits + submission, the U1 approval page, and the fallback MCP if triggered. Varunika: V4′ catalogue, V10 checkout callback (offline, then live), U1 verifier, V6 change events, V8, V7, V9, U3 dispute ending, A13 Claude configuration + `docs/RUNBOOK.md`, A16 declined path, U6 directory (spare time only). V1 closed. (Varunika, recording the agreement)
+- **2026-10-29** C9 confirmed with five additions, built in V5′: fulfil from the `payment_intent.succeeded` webhook verified with Airwallex's signature; a refund path when `check_paid` fails after a charge; `find_order` sees started-but-unpaid intents; the receipt is signed after `check_paid` (C6/C8 change, agreed here); `terms.money` rounds half-even like Airwallex. (both)
+- **2026-10-29** U1 agreed: the shopper approves the exact terms with a passkey. New contract C13: an optional `shopper_assertion` on `Approval` and in the receipt, additive, so old receipts still verify. Verifier in `edge/` (Varunika), approval page in `web/` (Aeshvarya). (both)
+- **2026-10-29** C12 dropped. On the merchant-MCP door the caller is Airwallex (HMAC, C10) and the shopper's passkey carries the intent; TAP stays on the direct door and on our fallback door. It comes back only if Airwallex confirms it forwards extension fields to `create_checkout`. (both)
+- **2026-10-29** Fallback rule: if Kit 10 onboarding is not live on our account by Sun 2026-11-01 20:00 IST, we build our own ACP-shaped merchant MCP over the same `/acp` routes as insurance. We submit through Airwallex's merchant MCP if it works on our account by 2026-11-09, otherwise through ours, labelled as ours in the README and video. (both)
+- **2026-10-29** Submission: one entry, the shortlisted idea. Repo goes public at submission. Video unlisted on Aeshvarya's channel; final render starts 2026-11-10. Submit Thu 2026-11-12. (both)
+- **2026-10-29** The 2026-10-19 TAP validity cap stays. (Aeshvarya)
+- **2026-10-29** Sandbox registered in Singapore or the UK: India is not a supported business location for Airwallex card acceptance (airwallex.com/docs/payments/payment-methods). (both)
 
 ## Open questions
 
@@ -62,6 +72,9 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-10-29
+- **Build-phase split agreed** (both): owners, C9 additions, U1 and C13, C12 dropped, the 11-01 fallback rule and the submission plan, all in Decisions. Hackathon Slack read in full; questions posted in `#help` and `#commerce-kits-9-and-10`. (Varunika)
 
 ### 2026-10-27
 - **Build phase planned** (Aeshvarya): Kit 10 guide and the Merchant Onboarding API read again. Countersign moves behind Airwallex's merchant MCP as the merchant's `create_checkout` service. New board in WORKPLAN: R1–R9 checklist, phases, tasks, contracts C10–C12 (freeze 11-02), fallback decision on 11-01.
