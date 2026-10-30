@@ -29,17 +29,30 @@ CONFIG = {
                        "expires_at": "2026-11-02T10:00:00Z"},
 }
 NOT_ONBOARDED = AirwallexError(404, {"code": "MERCHANT_CONFIG_NOT_FOUND", "message": "no config"})
+NO_ROUTE = AirwallexError(404, "Not Found")
+SCOPE = AirwallexError(401, {"code": "unauthorized", "message": "Admin permissions required"})
+DOCUMENTED, OTHER = "/pa/agentic_commerce/config", "/agentic-commerce/config"
 
 
 class FakeClient:
-    def __init__(self, config=None, get_error=NOT_ONBOARDED, post_error=None):
-        self.config, self.get_error, self.post_error = config, get_error, post_error
-        self.posts = []
+    """Answers each config path on its own: a dict is a 200 body, an AirwallexError is raised."""
+
+    def __init__(self, config=None, get_error=NOT_ONBOARDED, post_error=None, other=NO_ROUTE, login_error=None):
+        self.answers = {DOCUMENTED: config if config is not None else get_error, OTHER: other}
+        self.post_error, self.login_error = post_error, login_error
+        self.gets, self.posts = [], []
+
+    def token(self):
+        if self.login_error:
+            raise self.login_error
+        return "token-never-printed"
 
     def get(self, path):
-        if self.config is not None:
-            return self.config
-        raise self.get_error
+        self.gets.append(path)
+        answer = self.answers[path]
+        if isinstance(answer, AirwallexError):
+            raise answer
+        return answer
 
     def post(self, path, body):
         self.posts.append((path, body))
@@ -70,22 +83,48 @@ def run(argv, environ=None, client=None, fetch=None):
 
 class ProbeTest(unittest.TestCase):
     def test_not_onboarded_yet(self):
-        code, text = run([], client=FakeClient())
+        client = FakeClient()
+        code, text = run([], client=client)
         self.assertEqual(code, 1)
         self.assertIn("onboarding API is live; this account is not onboarded yet", text)
+        self.assertEqual(client.gets, [DOCUMENTED, OTHER])
+        self.assertIn(f"GET /api/v1{OTHER} -> HTTP 404", text)
 
-    def test_a_missing_route_means_onboarding_is_not_on_the_account(self):
-        code, text = run([], client=FakeClient(get_error=AirwallexError(404, "Not Found")))
+    def test_ready_wins_over_a_401_on_the_other_path(self):
+        code, text = run([], client=FakeClient(other=SCOPE))
+        self.assertEqual(code, 1)
+        self.assertIn("not onboarded yet", text)
+
+    def test_both_paths_missing_means_onboarding_is_not_on_the_account(self):
+        code, text = run([], client=FakeClient(get_error=NO_ROUTE))
         self.assertEqual(code, 1)
         self.assertIn("onboarding API not on this account", text)
-        self.assertIn("HTTP 404", text)
 
-    def test_a_refusal_prints_code_and_message_only(self):
-        err = AirwallexError(401, {"code": "unauthorized", "message": "Admin permissions required"})
-        code, text = run([], client=FakeClient(get_error=err))
+    def test_a_404_here_and_a_401_there_is_the_keys_scope(self):
+        code, text = run([], client=FakeClient(get_error=NO_ROUTE, other=SCOPE))
         self.assertEqual(code, 2)
-        self.assertIn("HTTP 401 unauthorized Admin permissions required", text)
+        self.assertIn("scope is too narrow", text)
+        self.assertIn(f"GET /api/v1{OTHER} -> HTTP 401 unauthorized Admin permissions required", text)
+        self.assertNotIn("not on this account", text)
+
+    def test_a_401_on_the_documented_path_is_the_keys_scope(self):
+        code, text = run([], client=FakeClient(get_error=SCOPE))
+        self.assertEqual(code, 2)
+        self.assertIn("Create a full-access key", text)
         self.assertNotIn(API_KEY, text)
+
+    def test_a_refused_login_is_not_blamed_on_scope(self):
+        client = FakeClient(login_error=AirwallexError(401, {"code": "credentials_invalid", "message": "bad key"}))
+        code, text = run([], client=client)
+        self.assertEqual(code, 2)
+        self.assertIn("refused the login", text)
+        self.assertEqual(client.gets, [])
+
+    def test_an_answer_only_on_the_other_path_is_reported_not_guessed(self):
+        code, text = run([], client=FakeClient(get_error=NO_ROUTE, other={"merchant_id": "mer_1"}))
+        self.assertEqual(code, 1)
+        self.assertIn("no clear verdict", text)
+        self.assertIn(f"GET /api/v1{OTHER} -> HTTP 200", text)
 
     def test_onboarded_prints_the_allowlisted_fields_only(self):
         code, text = run([], client=FakeClient(config=CONFIG))
@@ -186,6 +225,11 @@ class OnboardTest(unittest.TestCase):
         code, text = run(["--onboard", "--base-url", "https://other.example"], client=client)
         self.assertEqual((code, client.posts), (1, []))
         self.assertIn("PUT /config", text)
+
+    def test_a_scope_problem_stops_the_onboard(self):
+        client = FakeClient(get_error=NO_ROUTE, other=SCOPE)
+        code, _ = run(["--onboard"], client=client)
+        self.assertEqual((code, client.posts), (2, []))
 
     def test_an_onboard_refusal_exits_two(self):
         client = FakeClient(post_error=AirwallexError(400, {"code": "INVALID_REQUEST", "message": "bad url"}))
