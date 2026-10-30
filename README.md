@@ -14,7 +14,7 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 | Public product pages and images the catalogue links to | done |
 | Checkout API Airwallex calls (`create_checkout`, C10), on ACP 2026-04-17 | done offline; onboarding script ready; live run waits on sandbox keys, a public host and Kit 10 onboarding |
 | Real card payments through Airwallex (C9) | code written; first live run waits on sandbox keys |
-| Shopper passkey approval (U1, C13) | planned |
+| Shopper passkey approval (U1, C13) | verifier and edge routes done; receipt field (C13) proposed; approval page to build |
 
 ## Quickstart
 
@@ -43,6 +43,8 @@ set -a; . ./.env; set +a
 The upload sends whole products per call (an upsert replaces a product with all its variants) and never uses the file-ingest replace mode. It exits 1 if any row failed. `COUNTERSIGN_PUBLIC_URL` can stand in for `--base-url`; that host must serve the edge's `/p/<sku>` and `/img/<sku>.svg`.
 
 The checkout API Airwallex calls (`create_checkout` = `https://<host>/acp/checkout_sessions`) is mounted when the edge is built with `acp=AcpConfig.from_env(os.environ)`; set `COUNTERSIGN_ACP_HMAC_SECRET` (the secret given to Airwallex at onboarding). Without it the routes do not exist. `COUNTERSIGN_ACP_OBSERVE=1` logs the header names and body keys of a refused call, never values, to learn an unpublished contract from the first call.
+
+With `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1` (it needs `COUNTERSIGN_PUBLIC_URL`, whose origin and host name the passkey is checked against) a session waits for the shopper: `not_ready_for_payment`, an `approval_required` message and an `approval` link to `/approve/<id>`. The approval page calls `GET /acp/approvals/<id>` (the terms to show, plus `webauthn.challenge`, `rp_id` and `origin`) and `POST /acp/approvals/<id>` with `credential_id`, `public_key_spki_der` (from `getPublicKey()` at registration), `authenticator_data`, `client_data_json` and `signature` from `navigator.credentials.get()`, all base64url. These two routes take no HMAC: the caller is the shopper's browser. The challenge covers the terms, the session and the approval's expiry, and any requote clears the signature.
 
 The probe is read-only and asks both config paths (`/pa/agentic_commerce/config`, documented, and `/agentic-commerce/config`, where another team saw a 401 with a scoped key): a 401 on either means the key needs full access, not that onboarding is missing. Onboarding happens once: Airwallex ignores a second `POST /onboard`. `ac_onboard.py --onboard` first checks that the host answers an unsigned call from the `/acp` door (not the TAP door, not a 404) and sends nothing if it does not. It reads the PSP key from `AIRWALLEX_PSP_CLIENT_ID` and `AIRWALLEX_PSP_API_KEY`, or the login key if those are empty. It exits 1 when something is not ready, 2 when Airwallex refuses.
 
@@ -75,6 +77,7 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `src/countersign/airwallex_merchant.py` | V5′ the merchant on Airwallex: pending orders, confirm from Airwallex's own record, refund on mismatch |
 | `src/countersign/edge/` | the merchant's HTTP API behind the TAP check, plus the public product pages (`edge/pages.py`) |
 | `src/countersign/edge/acp.py` | C10 the checkout API Airwallex calls: sessions, complete runs the countersign, REASK messages |
+| `src/countersign/edge/passkey.py` | U1 the shopper's passkey: the approval challenge and the six-check WebAuthn verifier |
 | `src/countersign/edge/hmac_auth.py`, `edge/idempotency.py` | the platform HMAC check (one scheme by config) and ACP idempotency rules |
 | `src/countersign/catalog_gmc.py` | C11 the catalogue as GMC rows, chunking that keeps a product's variants together, the upload |
 | `src/countersign/airwallex.py` | Airwallex REST client |
