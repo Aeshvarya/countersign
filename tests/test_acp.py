@@ -296,6 +296,49 @@ class ShopperSignatureGateTest(unittest.TestCase):
 
 
 @unittest.skipIf(TestClient is None, "needs the server extra")
+class PaymentDataTest(unittest.TestCase):
+    """A3: complete keeps what Airwallex sends as payment_data, never card data, and logs only that it came."""
+
+    def setUp(self):
+        self.merchant = FakeMerchant(FakeFx("84.10"))
+        self.app = create_app(self.merchant, tap.StaticDirectory({}), authority="testserver",
+                              clock=lambda: datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc),
+                              signer=receipt.MerchantSigner(Ed25519PrivateKey.generate(), "m-1"),
+                              acp=AcpConfig(secret=SECRET))
+        self.client = TestClient(self.app)
+        self.sku = next(iter(self.merchant.catalog))
+
+    def post(self, path, body, key):
+        raw = json.dumps(body).encode()
+        return self.client.post(path, content=raw, headers={**hmac_auth.sign(raw, SECRET), "Idempotency-Key": key,
+                                                            "content-type": "application/json"})
+
+    def test_payment_data_is_kept_without_card_fields_and_never_logged(self):
+        s = self.post(SESSIONS, {"items": [{"id": self.sku, "quantity": 1}], "currency": "INR"}, "p-1").json()
+        payment = {"token": "tok_secret_value", "provider": "airwallex", "payment_intent_id": "int_123",
+                   "card": {"number": "4035501000000008", "cvc": "737", "exp_month": "03", "brand": "visa"},
+                   "note": "4035 5010 0000 0008"}
+        with self.assertLogs("countersign.acp", level="WARNING") as logs:
+            r = self.post(f"{SESSIONS}/{s['id']}/complete", {"payment_data": payment}, "p-2")
+        self.assertEqual(r.json()["status"], "completed")
+        kept = self.app.state.acp.sessions[s["id"]].payment_data
+        self.assertEqual(kept, {"token": "tok_secret_value", "provider": "airwallex", "payment_intent_id": "int_123",
+                                "card": {"brand": "visa"}, "note": "<removed>"})
+        line = "\n".join(logs.output)
+        self.assertIn("payment_data present, keys ['card', 'note', 'payment_intent_id', 'provider', 'token']", line)
+        for value in ("4035501000000008", "4035 5010", "737", "tok_secret_value", "int_123"):
+            self.assertNotIn(value, line)
+            self.assertNotIn(value, r.text)
+
+    def test_no_payment_data_is_logged_as_absent(self):
+        s = self.post(SESSIONS, {"items": [{"id": self.sku, "quantity": 1}], "currency": "INR"}, "p-3").json()
+        with self.assertLogs("countersign.acp", level="WARNING") as logs:
+            self.post(f"{SESSIONS}/{s['id']}/complete", {}, "p-4")
+        self.assertIn("payment_data absent", "\n".join(logs.output))
+        self.assertIsNone(self.app.state.acp.sessions[s["id"]].payment_data)
+
+
+@unittest.skipIf(TestClient is None, "needs the server extra")
 class ObserveModeTest(unittest.TestCase):
     """U4: a refused call teaches us the caller's contract without keeping any value."""
 
