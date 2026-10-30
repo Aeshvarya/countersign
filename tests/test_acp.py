@@ -274,14 +274,25 @@ class ShopperSignatureGateTest(unittest.TestCase):
         return self.client.post(path, content=raw, headers={**hmac_auth.sign(raw, SECRET), "Idempotency-Key": key,
                                                             "content-type": "application/json"})
 
-    def test_pending_approval_until_signed(self):
+    def test_not_ready_for_payment_until_signed(self):
         s = self.post(SESSIONS, {"items": [{"id": self.sku, "quantity": 1}], "currency": "INR"}, "g-1").json()
-        self.assertEqual(s["status"], "pending_approval")
+        self.assertEqual(s["status"], "not_ready_for_payment")
+        self.assertEqual(s["messages"][0]["code"], "approval_required")
         self.assertIn(f"https://shop.example/approve/{s['id']}", s["messages"][0]["content"])
+        self.assertEqual(s["links"], [{"type": "approval", "url": f"https://shop.example/approve/{s['id']}"}])
         r = self.post(f"{SESSIONS}/{s['id']}/complete", {}, "g-2").json()
-        self.assertEqual(r["status"], "pending_approval")
-        self.assertEqual(r["messages"][0]["code"], "approval_required")
+        self.assertEqual(r["status"], "not_ready_for_payment")
+        self.assertEqual((r["messages"][0]["type"], r["messages"][0]["code"]), ("error", "approval_required"))
+        self.assertEqual(r["links"][0]["type"], "approval")
         self.assertEqual(self.merchant.orders, {})
+
+    def test_only_acp_statuses_reach_the_wire(self):
+        acp_statuses = {"not_ready_for_payment", "ready_for_payment", "completed", "canceled"}
+        s = self.post(SESSIONS, {"items": [{"id": self.sku, "quantity": 1}], "currency": "INR"}, "g-3").json()
+        r = self.post(f"{SESSIONS}/{s['id']}/complete", {}, "g-4").json()
+        c = self.post(f"{SESSIONS}/{s['id']}/cancel", {}, "g-5").json()
+        self.assertLessEqual({s["status"], r["status"], c["status"]}, acp_statuses)
+        self.assertEqual(c["links"], [])  # a canceled session has nothing left to approve
 
 
 @unittest.skipIf(TestClient is None, "needs the server extra")
