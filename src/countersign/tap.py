@@ -152,7 +152,7 @@ class NonceCache(Protocol):
     def seen(self, nonce: str, expires: int, now: int | None = None) -> bool:
         """Record the nonce; return True if it had already been used.
 
-        `now` is the clock the signature was checked against. Expiry is judged on
+        `now` is the clock the signature was checked against. Expiry is decided on
         that same clock, so a cache and its verifier can never disagree about
         whether a nonce is still live."""
         ...

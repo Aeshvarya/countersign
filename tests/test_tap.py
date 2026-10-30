@@ -105,7 +105,7 @@ class VerifyTest(unittest.TestCase):
 
     def test_nonce_expiry_follows_the_verifiers_clock_not_the_wall_clock(self):
         # A signature checked at a fixed time must stay single-use whatever the real
-        # date is: the cache judges expiry on the clock verify was given.
+        # date is: the cache decides expiry on the clock verify was given.
         key, d, n = setup()
         headers = signed(key, nonce="c-1").headers()
         self.assertIsInstance(check(headers, d, n, now=NOW + 5), tap.AgentIdentity)
