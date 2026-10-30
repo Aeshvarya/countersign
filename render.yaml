@@ -1,6 +1,8 @@
-# Render blueprint for the hosted demo: New > Blueprint, pick this repository.
+# Render blueprint for the public host: New > Blueprint, pick this repository.
+# One service serves the demo, Airwallex's create_checkout (/acp), the catalogue
+# pages (/p, /img) and the TAP door (see src/countersign/web/host.py).
 # Free plan; it sleeps when idle, and .github/workflows/keep-warm.yml wakes it.
-# Set ANTHROPIC_API_KEY in the service's environment to run Claude as the agent.
+# Every value below is set by hand in the dashboard (sync: false), never in git.
 services:
   - type: web
     name: countersign-demo
@@ -10,5 +12,20 @@ services:
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
+      # The service's own https URL, e.g. https://countersign-demo.onrender.com
+      - key: COUNTERSIGN_PUBLIC_URL
+        sync: false
+      # The HMAC secret given to Airwallex at onboarding; mounts /acp when set.
+      - key: COUNTERSIGN_ACP_HMAC_SECRET
+        sync: false
+      # base64 of 32 random bytes, so receipts still verify after a restart.
+      - key: COUNTERSIGN_MERCHANT_SIGNING_KEY
+        sync: false
+      # Sandbox keys: real rate locks for the house merchant once set.
+      - key: AIRWALLEX_CLIENT_ID
+        sync: false
+      - key: AIRWALLEX_API_KEY
+        sync: false
+      # Leave unset until Aeshvarya says otherwise: without it the demo agent is scripted and free.
       - key: ANTHROPIC_API_KEY
         sync: false

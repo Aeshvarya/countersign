@@ -9,6 +9,9 @@ real HTTP request through the edge's TAP check, without a socket. The merchant
 is FakeMerchant until the Airwallex merchant lands (WORKPLAN V5).
 
 Each agent action runs in a background thread; the page polls the session.
+
+`app` is the whole public host (web.host): the demo below, plus one long-lived
+merchant that Airwallex calls at /acp and agents call through TAP.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from ..agent import AgentKey, AgentSession, ClaudeModel, InProcessShop, Scripted
 from ..edge import create_app as create_edge
 from ..fx import FakeFx
 from ..merchant import FakeMerchant
+from .host import KEY_PATH, Host, house_from_env
 
 STATIC = Path(__file__).parent / "static"
 AGENT_DIRECTORY = "https://agents.countersign.dev"
@@ -118,8 +122,9 @@ class World:
         }
 
 
-app = FastAPI(title="Countersign")
+demo = FastAPI(title="Countersign")
 WORLDS: dict[str, World] = {}
+HOUSE = house_from_env(os.environ)
 
 
 def world(session_id: str) -> World:
@@ -142,17 +147,23 @@ class Lever(BaseModel):
     value: str | None = None
 
 
-@app.get("/healthz")
-def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+@demo.get("/healthz")
+def healthz() -> dict[str, Any]:
+    return {"status": "ok", "acp": HOUSE.acp, "authority": HOUSE.authority}
 
 
-@app.get("/")
+@demo.get(KEY_PATH)
+def merchant_key() -> dict[str, str]:
+    """The public key that verifies every receipt the house merchant signs."""
+    return HOUSE.public_key()
+
+
+@demo.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
-@app.post("/api/sessions")
+@demo.post("/api/sessions")
 def start(body: Start) -> dict[str, Any]:
     if body.currency not in ("INR", "EUR"):
         raise HTTPException(400, "currency must be INR or EUR")
@@ -164,12 +175,12 @@ def start(body: Start) -> dict[str, Any]:
     return w.view()
 
 
-@app.get("/api/sessions/{session_id}")
+@demo.get("/api/sessions/{session_id}")
 def get(session_id: str) -> dict[str, Any]:
     return world(session_id).view()
 
 
-@app.post("/api/sessions/{session_id}/approve")
+@demo.post("/api/sessions/{session_id}/approve")
 def approve(session_id: str, body: Ceiling) -> dict[str, Any]:
     w = world(session_id)
     if w.session.pending is None or w.busy:
@@ -185,7 +196,7 @@ def approve(session_id: str, body: Ceiling) -> dict[str, Any]:
     return w.view()
 
 
-@app.post("/api/sessions/{session_id}/decline")
+@demo.post("/api/sessions/{session_id}/decline")
 def decline(session_id: str) -> dict[str, Any]:
     w = world(session_id)
     if w.session.pending is None or w.busy:
@@ -199,7 +210,7 @@ def decline(session_id: str) -> dict[str, Any]:
 # countersign has something real to catch.
 
 
-@app.post("/api/sessions/{session_id}/levers/rate")
+@demo.post("/api/sessions/{session_id}/levers/rate")
 def lever_rate(session_id: str, body: Lever) -> dict[str, Any]:
     w = world(session_id)
     w.fx.rate = Decimal(body.value or "88.40")
@@ -207,7 +218,7 @@ def lever_rate(session_id: str, body: Lever) -> dict[str, Any]:
     return w.view()
 
 
-@app.post("/api/sessions/{session_id}/levers/delivery")
+@demo.post("/api/sessions/{session_id}/levers/delivery")
 def lever_delivery(session_id: str) -> dict[str, Any]:
     w = world(session_id)
     for offer in w.session.offers.values():
@@ -217,7 +228,7 @@ def lever_delivery(session_id: str) -> dict[str, Any]:
     return w.view()
 
 
-@app.post("/api/sessions/{session_id}/levers/price")
+@demo.post("/api/sessions/{session_id}/levers/price")
 def lever_price(session_id: str) -> dict[str, Any]:
     w = world(session_id)
     for offer in w.session.offers.values():
@@ -227,7 +238,7 @@ def lever_price(session_id: str) -> dict[str, Any]:
     return w.view()
 
 
-@app.post("/api/sessions/{session_id}/levers/time")
+@demo.post("/api/sessions/{session_id}/levers/time")
 def lever_time(session_id: str, body: Lever) -> dict[str, Any]:
     w = world(session_id)
     w.clock.offset += timedelta(minutes=int(body.value or 45))
@@ -235,7 +246,7 @@ def lever_time(session_id: str, body: Lever) -> dict[str, Any]:
     return w.view()
 
 
-@app.post("/api/sessions/{session_id}/levers/bot")
+@demo.post("/api/sessions/{session_id}/levers/bot")
 def lever_bot(session_id: str) -> dict[str, Any]:
     """Real HTTP requests at the merchant's edge that are not the shopper's agent, or tamper with it."""
     import json
@@ -277,7 +288,7 @@ class VerifyBody(BaseModel):
     merchant_key: str
 
 
-@app.post("/api/receipts/verify")
+@demo.post("/api/receipts/verify")
 def verify_receipt(body: VerifyBody) -> dict[str, Any]:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -288,3 +299,6 @@ def verify_receipt(body: VerifyBody) -> dict[str, Any]:
         raise HTTPException(400, "bad merchant key or approval") from None
     check = receipts.verify(body.receipt, key, approval)
     return {"ok": check.ok, "findings": list(check.findings)}
+
+
+app = Host(demo, HOUSE)

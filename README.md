@@ -46,7 +46,7 @@ The checkout API Airwallex calls (`create_checkout` = `https://<host>/acp/checko
 
 Onboarding happens once: Airwallex ignores a second `POST /onboard`. `ac_onboard.py --onboard` first checks that the host answers an unsigned call from the `/acp` door (not the TAP door, not a 404) and sends nothing if it does not. It reads the PSP key from `AIRWALLEX_PSP_CLIENT_ID` and `AIRWALLEX_PSP_API_KEY`, or the login key if those are empty. It exits 1 when something is not ready, 2 when Airwallex refuses.
 
-Deploy the demo: Render → New → Blueprint → this repository (`render.yaml`). Set `ANTHROPIC_API_KEY` there to run Claude as the agent.
+Deploy: Render → New → Blueprint → this repository (`render.yaml`). The one service is the whole public host (`src/countersign/web/host.py`): the demo page, plus one long-lived merchant behind the real edge that serves `/acp/checkout_sessions` (Airwallex's `create_checkout`), `/p/<sku>` and `/img/<sku>.svg` (the catalogue links), the TAP door (`/products`, `/offers`, `/checkout`, `/orders/<key>`) and `/.well-known/countersign-merchant-key` (the key that verifies its receipts). Set in the dashboard: `COUNTERSIGN_PUBLIC_URL` (the service's https URL, also the TAP authority), `COUNTERSIGN_ACP_HMAC_SECRET`, `COUNTERSIGN_MERCHANT_SIGNING_KEY` (the private line of `python -m countersign keygen`, so receipts verify across restarts) and the Airwallex keys (real rate locks). `/healthz` says whether `/acp` is mounted. Set `ANTHROPIC_API_KEY` to run Claude as the demo agent.
 
 ## How it works
 
@@ -70,7 +70,7 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `src/countersign/checkout.py` | C6 the countersign step |
 | `src/countersign/receipt.py` | C8 the countersigned receipt |
 | `src/countersign/agent/` | the shopping agent: tool loop, approval pause, TAP-signed shop clients |
-| `src/countersign/web/` | the demo app |
+| `src/countersign/web/` | the demo app; `web/host.py` makes it the one public host (house merchant, `/acp`, catalogue pages, TAP door) |
 | `src/countersign/payments.py` | the card payment: Airwallex intent, Drop-in handoff, server-side check |
 | `src/countersign/edge/` | the merchant's HTTP API behind the TAP check, plus the public product pages (`edge/pages.py`) |
 | `src/countersign/edge/acp.py` | C10 the checkout API Airwallex calls: sessions, complete runs the countersign, REASK messages |
