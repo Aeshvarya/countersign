@@ -8,6 +8,7 @@ merchant, the one Airwallex onboards, needs a fixed address instead:
     /products /offers /checkout     the direct door, for agents that sign with TAP (C7)
     /orders/<key>
     /.well-known/countersign-merchant-key   the key that verifies this merchant's receipts
+    /webhooks/airwallex             payment events; settle a card payment and sign its receipt (C9)
     everything else                 the demo page and its API
 
 So one service answers all of it: those paths go to one long-lived merchant
@@ -22,12 +23,16 @@ Configuration, all optional:
     COUNTERSIGN_MERCHANT_SIGNING_KEY   base64 of a 32-byte Ed25519 seed, so receipts outlive a restart
     COUNTERSIGN_MERCHANT_KEY_ID        default merchant-key-1
     COUNTERSIGN_AGENT_REGISTRY         URL of a Visa-shaped agent registry; without it the TAP door refuses everyone
+    COUNTERSIGN_MERCHANT               fake (default, pays instantly) or airwallex (real intents, V5′)
+    AIRWALLEX_CLIENT_ID, AIRWALLEX_API_KEY   real rate locks, and the airwallex merchant
+    AIRWALLEX_WEBHOOK_SECRET           verifies /webhooks/airwallex; without it every event is refused
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
@@ -35,19 +40,26 @@ from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from .. import receipt as receipts
 from .. import tap
+from ..airwallex import Airwallex, AirwallexError
+from ..airwallex_merchant import AirwallexMerchant, intent_of
+from ..checkout import MemoryReceiptStore, release
 from ..edge import acp as acp_api
 from ..edge import create_app as create_edge
-from ..edge import pages
-from ..fx import FakeFx
+from ..edge import hmac_auth, pages
+from ..fx import AirwallexFx, FakeFx
 from ..merchant import FakeMerchant, MerchantGateway
 
 log = logging.getLogger("countersign.host")
 
 DEFAULT_AUTHORITY = "shop.countersign.dev"
 KEY_PATH = "/.well-known/countersign-merchant-key"
+WEBHOOK_PATH = "/webhooks/airwallex"
 # The direct door's routes (C7). Exact paths, so the demo's own routes never reach the edge.
 TAP_PATHS = ("/products", "/offers", "/checkout")
 
@@ -89,15 +101,30 @@ class TableFx:
         return self.fakes[shopper_currency].lock(merchant_currency, shopper_currency, now)
 
 
+def airwallex_from_env(environ: Mapping[str, str]) -> Airwallex | None:
+    if environ.get("AIRWALLEX_CLIENT_ID") and environ.get("AIRWALLEX_API_KEY"):
+        return Airwallex(environ["AIRWALLEX_CLIENT_ID"], environ["AIRWALLEX_API_KEY"],
+                         environ.get("AIRWALLEX_BASE_URL", "https://api.sandbox.airwallex.com"))
+    return None
+
+
 def fx_from_env(environ: Mapping[str, str]):
     """Real Airwallex rate locks once sandbox keys are set; offline ones before."""
-    if environ.get("AIRWALLEX_CLIENT_ID") and environ.get("AIRWALLEX_API_KEY"):
-        from ..airwallex import Airwallex
-        from ..fx import AirwallexFx
+    client = airwallex_from_env(environ)
+    return AirwallexFx(client) if client is not None else TableFx()
 
-        return AirwallexFx(Airwallex(environ["AIRWALLEX_CLIENT_ID"], environ["AIRWALLEX_API_KEY"],
-                                     environ.get("AIRWALLEX_BASE_URL", "https://api.sandbox.airwallex.com")))
-    return TableFx()
+
+def merchant_from_env(environ: Mapping[str, str]) -> MerchantGateway:
+    """COUNTERSIGN_MERCHANT=airwallex takes real card payments (V5′); the default pays instantly, offline."""
+    kind = environ.get("COUNTERSIGN_MERCHANT", "fake").strip().lower()
+    if kind == "fake":
+        return FakeMerchant(fx_from_env(environ))
+    if kind == "airwallex":
+        client = airwallex_from_env(environ)
+        if client is None:
+            raise ValueError("COUNTERSIGN_MERCHANT=airwallex needs AIRWALLEX_CLIENT_ID and AIRWALLEX_API_KEY")
+        return AirwallexMerchant(client)
+    raise ValueError("COUNTERSIGN_MERCHANT must be fake or airwallex")
 
 
 @dataclass
@@ -109,6 +136,8 @@ class House:
     signer: receipts.MerchantSigner
     authority: str
     acp: bool
+    store: MemoryReceiptStore
+    webhook_secret: bytes = b""
 
     def public_key(self) -> dict[str, str]:
         raw = self.signer.key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -128,12 +157,50 @@ def house_from_env(environ: Mapping[str, str], *, merchant: MerchantGateway | No
     if directory is None:
         registry = environ.get("COUNTERSIGN_AGENT_REGISTRY")
         directory = tap.RegistryDirectory(registry) if registry else tap.StaticDirectory({})
-    # FakeMerchant until V5′ lands AirwallexMerchant; the catalogue is the one uploaded to Airwallex.
-    merchant = merchant if merchant is not None else FakeMerchant(fx_from_env(environ))
+    # Either way the catalogue is the one uploaded to Airwallex.
+    merchant = merchant if merchant is not None else merchant_from_env(environ)
     acp = acp_api.AcpConfig.from_env(environ)
+    store = MemoryReceiptStore()  # shared with the webhook, which signs held receipts into it
     extra = {"clock": clock} if clock is not None else {}
-    edge = create_edge(merchant, directory, authority=authority, signer=signer, acp=acp, **extra)
-    return House(merchant, edge, signer, authority, acp is not None)
+    edge = create_edge(merchant, directory, authority=authority, signer=signer, acp=acp, store=store, **extra)
+    return House(merchant, edge, signer, authority, acp is not None, store,
+                 environ.get("AIRWALLEX_WEBHOOK_SECRET", "").encode())
+
+
+def webhook_app(house: House) -> FastAPI:
+    """POST /webhooks/airwallex: settle a card payment from Airwallex's own record of it.
+
+    The event is only a nudge. Its signature is checked (x-timestamp and
+    x-signature, HMAC-SHA256 under the webhook secret), and then the merchant
+    fetches the intent itself (AirwallexMerchant.confirm) before anything is
+    marked paid or refunded. A non-2xx answer makes Airwallex retry.
+    """
+    hooks = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @hooks.post(WEBHOOK_PATH)
+    async def airwallex_event(request: Request):
+        raw = await request.body()
+        reason = hmac_auth.verify(dict(request.headers), raw, house.webhook_secret, scheme="airwallex")
+        if reason is not None:
+            return JSONResponse({"refused": reason}, status_code=401)
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            return JSONResponse({"error": "the body is not JSON"}, status_code=400)
+        intent_id = intent_of(event) if isinstance(event, dict) else None
+        if intent_id is None or not isinstance(house.merchant, AirwallexMerchant):
+            return {"ignored": True}
+        try:
+            order = await run_in_threadpool(house.merchant.confirm, intent_id)
+        except AirwallexError as err:
+            log.warning("webhook for %s not settled yet: %s", intent_id, err)
+            return JSONResponse({"error": "Airwallex could not be reached; retry"}, status_code=503)
+        if order is None:
+            return {"ignored": True}
+        receipt = release(order, house.signer, house.store)
+        return {"order_number": order.order_number, "status": order.status, "receipt": receipt is not None}
+
+    return hooks
 
 
 class Host:
@@ -142,9 +209,12 @@ class Host:
     def __init__(self, demo: Any, house: House) -> None:
         self.demo = demo
         self.house = house
+        self.hooks = webhook_app(house)
 
     async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] == "http" and self.house.owns(scope["method"], scope["path"]):
+        if scope["type"] == "http" and scope["path"] == WEBHOOK_PATH:
+            await self.hooks(scope, receive, send)
+        elif scope["type"] == "http" and self.house.owns(scope["method"], scope["path"]):
             await self.house.edge(scope, receive, send)
         else:
             await self.demo(scope, receive, send)
