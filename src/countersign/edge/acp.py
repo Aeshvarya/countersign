@@ -11,6 +11,12 @@ The caller is a platform (Airwallex), not an agent, so these routes sit outside
 the TAP check and are authenticated by the shared HMAC secret instead
 (hmac_auth). The body cap still applies.
 
+Statuses on the wire are ACP's four only (not_ready_for_payment,
+ready_for_payment, completed, canceled): Airwallex's hosted MCP sits between us
+and the agent and may drop a session whose status it does not know. A session
+waiting for the shopper's own signature is not_ready_for_payment, with an
+approval_required message and the approval link in `links`.
+
 What the shopper approved: until the shopper signs the terms themselves (U1),
 the approval is the exact terms this API last returned, hashed when they were
 returned. Completing means "these terms"; anything that has changed since is
@@ -123,7 +129,7 @@ class Session:
     cart: dict[str, int] = field(default_factory=dict)
     ceiling_minor: int | None = None  # shopper's ceiling, if they set one above the quoted total
     buyer: dict[str, Any] | None = None
-    status: str = "not_ready_for_payment"
+    status: str = "not_ready_for_payment"  # ACP's enum only, plus "expired" internally
     terms: Terms | None = None
     approval: Approval | None = None
     shopper_signed_hash: str | None = None  # set by U1 when the shopper signs these exact terms
@@ -189,6 +195,8 @@ class AcpApi:
             "messages": list(s.messages),
             "links": [],
         }
+        if self.awaiting_shopper(s):
+            out["links"].append({"type": "approval", "url": self.approval_link(s)})
         if s.buyer:
             out["buyer"] = s.buyer
         t = s.terms
@@ -254,13 +262,22 @@ class AcpApi:
             ceiling = max(ceiling, from_minor(s.ceiling_minor, s.currency))
         s.terms = terms
         s.approval = Approval.grant(terms, ceiling, self._approver(s), now, now + APPROVAL_TTL)
-        if self.config.require_shopper_signature and s.shopper_signed_hash != s.approval.hash:
-            s.status = "pending_approval"
-            link = f"{self.config.public_url.rstrip('/')}/approve/{s.id}" if self.config.public_url else f"/approve/{s.id}"
+        if self.awaiting_shopper(s):
+            s.status = "not_ready_for_payment"
             s.messages = [{"type": "info", "code": "approval_required", "content_type": "plain",
-                           "content": f"The shopper approves these exact terms here: {link}"}]
+                           "content": f"The shopper approves these exact terms here: {self.approval_link(s)}"}]
         else:
             s.status = "ready_for_payment"
+
+    def awaiting_shopper(self, s: Session) -> bool:
+        """U1 is on and the shopper has not signed the terms now on the session."""
+        return (self.config.require_shopper_signature and s.approval is not None
+                and s.status not in ("completed", "canceled", "expired")
+                and s.shopper_signed_hash != s.approval.hash)
+
+    def approval_link(self, s: Session) -> str:
+        base = self.config.public_url.rstrip("/") if self.config.public_url else ""
+        return f"{base}/approve/{s.id}"
 
     def _approver(self, s: Session) -> str:
         email = (s.buyer or {}).get("email")
@@ -355,8 +372,8 @@ class AcpApi:
                 s.buyer = body["buyer"]
             if s.approval is None or s.terms is None:
                 raise AcpError(400, "invalid_state", "the session has nothing ready to pay for")
-            if self.config.require_shopper_signature and s.shopper_signed_hash != s.approval.hash:
-                s.status = "pending_approval"
+            if self.awaiting_shopper(s):
+                s.status = "not_ready_for_payment"
                 s.messages = [{"type": "error", "code": "approval_required", "content_type": "plain",
                                "content": "The shopper has not approved these exact terms. Nothing was charged."}]
                 return 200, self.view(s)
@@ -370,7 +387,7 @@ class AcpApi:
                 s.status, s.order, s.receipt, s.messages = "completed", result.order, result.receipt, []
             elif d.outcome is Outcome.REASK:
                 self._quote(s, now)  # the new terms the shopper must look at again
-                if s.status in ("ready_for_payment", "pending_approval"):
+                if s.terms is not None:  # requoted; not a cart that can no longer be priced
                     s.messages = self._reask_messages(s, d, before) + s.messages
             else:
                 s.status = "not_ready_for_payment"
