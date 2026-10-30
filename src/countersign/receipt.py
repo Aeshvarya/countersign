@@ -4,7 +4,8 @@ When the merchant charges, it signs one small document that ties together
 everything the charge rested on:
 
   - which agent asked (TAP key id, directory, nonce, tag)
-  - what the shopper approved (the approval hash, the ceiling, who, when)
+  - what the shopper approved (the approval hash, the ceiling, who, when, and,
+    with U1, the shopper's own passkey signature over it: C13)
   - what was charged (amount and currency, the locked rate and its quote id)
   - what the merchant owes (the order number and payment id)
 
@@ -57,7 +58,7 @@ def build(
     agent: AgentIdentity | None,
     decided_at: datetime,
 ) -> dict[str, Any]:
-    return {
+    body = {
         "v": VERSION,
         "merchant_id": live.merchant_id,
         "order_number": order.order_number,
@@ -86,6 +87,10 @@ def build(
         "delivery": live.delivery,
         "decided_at": utc(decided_at).isoformat(),
     }
+    if approval.shopper_assertion is not None:
+        # C13, additive: a receipt without it is byte for byte what it was before.
+        body["approval"]["shopper_assertion"] = dict(approval.shopper_assertion)
+    return body
 
 
 def sign(body: dict[str, Any], signer: MerchantSigner) -> dict[str, Any]:
@@ -116,6 +121,16 @@ def verify(receipt: dict[str, Any], merchant_key: Ed25519PublicKey, approval: Ap
     if Decimal(charged["amount"]) > Decimal(approved["ceiling"]):
         return Check(False, (*findings, f"charged {charged['amount']} above the approved ceiling {approved['ceiling']}"))
     findings.append(f"charged {charged['amount']} {charged['currency']}, within the approved {approved['ceiling']}")
+
+    shopper = approved.get("shopper_assertion")
+    if shopper is not None:
+        from .edge import passkey  # standard library and cryptography only
+
+        result = passkey.verify_recorded(shopper, approved["hash"], approved["expires_at"])
+        if isinstance(result, str):
+            return Check(False, (*findings, f"the shopper's passkey signature does not check: {result}"))
+        presence = "user verified" if result.user_verified else "user present"
+        findings.append(f"the shopper's own passkey signed these exact terms at {shopper['origin']} ({presence})")
 
     if body["agent"] is None:
         findings.append("no agent identity recorded")

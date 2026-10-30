@@ -14,6 +14,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, Mapping
 
 # ISO 4217 minor units for the currencies that differ from the default of 2.
 _MINOR_UNITS = {"JPY": 0, "KRW": 0, "VND": 0, "IDR": 0, "CLP": 0, "BHD": 3, "KWD": 3, "OMR": 3}
@@ -129,6 +130,9 @@ class Approval:
     expires_at: datetime
     approver: str
     hash: str = field(default="")
+    # C13: the shopper's own passkey signature over these terms (edge.passkey), when U1
+    # is on. Not part of the hash or of equality: it signs the hash, it is not a term.
+    shopper_assertion: Mapping[str, Any] | None = field(default=None, compare=False)
 
     @classmethod
     def grant(cls, terms: Terms, ceiling: Decimal, approver: str, approved_at: datetime, expires_at: datetime) -> "Approval":
