@@ -266,6 +266,8 @@ def _summary(name: str, out: dict[str, Any]) -> str:
             parts.append(f"Order {pay['order_number']}, payment {pay['status']}"
                          f"{', receipt signed' if pay['receipt'] else ', no receipt yet'}.")
         parts += [f"{m['type']} ({m.get('code')}): {m['content']}" for m in view["messages"]]
+        parts += [f"The shopper approves these terms themselves at {link['url']}; complete_checkout waits for it."
+                  for link in view.get("links", []) if link.get("type") == "approval"]
         head = " ".join(parts)
     return f"{head}\n\n{json.dumps(out, indent=1)}"
 

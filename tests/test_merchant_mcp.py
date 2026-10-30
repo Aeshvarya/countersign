@@ -33,10 +33,16 @@ ENV = {"COUNTERSIGN_PUBLIC_URL": PUBLIC, "COUNTERSIGN_ACP_HMAC_SECRET": "s" * 32
 
 @unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
 class MerchantMcpTest(unittest.TestCase):
-    def setUp(self, merchant=None):
-        self.house = house_from_env(ENV, merchant=merchant)
-        self.client = TestClient(Host(FastAPI(), self.house), base_url=PUBLIC)
+    def setUp(self):
+        self.build(ENV)
         self.ids = 0
+
+    def merchant(self):
+        return None  # the house default: pays instantly
+
+    def build(self, environ):
+        self.house = house_from_env(environ, merchant=self.merchant())
+        self.client = TestClient(Host(FastAPI(), self.house), base_url=PUBLIC)
 
     def rpc(self, method, params=None, *, token=TOKEN, headers=None):
         self.ids += 1
@@ -152,14 +158,24 @@ class MerchantMcpTest(unittest.TestCase):
         self.assertTrue(self.tool("get_checkout", checkout_session_id="../../orders/k1")["isError"])
         self.assertTrue(self.tool("get_checkout", checkout_session_id="cs_" + "0" * 24)["isError"])
 
+    def test_with_u1_on_the_agent_is_sent_to_the_shoppers_approval_page(self):
+        self.build({**ENV, "COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE": "1"})
+        _, view = self.checkout()
+        self.assertEqual(view["status"], "not_ready_for_payment")
+        text = self.tool("get_checkout", checkout_session_id=view["id"])["content"][0]["text"]
+        self.assertIn(f"approves these terms themselves at {PUBLIC}/approve/{view['id']}", text)
+        out = self.tool("complete_checkout", checkout_session_id=view["id"])["structuredContent"]
+        self.assertIsNone(out["payment"])
+        self.assertEqual(self.house.merchant.orders, {})
+
 
 @unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
 class MerchantMcpCardTest(MerchantMcpTest):
     """With real card payments the order waits for Airwallex, and the receipt comes after the webhook."""
 
-    def setUp(self):
+    def merchant(self):
         self.api = FakeAirwallex()
-        super().setUp(AirwallexMerchant(self.api, FakeFx("84.10")))
+        return AirwallexMerchant(self.api, FakeFx("84.10"))
 
     def test_create_then_complete_pays_once_with_a_receipt_anyone_can_verify(self):
         _, view = self.checkout()
