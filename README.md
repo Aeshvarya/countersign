@@ -12,7 +12,7 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 |---|---|
 | Catalogue for Airwallex's merchant MCP, in Google Merchant Center format (C11) | done offline; live upload waits on sandbox keys and Kit 10 onboarding |
 | Public product pages and images the catalogue links to | done |
-| Checkout API Airwallex calls (`create_checkout`, C10), on ACP 2026-04-17 | done offline; live run waits on sandbox keys, a public host and Kit 10 onboarding |
+| Checkout API Airwallex calls (`create_checkout`, C10), on ACP 2026-04-17 | done offline; onboarding script ready; live run waits on sandbox keys, a public host and Kit 10 onboarding |
 | Real card payments through Airwallex (C9) | code written; first live run waits on sandbox keys |
 | Shopper passkey approval (U1, C13) | planned |
 
@@ -35,11 +35,16 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/payment_spike.py --shopper INR          # rate lock + payment with the sandbox test card, checked end to end
 .venv/bin/python scripts/upload_catalog.py --dry-run             # build and check the 100 catalogue rows, call nothing
 .venv/bin/python scripts/upload_catalog.py --base-url https://<public host>   # upsert them to Airwallex
+.venv/bin/python scripts/ac_onboard.py                          # is Kit 10 onboarding on this account, are we onboarded
+.venv/bin/python scripts/ac_onboard.py --check-host --base-url https://<public host>   # does the host serve /acp and /p
+.venv/bin/python scripts/ac_onboard.py --onboard --base-url https://<public host>      # onboard once (add --dry-run to see the body, secrets hidden)
 ```
 
 The upload sends whole products per call (an upsert replaces a product with all its variants) and never uses the file-ingest replace mode. It exits 1 if any row failed. `COUNTERSIGN_PUBLIC_URL` can stand in for `--base-url`; that host must serve the edge's `/p/<sku>` and `/img/<sku>.svg`.
 
 The checkout API Airwallex calls (`create_checkout` = `https://<host>/acp/checkout_sessions`) is mounted when the edge is built with `acp=AcpConfig.from_env(os.environ)`; set `COUNTERSIGN_ACP_HMAC_SECRET` (the secret given to Airwallex at onboarding). Without it the routes do not exist. `COUNTERSIGN_ACP_OBSERVE=1` logs the header names and body keys of a refused call, never values, to learn an unpublished contract from the first call.
+
+Onboarding happens once: Airwallex ignores a second `POST /onboard`. `ac_onboard.py --onboard` first checks that the host answers an unsigned call from the `/acp` door (not the TAP door, not a 404) and sends nothing if it does not. It reads the PSP key from `AIRWALLEX_PSP_CLIENT_ID` and `AIRWALLEX_PSP_API_KEY`, or the login key if those are empty. It exits 1 when something is not ready, 2 when Airwallex refuses.
 
 Deploy the demo: Render → New → Blueprint → this repository (`render.yaml`). Set `ANTHROPIC_API_KEY` there to run Claude as the agent.
 
@@ -75,6 +80,7 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `scripts/payment_spike.py` | real rate lock + real payment on the Airwallex sandbox, in one command |
 | `scripts/tap_interop.py` | interop check against Visa's TAP reference code |
 | `scripts/upload_catalog.py` | upload the catalogue to Airwallex (dry run without keys) |
+| `scripts/ac_onboard.py` | onboarding probe, host check, and the one-time Kit 10 onboarding |
 | `PROGRESS.md`, `WORKPLAN.md` | where the work stands, who does what |
 
 ## Licence

@@ -13,9 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-10-29_
+_Updated 2026-10-30_
 
-- **Split agreed 2026-10-29 (see Decisions).** Kit 10 onboarding is not live in sandbox yet: Airwallex says it starts once a sandbox issue is fixed. Questions on the `create_checkout` contract, sandbox payments, the fallback and the Visa Award were asked in the hackathon Slack 2026-10-29. Next: Aeshvarya A12 (sandbox in SG or UK, keys, `payment_spike.py --shopper INR`) and A7, which must also serve the edge's `/p/<sku>` and `/img/<sku>.svg` on the public host; Varunika: V10 is merged offline; next V10 live (needs keys, the public URL, and onboarding or the fallback), U1's C13 shape by 11-02, and V8. V4′'s live upload waits on the same three.
+- **Split agreed 2026-10-29 (see Decisions).** Kit 10 onboarding is not live in sandbox yet: Airwallex says it starts once a sandbox issue is fixed. Questions on the `create_checkout` contract, sandbox payments, the fallback and the Visa Award were asked in the hackathon Slack 2026-10-29. Next: Aeshvarya A12 (sandbox in SG or UK, keys, `payment_spike.py --shopper INR`) and A7, which must also serve the edge's `/p/<sku>` and `/img/<sku>.svg` on the public host; Varunika: V10 is merged offline and `scripts/ac_onboard.py` is ready (probe, host check, one-time onboard); V10 live itself still needs keys, the public URL serving `/acp`, and onboarding or the fallback, U1's C13 shape by 11-02, and V8. V4′'s live upload waits on the same three.
 
 - **Build phase is on (10-27 → 11-13).** Airwallex published the Merchant Onboarding API: Airwallex hosts the merchant MCP, and our service is the merchant's `create_checkout`. **Work from the [Build phase board](WORKPLAN.md#build-phase-board-from-2026-10-27); it replaces Next action below.** Varunika: V4′ (GMC catalogue) and V10 (checkout callback) need no keys, so start there. Aeshvarya: A11 Kit 10 questions to Airwallex in the hackathon Slack, A12 sandbox keys + onboard probe, A7 Render.
 - **State (10-19):** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 111 tests pass offline. Nothing has run against Airwallex yet.
@@ -53,6 +53,7 @@ _Updated 2026-10-29_
 
 ## Open questions
 
+- **Is Kit 10 onboarding on our account?** (2026-10-30) Sandbox maintenance ended 2026-10-30 01:52 IST (#announcements); no Kit 10 onboarding announcement yet and no answer to our 2026-10-29 post. Once keys exist, `scripts/ac_onboard.py` answers it in one call: route 404 = not on the account, 404 `MERCHANT_CONFIG_NOT_FOUND` = live and ready to onboard. Per the onboarding docs `managed_payment` is a response field, not something we send.
 - **Nothing serves the edge with the ACP door yet** (2026-10-29): `create_app(..., acp=AcpConfig.from_env(os.environ))` mounts `/acp/checkout_sessions`; the hosted demo builds edges inside the web app and passes no ACP config. A7 decides how the deployed host serves `/acp/...`, `/p/<sku>` and `/img/<sku>.svg` together. `create_checkout` = `https://<host>/acp/checkout_sessions`.
 
 - **The public host must serve the catalogue pages** (2026-10-29): every GMC row links to `https://<host>/p/<sku>` and `/img/<sku>.svg`, which the edge app serves without TAP. The hosted demo runs the web app, whose edges are in-process, so those paths 404 there today. A7 decides how: mount the edge's public routes in the web app, or deploy the edge itself. Needed before the live upload (`COUNTERSIGN_PUBLIC_URL`).
@@ -79,6 +80,9 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-10-30
+- **V10 live, part 1:** `scripts/ac_onboard.py` merged (`bb9144b`): probe, host check (an unsigned call must be refused by the `/acp` door, else nothing is sent), one-time onboard, no secret ever printed. 220 tests. The live run itself is blocked on A12 keys, A7 serving `/acp`, and Kit 10 onboarding. (Varunika)
 
 ### 2026-10-29
 - **Build-phase split agreed** (both): owners, C9 additions, U1 and C13, C12 dropped, the 11-01 fallback rule and the submission plan, all in Decisions. Hackathon Slack read in full; questions posted in `#help` and `#commerce-kits-9-and-10`. (Varunika)
