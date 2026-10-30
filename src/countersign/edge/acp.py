@@ -129,6 +129,7 @@ class Session:
     cart: dict[str, int] = field(default_factory=dict)
     ceiling_minor: int | None = None  # shopper's ceiling, if they set one above the quoted total
     buyer: dict[str, Any] | None = None
+    payment_data: dict[str, Any] | None = None  # as sent on complete, card fields removed; never echoed or logged
     status: str = "not_ready_for_payment"  # ACP's enum only, plus "expired" internally
     terms: Terms | None = None
     approval: Approval | None = None
@@ -163,6 +164,28 @@ def _read_currency(body: dict[str, Any]) -> str | None:
     if not isinstance(cur, str) or len(cur) != 3 or not cur.isalpha():
         raise AcpError(400, "invalid", "currency must be a three-letter code", "$.currency")
     return cur.upper()
+
+
+# What managed_payment sends on complete is not published yet: a token or intent
+# id for us to check, a charge already made, or nothing. We keep what arrives,
+# minus anything that could be card data, so the first live call answers it.
+_CARD_KEYS = {"number", "card_number", "pan", "cvc", "cvv", "cvc2", "cvv2", "security_code",
+              "expiry", "expiry_month", "expiry_year", "exp_month", "exp_year"}
+
+
+def _looks_like_card_number(value: str) -> bool:
+    digits = value.replace(" ", "").replace("-", "")
+    return digits.isdigit() and 12 <= len(digits) <= 19
+
+
+def without_card_data(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: without_card_data(v) for k, v in value.items() if str(k).lower() not in _CARD_KEYS}
+    if isinstance(value, list):
+        return [without_card_data(v) for v in value]
+    if isinstance(value, str) and _looks_like_card_number(value):
+        return "<removed>"
+    return value
 
 
 def _amount(value: Decimal, currency: str) -> int:
@@ -370,6 +393,13 @@ class AcpApi:
             self._open(s)
             if isinstance(body.get("buyer"), dict):
                 s.buyer = body["buyer"]
+            payment = body.get("payment_data")
+            if isinstance(payment, dict):
+                s.payment_data = without_card_data(payment)
+            # WARNING so it shows under the host's default log level; presence and key names only.
+            log.warning("acp complete %s: payment_data %s", s.id,
+                        f"present, keys {sorted(map(str, payment))}" if isinstance(payment, dict)
+                        else "absent" if payment is None else f"present but a {type(payment).__name__}")
             if s.approval is None or s.terms is None:
                 raise AcpError(400, "invalid_state", "the session has nothing ready to pay for")
             if self.awaiting_shopper(s):
