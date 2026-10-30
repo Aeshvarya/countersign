@@ -196,6 +196,16 @@ class AcpTest(unittest.TestCase):
         self.assertIn("expired", [m["code"] for m in r["messages"]])
         self.assertEqual(self.merchant.orders, {})
 
+    def test_an_expired_session_reads_as_canceled_on_the_wire(self):
+        s = self.create()
+        self.clock.now = self.clock.now.replace(hour=11, minute=1)  # past the one-hour session life
+        r = self.call("GET", f"{SESSIONS}/{s['id']}").json()
+        self.assertEqual(r["status"], "canceled")
+        self.assertEqual(r["messages"][-1]["code"], "expired")
+        done = self.complete(s["id"])
+        self.assertEqual((done.status_code, done.json()["code"]), (405, "invalid_state"))
+        self.assertEqual(self.merchant.orders, {})
+
     # -- idempotency and repeats
 
     def test_a_replayed_complete_returns_the_same_order_once(self):
