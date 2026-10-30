@@ -1,8 +1,12 @@
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from countersign.checkout import countersign
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from countersign import receipt as receipts
+from countersign.checkout import MemoryReceiptStore, countersign, release
 from countersign.decide import Outcome
 from countersign.fx import FakeFx, _parse_time
 from countersign.merchant import FakeMerchant, synthetic_catalog
@@ -74,6 +78,68 @@ class CountersignTest(unittest.TestCase):
         terms = self.shop.offer({self.sku: 1}, "INR", NOW)
         with self.assertRaises(PermissionError):
             self.shop.pay(terms, Decision(Outcome.REASK, "no"), "k1")
+
+
+class PendingMerchant(FakeMerchant):
+    """Pays like a card in the browser: the order is pending until confirmed."""
+
+    def pay(self, terms, decision, idempotency_key, approval_hash=None):
+        order = super().pay(terms, decision, idempotency_key, approval_hash)
+        self.orders[idempotency_key] = replace(order, status="pending")
+        return self.orders[idempotency_key]
+
+    def settle(self, idempotency_key, status):
+        self.orders[idempotency_key] = replace(self.orders[idempotency_key], status=status)
+        return self.orders[idempotency_key]
+
+
+class HeldReceiptTest(unittest.TestCase):
+    """C9: the receipt is signed only after the payment is checked."""
+
+    def setUp(self):
+        self.shop = PendingMerchant(FakeFx("84.10"))
+        self.sku = self.shop.search("keyboard")[0].sku
+        terms = self.shop.offer({self.sku: 1}, "INR", NOW)
+        self.approval = Approval.grant(terms, terms.shopper_total, "s", NOW, NOW + timedelta(hours=2))
+        self.key = Ed25519PrivateKey.generate()
+        self.signer = receipts.MerchantSigner(self.key, "m-1")
+        self.store = MemoryReceiptStore()
+
+    def run_checkout(self):
+        return countersign(self.shop, self.approval, "k1", NOW, signer=self.signer, store=self.store)
+
+    def test_a_pending_payment_gets_no_receipt_yet(self):
+        r = self.run_checkout()
+        self.assertEqual((r.decision.outcome, r.order.status, r.receipt), (Outcome.PROCEED, "pending", None))
+        self.assertIsNone(self.store.get("k1"))
+        self.assertIsNotNone(self.store.held("k1"))
+
+    def test_the_receipt_is_signed_once_the_payment_is_checked(self):
+        self.run_checkout()
+        signed = release(self.shop.settle("k1", "paid"), self.signer, self.store)
+        self.assertTrue(receipts.verify(signed, self.key.public_key(), self.approval).ok)
+        self.assertIs(release(self.shop.orders["k1"], self.signer, self.store), signed)  # a second webhook
+        self.assertIsNone(self.store.held("k1"))
+
+    def test_a_refunded_payment_never_gets_a_receipt(self):
+        self.run_checkout()
+        self.assertIsNone(release(self.shop.settle("k1", "refunded"), self.signer, self.store))
+        self.assertIsNone(self.store.get("k1"))
+        self.assertIsNone(self.store.held("k1"))
+
+    def test_a_retry_while_pending_does_not_charge_again(self):
+        first = self.run_checkout()
+        again = self.run_checkout()
+        self.assertEqual(again.order, first.order)
+        self.assertIn("not finished", again.decision.reason)
+        self.assertEqual(len(self.shop.orders), 1)
+
+    def test_a_retry_after_a_refund_is_refused_not_reported_as_paid(self):
+        self.run_checkout()
+        self.shop.settle("k1", "refunded")
+        r = self.run_checkout()
+        self.assertEqual(r.decision.outcome, Outcome.REFUSE)
+        self.assertEqual(len(self.shop.orders), 1)
 
 
 class FxParseTest(unittest.TestCase):
