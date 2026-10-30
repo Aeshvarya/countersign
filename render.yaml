@@ -32,6 +32,9 @@ services:
       # fake (default, pays instantly) or airwallex (real intents and Drop-in, V5′).
       - key: COUNTERSIGN_MERCHANT
         sync: false
+      # Serves our fallback merchant MCP at /acp/mcp (32+ characters). Needs the HMAC secret above.
+      - key: COUNTERSIGN_MCP_TOKEN
+        sync: false
       # Leave unset until Aeshvarya says otherwise: without it the demo agent is scripted and free.
       - key: ANTHROPIC_API_KEY
         sync: false

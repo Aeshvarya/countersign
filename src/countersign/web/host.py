@@ -9,6 +9,7 @@ merchant, the one Airwallex onboards, needs a fixed address instead:
     /orders/<key>
     /.well-known/countersign-merchant-key   the key that verifies this merchant's receipts
     /webhooks/airwallex             payment events; settle a card payment and sign its receipt (C9)
+    /acp/mcp                        our fallback merchant MCP, only if COUNTERSIGN_MCP_TOKEN is set
     everything else                 the demo page and its API
 
 So one service answers all of it: those paths go to one long-lived merchant
@@ -26,6 +27,7 @@ Configuration, all optional:
     COUNTERSIGN_MERCHANT               fake (default, pays instantly) or airwallex (real intents, V5′)
     AIRWALLEX_CLIENT_ID, AIRWALLEX_API_KEY   real rate locks, and the airwallex merchant
     AIRWALLEX_WEBHOOK_SECRET           verifies /webhooks/airwallex; without it every event is refused
+    COUNTERSIGN_MCP_TOKEN              bearer token for /acp/mcp (at least 32 characters); needs /acp
 """
 
 from __future__ import annotations
@@ -54,6 +56,7 @@ from ..edge import create_app as create_edge
 from ..edge import hmac_auth, pages
 from ..fx import AirwallexFx, FakeFx
 from ..merchant import FakeMerchant, MerchantGateway
+from .merchant_mcp import MCP_PATH, mcp_app
 
 log = logging.getLogger("countersign.host")
 
@@ -138,6 +141,8 @@ class House:
     acp: bool
     store: MemoryReceiptStore
     webhook_secret: bytes = b""
+    mcp_token: bytes = b""  # mounts the fallback merchant MCP when set
+    public_url: str | None = None
 
     def public_key(self) -> dict[str, str]:
         raw = self.signer.key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -162,9 +167,15 @@ def house_from_env(environ: Mapping[str, str], *, merchant: MerchantGateway | No
     acp = acp_api.AcpConfig.from_env(environ)
     store = MemoryReceiptStore()  # shared with the webhook, which signs held receipts into it
     extra = {"clock": clock} if clock is not None else {}
+    mcp_token = environ.get("COUNTERSIGN_MCP_TOKEN", "").strip()
+    if mcp_token and len(mcp_token) < 32:
+        raise ValueError("COUNTERSIGN_MCP_TOKEN must be at least 32 characters")
+    if mcp_token and acp is None:
+        raise ValueError("COUNTERSIGN_MCP_TOKEN needs /acp: set COUNTERSIGN_ACP_HMAC_SECRET too")
     edge = create_edge(merchant, directory, authority=authority, signer=signer, acp=acp, store=store, **extra)
     return House(merchant, edge, signer, authority, acp is not None, store,
-                 environ.get("AIRWALLEX_WEBHOOK_SECRET", "").encode())
+                 environ.get("AIRWALLEX_WEBHOOK_SECRET", "").encode(), mcp_token.encode(),
+                 environ.get("COUNTERSIGN_PUBLIC_URL") or None)
 
 
 def webhook_app(house: House) -> FastAPI:
@@ -210,10 +221,13 @@ class Host:
         self.demo = demo
         self.house = house
         self.hooks = webhook_app(house)
+        self.mcp = mcp_app(house, house.mcp_token, house.public_url) if house.mcp_token else None
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] == "http" and scope["path"] == WEBHOOK_PATH:
             await self.hooks(scope, receive, send)
+        elif scope["type"] == "http" and scope["path"] == MCP_PATH and self.mcp is not None:
+            await self.mcp(scope, receive, send)
         elif scope["type"] == "http" and self.house.owns(scope["method"], scope["path"]):
             await self.house.edge(scope, receive, send)
         else:
