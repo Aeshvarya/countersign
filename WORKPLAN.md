@@ -63,12 +63,12 @@ Aeshvarya's time is light until Fri 10-30 (another deadline). V4′ and V10 need
 | A11 | Airwallex liaison in the hackathon Slack: the Kit 10 asks, every follow-up | A | today, ongoing | todo |
 | A12 | Sandbox account, API key into `.env`, `scripts/ac_probe.py` (read config, try onboard), result in PROGRESS | A | Wed 10-28 | todo |
 | A2/A6 | Live rate lock, intent, Drop-in run (`payment_spike.py --shopper INR`) | A | Wed 10-28 | waits on A12 |
-| A7 | Render deploy: the HTTPS URL that `create_checkout` points at | A | Thu 10-29 | todo |
+| A7 | Render deploy: the HTTPS URL that `create_checkout` points at | A | Thu 10-29 | host code merged 10-30 (`web/host.py`: `/acp`, `/p`, `/img`, TAP door, webhook); the deploy itself waits on Aeshvarya's Render account |
 | V4′ | **C11 catalogue in GMC format:** `catalog_gmc.py` maps `synthetic_catalog()` to GMC JSON (120 products, some variants via `item_group_id`); `scripts/upload_catalog.py` upserts at most 300 per call and is safe to re-run. Offline tests now, live the day keys land | V | code Thu 10-29 | done 10-29 offline (merged `a73efa1`); live upload waits on keys, the public URL and onboarding |
 | V10 | **C10 checkout callback:** an `edge/` route for Airwallex's `create_checkout`: HMAC-SHA256 check with a time window, ACP-shaped session (create, update, complete; `messages` for out of stock and price change), `countersign` on complete, order number and receipt back, idempotent on retry. ACP parsing in one adapter so the core never changes when Airwallex confirms the exact shape | V | offline Sun 11-01, live Tue 11-03 | done 10-29 offline (merged `06d610d`); onboarding script 10-30 (`bb9144b`); live due 11-03, blocked on keys, host, onboarding |
 | A14 | **C12 TAP across the MCP hop:** the agent signs the checkout body exactly as C2 does now (Content-Digest), the signature travels in the checkout payload or headers, and the merchant runs the same `tap.verify`. Proposal in PROGRESS first | A | proposal Fri 10-30, code Thu 11-05 | todo |
 | A13 | Claude configuration and run book: `claude mcp add`, the token, a purchase prompt that works every time | A | Mon 11-02 | waits on A12 |
-| V5′ | `AirwallexMerchant`: C3 over the onboarding API and C9 payments; `find_order` by idempotency key | V | Wed 11-04 | todo |
+| V5′ | `AirwallexMerchant`: C3 over the onboarding API and C9 payments; `find_order` by idempotency key | A (moved 10-29) | Wed 11-04 | done offline 10-30 (`airwallex_merchant.py`, held receipts, `/webhooks/airwallex`); live run waits on keys |
 | A16 | Declined path: a declining test card means no order, no retry, Claude reports it, and no duplicate charge | A | Wed 11-04 | todo |
 | V6 | Change events on the real catalogue through upsert (price, stock, delivery), driven from the console | V | Fri 11-06 | todo |
 | A15 | Merchant console: `web/` shows live checkout calls, decisions and receipts; the levers call V6 | A | Fri 11-06 | todo |
