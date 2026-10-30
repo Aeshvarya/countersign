@@ -3,18 +3,30 @@
 import base64
 import json
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from countersign import receipt, tap
 from countersign.agent import AgentKey, InProcessShop
+from countersign.airwallex_merchant import AirwallexMerchant
+from countersign.checkout import countersign
+from countersign.fx import FakeFx
+from countersign.merchant import FakeMerchant
+from countersign.terms import Approval
+
+try:
+    from tests.test_airwallex_merchant import FakeAirwallex
+except ImportError:  # run by discover with -s tests
+    from test_airwallex_merchant import FakeAirwallex
 
 try:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from countersign.edge import hmac_auth
-    from countersign.web.host import KEY_PATH, Host, authority_of, house_from_env, signing_key_from
+    from countersign.web.host import (KEY_PATH, WEBHOOK_PATH, Host, authority_of, house_from_env, merchant_from_env,
+                                      signing_key_from)
 except ImportError:  # the server extra is not installed
     TestClient = None
 
@@ -22,6 +34,7 @@ SECRET = "s" * 32
 SEED = base64.b64encode(bytes(range(32))).decode()
 PUBLIC = "https://countersign.onrender.com"
 AGENT_DIR = "https://agents.example"
+NOW = datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc)
 
 
 def demo_app():
@@ -104,10 +117,70 @@ class HostTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             house_from_env({"COUNTERSIGN_ACP_HMAC_SECRET": "too short"})
 
+    def test_the_merchant_switch(self):
+        self.assertIsInstance(merchant_from_env({}), FakeMerchant)
+        with self.assertRaises(ValueError):
+            merchant_from_env({"COUNTERSIGN_MERCHANT": "airwallex"})  # no keys
+        with self.assertRaises(ValueError):
+            merchant_from_env({"COUNTERSIGN_MERCHANT": "stripe"})
+        keys = {"COUNTERSIGN_MERCHANT": "airwallex", "AIRWALLEX_CLIENT_ID": "id", "AIRWALLEX_API_KEY": "k"}
+        self.assertIsInstance(merchant_from_env(keys), AirwallexMerchant)  # builds without calling anyone
+
     def test_the_signing_key_survives_a_restart(self):
         a = signing_key_from({"COUNTERSIGN_MERCHANT_SIGNING_KEY": SEED}).public_key()
         b = signing_key_from({"COUNTERSIGN_MERCHANT_SIGNING_KEY": SEED}).public_key()
         self.assertEqual(a.public_bytes_raw(), b.public_bytes_raw())
+
+
+WEBHOOK_SECRET = "w" * 32
+
+
+@unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
+class WebhookTest(unittest.TestCase):
+    """C9 on the host: Airwallex's event settles the payment and releases the held receipt."""
+
+    def setUp(self):
+        self.api = FakeAirwallex()
+        merchant = AirwallexMerchant(self.api, FakeFx("84.10"))
+        environ = {"COUNTERSIGN_MERCHANT_SIGNING_KEY": SEED, "AIRWALLEX_WEBHOOK_SECRET": WEBHOOK_SECRET}
+        self.house = house_from_env(environ, merchant=merchant)
+        self.client = TestClient(Host(demo_app(), self.house))
+        sku = merchant.search("kettle")[0].sku
+        terms = merchant.offer({sku: 1}, "INR", NOW)
+        self.approval = Approval.grant(terms, terms.shopper_total, "s", NOW, NOW + timedelta(hours=2))
+        # The same store the edge holds receipts in, as a checkout through either door would.
+        self.result = countersign(merchant, self.approval, "k1", NOW, signer=self.house.signer, store=self.house.store)
+
+    def event(self, intent_id, *, secret=WEBHOOK_SECRET, name="payment_intent.succeeded"):
+        raw = json.dumps({"name": name, "data": {"object": {"id": intent_id}}}).encode()
+        headers = {"content-type": "application/json", **hmac_auth.sign(raw, secret.encode())}
+        return self.client.post(WEBHOOK_PATH, content=raw, headers=headers)
+
+    def test_a_paid_intent_releases_a_receipt_anyone_can_verify(self):
+        r = self.result
+        self.assertIsNone(self.house.store.get("k1"))
+        self.api.shopper_pays(r.order.payment_id, r.decision.charge, quote=r.decision.fx_quote_id)
+        out = self.event(r.order.payment_id).json()
+        self.assertEqual((out["status"], out["receipt"]), ("paid", True))
+        signed = self.house.store.get("k1")
+        public = self.house.signer.key.public_key()
+        self.assertTrue(receipt.verify(signed, public, self.approval).ok)
+        self.assertEqual(self.event(r.order.payment_id).json()["status"], "paid")  # Airwallex retries
+
+    def test_a_forged_event_is_refused(self):
+        r = self.event(self.result.order.payment_id, secret="x" * 32)
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(self.house.merchant.orders["k1"].status, "pending")
+
+    def test_events_about_other_things_are_acknowledged_and_ignored(self):
+        self.assertTrue(self.event("int_not_ours").json()["ignored"])
+        self.assertTrue(self.event("rfd_1", name="refund.succeeded").json()["ignored"])
+
+    def test_without_a_secret_every_event_is_refused(self):
+        house = house_from_env({}, merchant=AirwallexMerchant(self.api, FakeFx("84.10")))
+        client = TestClient(Host(demo_app(), house))
+        raw = b'{"name": "payment_intent.succeeded"}'
+        self.assertEqual(client.post(WEBHOOK_PATH, content=raw, headers=hmac_auth.sign(raw, b"")).status_code, 401)
 
 
 if __name__ == "__main__":

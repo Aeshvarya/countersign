@@ -26,6 +26,12 @@ services:
         sync: false
       - key: AIRWALLEX_API_KEY
         sync: false
+      # Verifies /webhooks/airwallex (point the sandbox's payment_intent.* webhook there).
+      - key: AIRWALLEX_WEBHOOK_SECRET
+        sync: false
+      # fake (default, pays instantly) or airwallex (real intents and Drop-in, V5′).
+      - key: COUNTERSIGN_MERCHANT
+        sync: false
       # Leave unset until Aeshvarya says otherwise: without it the demo agent is scripted and free.
       - key: ANTHROPIC_API_KEY
         sync: false
