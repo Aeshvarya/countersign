@@ -207,15 +207,19 @@ class AcpApi:
 
     def view(self, s: Session) -> dict[str, Any]:
         cur = s.currency
+        # "expired" is ours: on the wire a session past SESSION_TTL is canceled, with the reason.
+        expired = s.status == "expired"
         out: dict[str, Any] = {
             "id": s.id,
-            "status": s.status,
+            "status": "canceled" if expired else s.status,
             "currency": cur.lower(),
             "payment_provider": {"provider": "airwallex", "supported_payment_methods": ["card"]},
             "line_items": [],
             "totals": [],
             "fulfillment_options": [],
-            "messages": list(s.messages),
+            "messages": list(s.messages) + ([{"type": "error", "code": "expired", "content_type": "plain",
+                                               "content": "This checkout session expired. Nothing was charged; "
+                                                          "start a new one."}] if expired else []),
             "links": [],
         }
         if self.awaiting_shopper(s):
