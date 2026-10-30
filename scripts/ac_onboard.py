@@ -6,9 +6,14 @@
     PYTHONPATH=src python scripts/ac_onboard.py --onboard --dry-run  # the body, secrets hidden
     PYTHONPATH=src python scripts/ac_onboard.py --onboard            # POST /onboard, once
 
-Probe: GET /api/v1/pa/agentic_commerce/config tells three states apart. 200 means
-onboarded. 404 MERCHANT_CONFIG_NOT_FOUND means the API is live and we have not
-onboarded. Any other 404 means the route itself is missing on this account.
+Probe, read-only: log in, then GET both config paths. The documented one is
+/api/v1/pa/agentic_commerce/config; another Kit 10 team saw 401 "Admin
+permissions required" on /api/v1/agentic-commerce/config with a scoped key
+(#commerce-kits-9-and-10, 2026-10-28), so a 404 on ours alone does not prove the
+feature is missing. Verdict: documented 200 = onboarded; documented 404
+MERCHANT_CONFIG_NOT_FOUND = ready to onboard; a 401 on either = the key's scope,
+make a full-access key; both 404 with no Airwallex code = not on the account.
+--onboard only ever uses the documented path.
 
 Host check: an unsigned POST to create_checkout must be refused by the ACP door
 (401, code "unauthorized"). A TAP refusal ({"refused": ...}) means the host runs
@@ -42,6 +47,7 @@ from countersign.airwallex import Airwallex, AirwallexError
 from countersign.edge.acp import PREFIX, AcpConfig
 
 CONFIG_PATH = "/pa/agentic_commerce/config"
+OTHER_CONFIG_PATH = "/agentic-commerce/config"  # seen by another Kit 10 team; probed, never written to
 ONBOARD_PATH = "/pa/agentic_commerce/onboard"
 NOT_ONBOARDED = "MERCHANT_CONFIG_NOT_FOUND"
 SLOW_SECONDS = 10.0  # a free Render instance waking from sleep takes longer than this
@@ -60,16 +66,35 @@ def _refusal(err: AirwallexError) -> str:
     return " ".join([f"HTTP {err.status}"] + [str(body[k]) for k in ("code", "message") if body.get(k)])
 
 
-def probe(client: Airwallex) -> tuple[str, dict | None, AirwallexError | None]:
-    """("onboarded", config), ("not_onboarded", None), ("not_live", err) or ("refused", err)."""
+def _get(client: Airwallex, path: str) -> tuple[dict | None, AirwallexError | None]:
     try:
-        return "onboarded", client.get(CONFIG_PATH), None
+        return client.get(path), None
     except AirwallexError as err:
-        if err.status == 404 and _code(err).upper() == NOT_ONBOARDED:
-            return "not_onboarded", None, None
-        if err.status == 404:
-            return "not_live", None, err
-        return "refused", None, err
+        return None, err
+
+
+def probe(client: Airwallex) -> tuple[str, dict | None, list[str]]:
+    """The verdict, the config if onboarded, and one line per call (status, code, message; never a key).
+
+    Verdicts: onboarded, not_onboarded (ready), key_scope, not_live, login_refused, unclear.
+    """
+    try:
+        client.token()
+    except AirwallexError as err:
+        return "login_refused", None, [f"POST /api/v1/authentication/login -> {_refusal(err)}"]
+    found = {path: _get(client, path) for path in (CONFIG_PATH, OTHER_CONFIG_PATH)}
+    lines = [f"GET /api/v1{path} -> " + ("HTTP 200" if err is None else _refusal(err)) for path, (_, err) in found.items()]
+    config, err = found[CONFIG_PATH]
+    other = found[OTHER_CONFIG_PATH][1]
+    if err is None:
+        return "onboarded", config, lines
+    if err.status == 404 and _code(err).upper() == NOT_ONBOARDED:
+        return "not_onboarded", None, lines
+    if 401 in (err.status, other.status if other else None):
+        return "key_scope", None, lines
+    if err.status == 404 and not _code(err) and other is not None and other.status == 404 and not _code(other):
+        return "not_live", None, lines
+    return "unclear", None, lines
 
 
 def summary(config: Mapping) -> list[str]:
@@ -206,13 +231,21 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
     client = (client_factory or (lambda: Airwallex(env["AIRWALLEX_CLIENT_ID"], env["AIRWALLEX_API_KEY"],
                                                   env.get("AIRWALLEX_BASE_URL", "https://api.sandbox.airwallex.com"))))()
 
-    state, config, err = probe(client)
-    if state == "not_live":
-        print(f"onboarding API not on this account: GET {CONFIG_PATH} -> {_refusal(err)}", file=out)
-        return 1
-    if state == "refused":
-        print(f"Airwallex refused the probe: {_refusal(err)}", file=out)
+    state, config, lines = probe(client)
+    print("\n".join(lines), file=out)
+    if state == "login_refused":
+        print("Airwallex refused the login: check AIRWALLEX_CLIENT_ID and AIRWALLEX_API_KEY", file=out)
         return 2
+    if state == "key_scope":
+        print("a 401 on a config path: this key's scope is too narrow. Create a full-access key "
+              "(limited keys get \"Admin permissions required\") and probe again", file=out)
+        return 2
+    if state == "not_live":
+        print("onboarding API not on this account: both config paths 404 with no Airwallex code", file=out)
+        return 1
+    if state == "unclear":
+        print("no clear verdict from the two paths above: nothing sent; read the codes", file=out)
+        return 1
     if state == "onboarded":
         print("onboarded:", file=out)
         print("\n".join(summary(config)), file=out)
