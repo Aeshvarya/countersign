@@ -1,10 +1,13 @@
 """V10 / C10: the ACP checkout API Airwallex calls, end to end through the edge app."""
 
+import hashlib
 import json
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from countersign import receipt, tap
@@ -17,6 +20,7 @@ try:
     from countersign.edge import create_app
     from countersign.edge import hmac_auth
     from countersign.edge.acp import AcpConfig, from_minor, to_minor
+    from countersign.edge.passkey import b64url
     from countersign.edge.app import MAX_BODY
 except ImportError:  # the server extra is not installed
     TestClient = None
@@ -306,6 +310,166 @@ class ShopperSignatureGateTest(unittest.TestCase):
 
 
 @unittest.skipIf(TestClient is None, "needs the server extra")
+class ShopperPasskeyTest(unittest.TestCase):
+    """U1 at the edge: the approval page's two calls, then complete. Assertions built as a browser builds them."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.merchant = FakeMerchant(FakeFx("84.10"))
+        self.app = create_app(self.merchant, tap.StaticDirectory({}), authority="testserver", clock=self.clock,
+                              signer=receipt.MerchantSigner(Ed25519PrivateKey.generate(), "m-1"),
+                              acp=AcpConfig(secret=SECRET, require_shopper_signature=True,
+                                            public_url="https://shop.example"))
+        self.client = TestClient(self.app)
+        self.sku = next(iter(self.merchant.catalog))
+        self.device = ec.generate_private_key(ec.SECP256R1())
+        self.keys = 0
+
+    def post(self, path, body):
+        """Signed with the platform's HMAC, as Airwallex calls."""
+        self.keys += 1
+        raw = json.dumps(body).encode()
+        return self.client.post(path, content=raw, headers={**hmac_auth.sign(raw, SECRET), "content-type": "application/json",
+                                                            "Idempotency-Key": f"u1-{self.keys}"})
+
+    def create(self):
+        r = self.post(SESSIONS, {"items": [{"id": self.sku, "quantity": 1}], "currency": "INR"})
+        self.assertEqual(r.status_code, 201, r.text)
+        return r.json()
+
+    def complete(self, sid):
+        return self.post(f"{SESSIONS}/{sid}/complete", {}).json()
+
+    def page(self, sid):
+        r = self.client.get(f"/acp/approvals/{sid}")
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def assertion(self, challenge, *, key=None, origin="https://shop.example", credential=b"credential-1"):
+        key = key or self.device
+        authenticator_data = hashlib.sha256(b"shop.example").digest() + b"\x05" + (1).to_bytes(4, "big")
+        client_data_json = json.dumps({"type": "webauthn.get", "challenge": challenge, "origin": origin}).encode()
+        signature = key.sign(authenticator_data + hashlib.sha256(client_data_json).digest(), ec.ECDSA(hashes.SHA256()))
+        public_key = key.public_key().public_bytes(serialization.Encoding.DER,
+                                                   serialization.PublicFormat.SubjectPublicKeyInfo)
+        return {"credential_id": b64url(credential), "public_key_spki_der": b64url(public_key),
+                "authenticator_data": b64url(authenticator_data), "client_data_json": b64url(client_data_json),
+                "signature": b64url(signature)}
+
+    def sign(self, sid, **kw):
+        return self.client.post(f"/acp/approvals/{sid}", json=self.assertion(self.page(sid)["webauthn"]["challenge"], **kw))
+
+    def test_the_shopper_signs_then_the_charge_goes_through(self):
+        s = self.create()
+        self.assertEqual(s["status"], "not_ready_for_payment")
+        page = self.page(s["id"])
+        self.assertFalse(page["signed"])
+        self.assertEqual(page["webauthn"]["rp_id"], "shop.example")
+        self.assertEqual(page["webauthn"]["origin"], "https://shop.example")
+        self.assertEqual(page["terms"]["terms_hash"], s["countersign"]["terms_hash"])
+        self.assertEqual(page["terms"]["total"], s["totals"][-1]["amount"])
+        self.assertEqual(page["terms"]["items"][0]["id"], self.sku)
+        r = self.sign(s["id"])
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()["status"], r.json()["signed"]), ("ready_for_payment", True))
+        self.assertTrue(self.page(s["id"])["signed"])
+        raw = b""
+        now = self.client.get(f"{SESSIONS}/{s['id']}", headers=hmac_auth.sign(raw, SECRET)).json()
+        self.assertEqual((now["status"], now["links"], now["messages"]), ("ready_for_payment", [], []))
+        done = self.complete(s["id"])
+        self.assertEqual(done["status"], "completed")
+        self.assertEqual(len(self.merchant.orders), 1)
+        kept = self.app.state.acp.sessions[s["id"]].shopper_assertion
+        self.assertEqual(set(kept), {"credential_id", "public_key_spki_der", "authenticator_data", "client_data_json",
+                                     "signature", "session_id", "rp_id", "origin"})
+        self.assertEqual((kept["session_id"], kept["rp_id"], kept["origin"]),
+                         (s["id"], "shop.example", "https://shop.example"))
+
+    def test_a_failed_assertion_changes_nothing(self):
+        s = self.create()
+        r = self.sign(s["id"], origin="https://evil.example")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual((r.json()["code"], r.json()["message"]), ("assertion_invalid", "the origin does not match"))
+        self.assertFalse(self.page(s["id"])["signed"])
+        done = self.complete(s["id"])
+        self.assertEqual(done["status"], "not_ready_for_payment")
+        self.assertEqual(done["messages"][0]["code"], "approval_required")
+        self.assertEqual(self.merchant.orders, {})
+
+    def test_a_signature_for_one_session_cannot_approve_an_identical_one(self):
+        a, b = self.create(), self.create()
+        self.assertEqual(a["countersign"]["terms_hash"], b["countersign"]["terms_hash"])  # same cart, same terms
+        replay = self.assertion(self.page(a["id"])["webauthn"]["challenge"])
+        r = self.client.post(f"/acp/approvals/{b['id']}", json=replay)
+        self.assertEqual((r.status_code, r.json()["message"]), (400, "the challenge is not for these terms"))
+        self.assertEqual(self.complete(b["id"])["status"], "not_ready_for_payment")
+        self.assertEqual(self.merchant.orders, {})
+
+    def test_a_price_change_needs_a_new_signature(self):
+        s = self.create()
+        old = self.assertion(self.page(s["id"])["webauthn"]["challenge"])
+        self.assertEqual(self.client.post(f"/acp/approvals/{s['id']}", json=old).status_code, 200)
+        self.merchant.set_price(self.sku, self.merchant.catalog[self.sku].price * Decimal("1.05"))
+        r = self.complete(s["id"])
+        self.assertEqual(r["status"], "not_ready_for_payment")
+        codes = [m["code"] for m in r["messages"]]
+        self.assertIn("price_change", codes)
+        self.assertEqual(codes[-1], "approval_required")  # the new terms wait for the shopper again
+        self.assertEqual(self.merchant.orders, {})
+        again = self.client.post(f"/acp/approvals/{s['id']}", json=old)
+        self.assertEqual((again.status_code, again.json()["message"]), (400, "the challenge is not for these terms"))
+        self.assertEqual(self.sign(s["id"]).status_code, 200)
+        self.assertEqual(self.complete(s["id"])["status"], "completed")
+        self.assertEqual(len(self.merchant.orders), 1)
+
+    def test_an_update_after_signing_clears_the_signature(self):
+        s = self.create()
+        self.assertEqual(self.sign(s["id"]).status_code, 200)
+        r = self.post(f"{SESSIONS}/{s['id']}", {"items": [{"id": self.sku, "quantity": 1}]}).json()
+        self.assertEqual(r["status"], "not_ready_for_payment")
+        self.assertFalse(self.page(s["id"])["signed"])
+
+    def test_a_credential_keeps_the_key_it_was_first_used_with(self):
+        a, b = self.create(), self.create()
+        self.assertEqual(self.sign(a["id"]).status_code, 200)
+        r = self.sign(b["id"], key=ec.generate_private_key(ec.SECP256R1()))
+        self.assertEqual((r.status_code, r.json()["message"]), (400, "this credential is registered with a different key"))
+        self.assertEqual(self.sign(b["id"], key=ec.generate_private_key(ec.SECP256R1()), credential=b"other").status_code, 200)
+
+    def test_the_approval_routes_need_no_hmac_but_the_checkout_api_still_does(self):
+        s = self.create()
+        self.assertEqual(self.client.get(f"{SESSIONS}/{s['id']}").status_code, 401)
+        self.assertEqual(self.client.get(f"/acp/approvals/{s['id']}").status_code, 200)
+        self.assertEqual(self.client.get("/acp/approvals/cs_missing").status_code, 404)
+
+    def test_bad_bodies_are_refused(self):
+        s = self.create()
+        url = f"/acp/approvals/{s['id']}"
+        r = self.client.post(url, json={})
+        self.assertEqual((r.status_code, r.json()["param"]), (400, "$.credential_id"))
+        self.assertEqual(self.client.post(url, content=b"not json").status_code, 400)
+        self.assertEqual(self.client.post(url, json=[1]).status_code, 400)
+        bad = {**self.assertion(self.page(s["id"])["webauthn"]["challenge"]), "signature": "not+base64url"}
+        self.assertEqual(self.client.post(url, json=bad).json()["param"], "$.signature")
+
+    def test_a_finished_session_cannot_be_signed(self):
+        s = self.create()
+        self.sign(s["id"])
+        self.complete(s["id"])
+        self.assertEqual(self.client.get(f"/acp/approvals/{s['id']}").status_code, 405)
+
+    def test_without_a_public_url_there_is_no_origin_to_check(self):
+        app = create_app(FakeMerchant(FakeFx("84.10")), tap.StaticDirectory({}), authority="testserver",
+                         acp=AcpConfig(secret=SECRET))
+        client = TestClient(app)
+        raw = json.dumps({"items": [{"id": self.sku, "quantity": 1}], "currency": "INR"}).encode()
+        s = client.post(SESSIONS, content=raw, headers={**hmac_auth.sign(raw, SECRET), "Idempotency-Key": "x",
+                                                        "content-type": "application/json"}).json()
+        r = client.get(f"/acp/approvals/{s['id']}")
+        self.assertEqual((r.status_code, r.json()["code"]), (409, "invalid_state"))
+
+
+@unittest.skipIf(TestClient is None, "needs the server extra")
 class PaymentDataTest(unittest.TestCase):
     """A3: complete keeps what Airwallex sends as payment_data, never card data, and logs only that it came."""
 
@@ -398,6 +562,15 @@ class FromEnvTest(unittest.TestCase):
         self.assertEqual((cfg.scheme, cfg.observe, cfg.require_shopper_signature, cfg.default_currency, cfg.public_url),
                          ("acp", True, True, "INR", "https://shop.example"))
         self.assertEqual(cfg.secret, b"x" * 32)
+
+    def test_the_shopper_signature_needs_the_public_url(self):
+        with self.assertRaises(ValueError):
+            AcpConfig.from_env({"COUNTERSIGN_ACP_HMAC_SECRET": "x" * 32, "COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE": "1"})
+
+    def test_origin_and_rp_id_come_from_the_public_url(self):
+        cfg = AcpConfig(secret=b"x" * 32, public_url="https://Shop.Example:8443/base/")
+        self.assertEqual((cfg.origin, cfg.rp_id), ("https://shop.example:8443", "shop.example"))
+        self.assertEqual((AcpConfig(secret=b"x" * 32).origin, AcpConfig(secret=b"x" * 32).rp_id), (None, None))
 
     def test_a_short_secret_or_unknown_scheme_fails_loudly(self):
         with self.assertRaises(ValueError):

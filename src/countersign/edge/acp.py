@@ -22,6 +22,14 @@ the approval is the exact terms this API last returned, hashed when they were
 returned. Completing means "these terms"; anything that has changed since is
 asked again, never charged.
 
+With U1 on (COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE), the shopper signs those terms
+with a passkey on the approval page, which calls two routes outside the HMAC
+check, because the caller is the shopper's browser, not Airwallex:
+GET /acp/approvals/{id} (what to sign, and the challenge) and POST
+/acp/approvals/{id} (the assertion, checked by passkey.verify_assertion). The
+link is the capability: a session id is 96 random bits. Every requote clears the
+signature, so terms that changed are always signed again.
+
 Airwallex has not published its exact create_checkout contract. Every guess
 about it lives in this file (and the HMAC scheme in configuration), so a
 correction never reaches the core.
@@ -37,6 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Mapping
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -47,7 +56,7 @@ from ..checkout import ReceiptStore, countersign
 from ..decide import Decision, Outcome
 from ..merchant import MerchantGateway
 from ..terms import Approval, Terms, minor_units, money, utc
-from . import hmac_auth
+from . import hmac_auth, passkey
 from .idempotency import IdempotencyStore, Stored, fingerprint
 
 log = logging.getLogger("countersign.acp")
@@ -57,6 +66,8 @@ SUPPORTED_VERSIONS = (API_VERSION,)
 APPROVAL_TTL = timedelta(minutes=15)
 SESSION_TTL = timedelta(hours=1)
 PREFIX = "/acp/checkout_sessions"
+APPROVALS = "/acp/approvals"  # the shopper's approval page (U1); no HMAC
+ASSERTION_FIELDS = ("credential_id", "public_key_spki_der", "authenticator_data", "client_data_json", "signature")
 
 
 @dataclass
@@ -88,10 +99,27 @@ class AcpConfig:
         if scheme not in hmac_auth.SCHEMES:
             raise ValueError(f"COUNTERSIGN_ACP_HMAC_SCHEME must be one of {', '.join(hmac_auth.SCHEMES)}")
         flag = lambda name: environ.get(name, "").strip().lower() in ("1", "true", "yes")
+        public_url = environ.get("COUNTERSIGN_PUBLIC_URL") or None
+        if flag("COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE") and not public_url:
+            raise ValueError("COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE needs COUNTERSIGN_PUBLIC_URL: "
+                             "the shopper's passkey is checked against its origin")
         return cls(secret=secret.encode(), scheme=scheme, observe=flag("COUNTERSIGN_ACP_OBSERVE"),
                    require_shopper_signature=flag("COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE"),
                    default_currency=environ.get("COUNTERSIGN_ACP_CURRENCY", "USD").upper(),
-                   public_url=environ.get("COUNTERSIGN_PUBLIC_URL") or None)
+                   public_url=public_url)
+
+    @property
+    def origin(self) -> str | None:
+        """The approval page's origin, which the passkey assertion must name exactly."""
+        if not self.public_url:
+            return None
+        parts = urlsplit(self.public_url)
+        return f"{parts.scheme}://{parts.netloc}".lower()
+
+    @property
+    def rp_id(self) -> str | None:
+        """The WebAuthn relying party id: the public host name."""
+        return urlsplit(self.public_url).hostname if self.public_url else None
 
 
 def to_minor(amount: Decimal, currency: str) -> int:
@@ -133,7 +161,8 @@ class Session:
     status: str = "not_ready_for_payment"  # ACP's enum only, plus "expired" internally
     terms: Terms | None = None
     approval: Approval | None = None
-    shopper_signed_hash: str | None = None  # set by U1 when the shopper signs these exact terms
+    shopper_signed: bytes | None = None  # the approval challenge the shopper's passkey signed (U1)
+    shopper_assertion: dict[str, Any] | None = None  # that signature, as a receipt carries it (C13)
     messages: list[dict[str, Any]] = field(default_factory=list)
     order: Any = None
     receipt: dict[str, Any] | None = None
@@ -202,6 +231,7 @@ class AcpApi:
         self.store = store
         self.sessions: dict[str, Session] = {}
         self.idempotency = IdempotencyStore()
+        self.passkeys: dict[str, bytes] = {}  # credential id -> public key; the first valid use binds it
 
     # ---------------------------------------------------------------- the shape
 
@@ -269,6 +299,7 @@ class AcpApi:
         """Price the cart now and record it as what the shopper is being shown."""
         s.messages = []
         s.terms = s.approval = None
+        s.shopper_signed = s.shopper_assertion = None  # a signature never carries over to new terms
         if not s.cart:
             s.status = "not_ready_for_payment"
             return
@@ -300,7 +331,12 @@ class AcpApi:
         """U1 is on and the shopper has not signed the terms now on the session."""
         return (self.config.require_shopper_signature and s.approval is not None
                 and s.status not in ("completed", "canceled", "expired")
-                and s.shopper_signed_hash != s.approval.hash)
+                and s.shopper_signed != self.challenge(s))
+
+    def challenge(self, s: Session) -> bytes:
+        """What the shopper's passkey signs: these terms, in this session, until this expiry."""
+        assert s.approval is not None
+        return passkey.approval_challenge(s.id, s.approval.hash, s.approval.expires_at)
 
     def approval_link(self, s: Session) -> str:
         base = self.config.public_url.rstrip("/") if self.config.public_url else ""
@@ -436,6 +472,75 @@ class AcpApi:
             s.status, s.messages = "canceled", []
             return 200, self.view(s)
 
+    # ---------------------------------------------------------------- U1, the shopper's passkey
+
+    def _approvable(self, s: Session) -> tuple[str, str]:
+        self._open(s)
+        if s.approval is None or s.terms is None:
+            raise AcpError(409, "invalid_state", "the session has no terms to approve yet")
+        if not self.config.origin or not self.config.rp_id:
+            raise AcpError(409, "invalid_state", "passkey approval needs COUNTERSIGN_PUBLIC_URL")
+        return self.config.origin, self.config.rp_id
+
+    def approval_request(self, session_id: str) -> tuple[int, dict[str, Any]]:
+        """What the approval page shows, and the challenge its passkey call signs. Never the buyer's details."""
+        s = self._session(session_id)
+        with s.lock:
+            origin, rp_id = self._approvable(s)
+            t, a, cur = s.terms, s.approval, s.currency
+            challenge = self.challenge(s)
+            return 200, {
+                "session_id": s.id,
+                "status": s.status,
+                "signed": s.shopper_signed == challenge,
+                "terms": {
+                    "merchant_id": t.merchant_id,
+                    "items": [{"id": i.sku, "title": i.title, "quantity": i.quantity} for i in t.items],
+                    "delivery": t.delivery,
+                    "currency": cur.lower(),
+                    "total": _amount(t.shopper_total, cur),
+                    "ceiling": _amount(a.ceiling, cur),
+                    "merchant_currency": t.merchant_currency.lower(),
+                    "merchant_total": _amount(t.merchant_total, t.merchant_currency),
+                    "rate": format(t.fx.rate, "f") if t.fx else None,
+                    "terms_hash": a.hash,
+                    "expires_at": utc(a.expires_at).isoformat(),
+                },
+                "webauthn": {"challenge": passkey.b64url(challenge), "rp_id": rp_id, "origin": origin,
+                             "user_verification": "preferred"},
+            }
+
+    def approve(self, session_id: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """U1: the shopper's passkey has signed this session's current challenge. Nothing changes unless it verifies."""
+        s = self._session(session_id)
+        with s.lock:
+            origin, rp_id = self._approvable(s)
+            raw: dict[str, bytes] = {}
+            for name in ASSERTION_FIELDS:
+                try:
+                    raw[name] = passkey.b64url_decode(body.get(name))
+                except ValueError:
+                    raise AcpError(400, "invalid", f"{name} must be base64url", f"$.{name}") from None
+            credential = passkey.b64url(raw["credential_id"])
+            known = self.passkeys.get(credential)
+            if known is not None and known != raw["public_key_spki_der"]:
+                raise AcpError(400, "assertion_invalid", "this credential is registered with a different key")
+            challenge = self.challenge(s)
+            result = passkey.verify_assertion(
+                public_key_spki_der=raw["public_key_spki_der"], authenticator_data=raw["authenticator_data"],
+                client_data_json=raw["client_data_json"], signature=raw["signature"],
+                expected_challenge=challenge, origin=origin, rp_id=rp_id)
+            if isinstance(result, str):
+                raise AcpError(400, "assertion_invalid", result)
+            self.passkeys.setdefault(credential, raw["public_key_spki_der"])
+            s.shopper_signed = challenge
+            # Everything an offline check needs to recompute the challenge and verify the signature.
+            s.shopper_assertion = {**{name: passkey.b64url(value) for name, value in raw.items()},
+                                   "session_id": s.id, "rp_id": rp_id, "origin": origin}
+            s.status, s.messages = "ready_for_payment", []
+            return 200, {"session_id": s.id, "status": s.status, "signed": True, "terms_hash": s.approval.hash,
+                         "user_verified": result.user_verified}
+
 
 def router(api: AcpApi) -> APIRouter:
     r = APIRouter()
@@ -518,6 +623,27 @@ def router(api: AcpApi) -> APIRouter:
     async def cancel_session(session_id: str, request: Request):
         return await handle(request, lambda body: api.cancel(session_id), post=True)
 
+    async def shopper(request: Request, action: Callable[[Any], tuple[int, dict[str, Any]]]) -> JSONResponse:
+        # The approval page's calls come from the shopper's browser, so there is no
+        # HMAC here: the session id in the link is the capability, and a passkey
+        # signature is the only thing that changes a session.
+        raw = await request.body()
+        try:
+            body = json.loads(raw) if raw else {}
+        except ValueError:
+            return JSONResponse(AcpError(400, "invalid", "the body is not JSON").body(), status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse(AcpError(400, "invalid", "the body must be a JSON object").body(), status_code=400)
+        return await _run(action, body, {})
+
+    @r.get(APPROVALS + "/{session_id}")
+    async def approval_request(session_id: str, request: Request):
+        return await shopper(request, lambda body: api.approval_request(session_id))
+
+    @r.post(APPROVALS + "/{session_id}")
+    async def approve(session_id: str, request: Request):
+        return await shopper(request, lambda body: api.approve(session_id, body))
+
     return r
 
 
@@ -537,4 +663,5 @@ def observe(request: Request, raw: bytes) -> None:
 
 
 def is_acp(path: str) -> bool:
-    return path == PREFIX or path.startswith(PREFIX + "/")
+    """The checkout API (HMAC in its routes) and the approval page's calls (passkey): outside TAP."""
+    return any(path == p or path.startswith(p + "/") for p in (PREFIX, APPROVALS))
