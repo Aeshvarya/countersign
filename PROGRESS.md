@@ -53,7 +53,7 @@ _Updated 2026-10-30 (evening)_
 
 ## Open questions
 
-- **Is Kit 10 onboarding on our account?** (2026-10-30) Sandbox maintenance ended 2026-10-30 01:52 IST (#announcements); no Kit 10 onboarding announcement yet and no answer to our 2026-10-29 post. Once keys exist, `scripts/ac_onboard.py` answers it in one call: route 404 = not on the account, 404 `MERCHANT_CONFIG_NOT_FOUND` = live and ready to onboard. Per the onboarding docs `managed_payment` is a response field, not something we send.
+- **Is Kit 10 onboarding on our account?** (2026-10-30) Sandbox maintenance ended 2026-10-30 01:52 IST (#announcements); no Kit 10 onboarding announcement yet and no answer to our 2026-10-29 post. Once keys exist, `scripts/ac_onboard.py` answers it in one read-only run over both config paths: 404 `MERCHANT_CONFIG_NOT_FOUND` on the documented path = live and ready to onboard; a 401 on either = the key's scope (make a full-access key); both 404 with no code = not on the account. Per the onboarding docs `managed_payment` is a response field, not something we send.
 - ~~**Nothing serves the edge with the ACP door yet**~~ Answered 2026-10-30: `web/host.py` serves `/acp`, `/p`, `/img` and the TAP door from the deployed service (A7).
 
 - ~~**The public host must serve the catalogue pages**~~ Answered 2026-10-30, same change.
