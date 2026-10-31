@@ -12,9 +12,12 @@ jobs:
         python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the audit scans every commit for credentials
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[server]" httpx
       - run: python -m unittest discover -s tests -v
       - run: python -m countersign demo
+      - run: python scripts/audit.py  # nothing that must not be public: keys, .env, real card numbers, dead links
