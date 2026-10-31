@@ -72,7 +72,9 @@ class RowsTest(unittest.TestCase):
 
     def test_money_follows_the_currencys_minor_unit(self):
         self.assertEqual(catalog_gmc.gmc_price(Decimal("1999"), "JPY"), "1999 JPY")
-        self.assertEqual(catalog_gmc.gmc_price(Decimal("51.985"), "USD"), "51.99 USD")
+        # Half to even, as Airwallex rounds (C9, 2026-10-29): a tie goes to the even cent.
+        self.assertEqual(catalog_gmc.gmc_price(Decimal("51.985"), "USD"), "51.98 USD")
+        self.assertEqual(catalog_gmc.gmc_price(Decimal("51.975"), "USD"), "51.98 USD")
 
     def test_a_sku_without_a_variant_suffix_is_refused(self):
         with self.assertRaises(ValueError):

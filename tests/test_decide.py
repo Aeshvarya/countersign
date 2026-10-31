@@ -90,5 +90,18 @@ class DecideTest(unittest.TestCase):
             Approval.grant(terms, Decimal("1"), "s", NOW, NOW + timedelta(hours=1))
 
 
+class MoneyTest(unittest.TestCase):
+    def test_a_tie_rounds_to_even_as_airwallex_does(self):
+        # 10.00 USD at 84.1025 is 841.025 INR: Airwallex charges 841.02, so we must show 841.02.
+        self.assertEqual(money(Decimal("10.00") * Decimal("84.1025"), "INR"), Decimal("841.02"))
+        self.assertEqual(money(Decimal("841.035"), "INR"), Decimal("841.04"))
+        self.assertEqual(money(Decimal("841.0251"), "INR"), Decimal("841.03"))
+
+    def test_airwallex_zero_decimal_currencies(self):
+        for currency in ("JPY", "HUF", "TWD", "ISK"):
+            self.assertEqual(money(Decimal("1234.5"), currency), Decimal("1234"), currency)
+        self.assertEqual(money(Decimal("1.2345"), "KWD"), Decimal("1.234"))
+
+
 if __name__ == "__main__":
     unittest.main()

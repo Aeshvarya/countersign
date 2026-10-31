@@ -23,7 +23,7 @@
 "use strict";
 
 // Integer minor units per currency, as countersign.terms._MINOR_UNITS (a test keeps them equal).
-const MINOR_UNITS = {"JPY": 0, "KRW": 0, "VND": 0, "IDR": 0, "CLP": 0, "BHD": 3, "KWD": 3, "OMR": 3};
+const MINOR_UNITS = {"JPY": 0, "KRW": 0, "VND": 0, "IDR": 0, "CLP": 0, "HUF": 0, "TWD": 0, "ISK": 0, "BHD": 3, "KWD": 3, "OMR": 3};
 const STORE_KEY = "countersign.passkey.v1";
 const ES256 = -7;
 const DROP_IN_SDK = "https://static.airwallex.com/components/sdk/v1/index.js";

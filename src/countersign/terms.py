@@ -13,10 +13,13 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 
-# ISO 4217 minor units for the currencies that differ from the default of 2.
-_MINOR_UNITS = {"JPY": 0, "KRW": 0, "VND": 0, "IDR": 0, "CLP": 0, "BHD": 3, "KWD": 3, "OMR": 3}
+# Minor units for the currencies that differ from the default of 2. Airwallex's
+# rounding page, not ISO 4217, is the authority: it treats HUF, TWD and ISK as
+# zero-decimal, so a shopper charged in them is charged in whole units.
+_MINOR_UNITS = {"JPY": 0, "KRW": 0, "VND": 0, "IDR": 0, "CLP": 0, "HUF": 0, "TWD": 0, "ISK": 0,
+                "BHD": 3, "KWD": 3, "OMR": 3}
 
 
 def minor_units(currency: str) -> int:
@@ -24,9 +27,13 @@ def minor_units(currency: str) -> int:
 
 
 def money(amount: Decimal | str | int, currency: str) -> Decimal:
-    """Round an amount to its currency's minor unit, half up."""
+    """Round an amount to its currency's minor unit, half to even, as Airwallex does.
+
+    With half up, an exact tie showed the shopper one minor unit more than
+    Airwallex then charged (C9, agreed 2026-10-29).
+    """
     exponent = Decimal(1).scaleb(-minor_units(currency))
-    return Decimal(amount).quantize(exponent, rounding=ROUND_HALF_UP)
+    return Decimal(amount).quantize(exponent, rounding=ROUND_HALF_EVEN)
 
 
 def utc(dt: datetime) -> datetime:
