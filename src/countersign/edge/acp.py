@@ -14,7 +14,7 @@ the TAP check and are authenticated by the shared HMAC secret instead
 Statuses on the wire are ACP's four only (not_ready_for_payment,
 ready_for_payment, completed, canceled): Airwallex's hosted MCP sits between us
 and the agent and may drop a session whose status it does not know. A session
-waiting for the shopper's own signature is not_ready_for_payment, with an
+waiting for a passkey signature over its terms is not_ready_for_payment, with an
 approval_required message and the approval link in `links`.
 
 What the shopper approved: until the shopper signs the terms themselves (U1),
@@ -75,7 +75,7 @@ class AcpConfig:
     secret: bytes
     scheme: str = "airwallex"
     observe: bool = False  # log header names and body keys of refused calls, never values
-    require_shopper_signature: bool = False  # U1: completion needs the shopper's own signature
+    require_shopper_signature: bool = False  # U1: completion needs a passkey signature over the terms
     default_currency: str = "USD"
     public_url: str | None = None  # for the approval link and the receipt link
 

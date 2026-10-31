@@ -14,7 +14,7 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 | Public product pages and images the catalogue links to | done |
 | Checkout API Airwallex calls (`create_checkout`, C10), on ACP 2026-04-17 | done offline; onboarding script ready; live run waits on sandbox keys, a public host and Kit 10 onboarding |
 | Real card payments through Airwallex (C9) | done offline: the shopper pays in Drop-in on `/pay/<id>`, paid only from Airwallex's own record; first live run waits on sandbox keys |
-| Shopper passkey approval (U1, C13) | done: verifier, edge routes, the shopper page (`/approve/<id>`), and the signature in the receipt (C13), attached only on `/acp` after it checks, never taken from an agent on the TAP door |
+| Shopper passkey approval (U1, C13) | done: verifier, edge routes, the shopper page (`/approve/<id>`), and the signature in the receipt (C13), attached only on `/acp` after it checks, never taken from an agent on the TAP door. It proves a passkey for this site signed the exact terms, not whose passkey it is (Decisions 2026-10-31) |
 | Receipts anyone can check (C8) | done: the shopper page and `/verify` check the merchant's signature in the browser, no server asked |
 | Merchant console and levers (A15, V6) | done: `/console` shows every checkout call and the countersign's answer live; price, stock and delivery change on cue, and a reset puts the catalogue back for the next take; `scripts/change_event.py` does the same from a terminal |
 | Deploy checks (A7, A10) | `scripts/smoke.py` checks every door of the deployed host; `scripts/audit.py` (also in CI) keeps credentials, real card numbers and dead links out of the public repo |

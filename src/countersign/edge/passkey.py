@@ -1,4 +1,4 @@
-"""U1 / C13: the shopper's own passkey signature over the exact terms.
+"""U1 / C13: a passkey signature over the exact terms, asked of the shopper.
 
 The approval page asks the shopper's device for a WebAuthn assertion
 (`navigator.credentials.get()`) whose challenge is `approval_challenge(...)`.
@@ -15,8 +15,14 @@ The challenge binds three things, not just the terms hash:
 It is a hash, so the browser signs 32 bytes, and anyone holding a receipt can
 recompute it offline from the receipt alone.
 
-Honest limit: a passkey proves that this device approved these terms. It is
-not legal identity, and in the demo the shopper is synthetic.
+What it proves, and what it does not (Decisions 2026-10-31): a key signed
+these exact terms, in this session, before this expiry, and the receipt carries
+the signature for anyone to check. Not whose key it is. The page sends the
+public key with the assertion and /acp binds a credential id to its key on
+first use, so the server knows a key, not a person. A browser keeps the origin
+in clientDataJSON honest; a program does not have to, so an agent holding the
+approval link can sign with a key of its own. Tying a key to a shopper first,
+on a page the agent never gets a link to, is the next step and is not built.
 """
 
 from __future__ import annotations

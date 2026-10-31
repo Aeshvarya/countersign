@@ -134,7 +134,7 @@ class FeedRecordingTest(HouseCase):
         titles = self.titles()
         self.assertEqual(titles[0], "Checkout created: 1 item")
         self.assertIn("Waiting for the shopper's passkey; nothing charged", titles)
-        self.assertIn("Shopper approved the exact terms with their passkey", titles)
+        self.assertIn("A passkey signed the exact terms", titles)
         self.assertTrue(any(t.startswith("Merchant changed price") for t in titles))
         self.assertIn("Asked the shopper again: the price changed; nothing charged", titles)
         self.assertEqual(titles[-1], "Countersigned: the terms still match, order placed")

@@ -5,7 +5,7 @@ everything the charge rested on:
 
   - which agent asked (TAP key id, directory, nonce, tag)
   - what the shopper approved (the approval hash, the ceiling, who, when, and,
-    with U1, the shopper's own passkey signature over it: C13)
+    with U1, a passkey signature over it: C13; it shows a key signed, not whose)
   - what was charged (amount and currency, the locked rate and its quote id)
   - what the merchant owes (the order number and payment id)
 
@@ -131,7 +131,7 @@ def verify(receipt: dict[str, Any], merchant_key: Ed25519PublicKey, approval: Ap
             return Check(False, (*findings, f"the shopper's passkey signature does not check: {result}"))
         presence = "user verified" if result.user_verified else "user present"
         # Offline, the key alone cannot say whose it is: report what checks, and where it was signed.
-        findings.append(f"a passkey registered at {shopper['rp_id']} signed this approval, at {shopper['origin']} ({presence})")
+        findings.append(f"a passkey for {shopper['rp_id']} signed this approval, at {shopper['origin']} ({presence})")
 
     if body["agent"] is None:
         findings.append("no agent identity recorded")

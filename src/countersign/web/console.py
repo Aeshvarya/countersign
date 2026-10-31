@@ -116,7 +116,7 @@ def summarize(method: str, path: str, status: int, body: Any, door: str) -> tupl
             return "passkey", "info", "Shopper opened the approval page", {**extra, "detail": ""}
         if method == "POST" and status == 200:
             how = "user verified" if data.get("user_verified") else "user present"
-            return "passkey", "go", "Shopper approved the exact terms with their passkey", {**extra, "detail": how}
+            return "passkey", "go", "A passkey signed the exact terms", {**extra, "detail": how}
         if method == "POST":
             return "passkey", "no", "Passkey signature refused", {**extra, "detail": message}
         return None

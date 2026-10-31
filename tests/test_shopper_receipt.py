@@ -85,7 +85,7 @@ class ShopperReceiptTest(unittest.TestCase):
         offline = json.loads(json.dumps(signed))  # as read back from a file, with no server
         check = receipt.verify(offline, self.merchant_key.public_key())
         self.assertTrue(check.ok, check.findings)
-        self.assertIn("a passkey registered at shop.example signed this approval, at https://shop.example (user verified)",
+        self.assertIn("a passkey for shop.example signed this approval, at https://shop.example (user verified)",
                       check.findings)
 
     def test_a_bad_shopper_signature_fails_even_under_a_valid_merchant_signature(self):

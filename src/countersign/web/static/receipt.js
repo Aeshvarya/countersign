@@ -166,7 +166,7 @@ window.CountersignReceipt = (function () {
         checks.push({ ok: false, text: "the shopper's passkey signature does not check: " + result });
         return { ok: false, merchant, checks };
       }
-      checks.push({ ok: true, text: "a passkey registered at " + approved.shopper_assertion.rp_id + " signed this approval ("
+      checks.push({ ok: true, text: "a passkey for " + approved.shopper_assertion.rp_id + " signed this approval ("
         + (result.userVerified ? "user verified" : "user present") + ")" });
     }
     checks.push(body.agent
