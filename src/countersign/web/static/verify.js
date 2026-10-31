@@ -69,7 +69,14 @@ $("file").addEventListener("change", async (e) => {
 });
 
 (async () => {
-  await loadKey();
+  const k = /(?:^|&)k=([^&]+)/.exec(location.hash.slice(1));
+  if (k) {
+    // A demo visit's own merchant key, carried by the link: say so, since a link can carry any key.
+    $("key").value = decodeURIComponent(k[1]);
+    $("key-hint").textContent = "Key from the link (this demo visit's own merchant). A real merchant publishes its key at /.well-known/countersign-merchant-key.";
+  } else {
+    await loadKey();
+  }
   const m = /(?:^|&)r=([A-Za-z0-9_-]+)/.exec(location.hash.slice(1));
   if (m) {
     try {
