@@ -6,7 +6,7 @@ orders and receipts, and the levers (V6) that change the catalogue on cue.
     GET  /api/console/feed      events since a sequence number
     GET  /api/console/state     configuration, open checkouts, orders, receipts
     GET  /api/console/products  find a product to pull a lever on
-    POST /api/levers/...        price, stock, delivery (web.levers), for the page or a script
+    POST /api/levers/...        price, stock, delivery, reset (web.levers), for the page or a script
 
 All of it sits behind COUNTERSIGN_LEVER_TOKEN (at least 32 characters) as a
 bearer token, and none of it exists without one.
@@ -289,7 +289,8 @@ def router(house: Any) -> APIRouter:
         guard(request)
         return JSONResponse({"products": products(house, q[:80])}, headers=no_store)
 
-    async def lever(request: Request, apply: Callable[[dict[str, Any]], levers.Change]) -> JSONResponse:
+    async def lever(request: Request,
+                    apply: Callable[[dict[str, Any]], levers.Change | list[levers.Change]]) -> JSONResponse:
         guard(request)
         try:
             body = await request.json()
@@ -301,6 +302,8 @@ def router(house: Any) -> APIRouter:
             change = await run_in_threadpool(apply, body)
         except levers.LeverError as err:
             return JSONResponse({"error": str(err)}, status_code=400)
+        if isinstance(change, list):
+            return JSONResponse({"changes": [c.as_json() for c in change]}, headers=no_store)
         return JSONResponse(change.as_json(), headers=no_store)
 
     @r.post("/api/levers/price")
@@ -318,5 +321,9 @@ def router(house: Any) -> APIRouter:
     @r.post("/api/levers/delivery")
     async def lever_delivery(request: Request):
         return await lever(request, lambda b: levers.set_delivery(house, b.get("sku"), b.get("delivery")))
+
+    @r.post("/api/levers/reset")
+    async def lever_reset(request: Request):
+        return await lever(request, lambda b: levers.reset(house, b.get("sku")))
 
     return r
