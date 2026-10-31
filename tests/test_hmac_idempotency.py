@@ -54,6 +54,21 @@ class HmacTest(unittest.TestCase):
         headers = hmac_auth.sign(BODY, SECRET, now=NOW)
         self.assertEqual(hmac_auth.verify(headers, BODY, b"", now=NOW), "no shared secret is configured")
 
+    def test_odd_characters_in_a_header_are_refused_not_a_crash(self):
+        # A 500 here would tell a prober it found a crash; it must read as any other bad signature.
+        stamp = {"airwallex": "x-timestamp", "guess": "Timestamp"}
+        mark = {"airwallex": "x-signature", "guess": "Signature"}
+        for scheme in hmac_auth.SCHEMES:
+            good = hmac_auth.sign(BODY, SECRET, scheme=scheme, now=NOW)
+            if scheme == "acp":
+                t = good["Merchant-Signature"].split(",")[0]
+                odd = [{"Merchant-Signature": f"{t},v1={'é' * 64}"}, {"Merchant-Signature": "t=1793000²00,v1=ab"}]
+            else:
+                odd = [{**good, mark[scheme]: "é" * 64}, {**good, stamp[scheme]: good[stamp[scheme]][:-1] + "²"}]
+            for headers in odd:
+                self.assertIsInstance(hmac_auth.verify(headers, BODY, SECRET, scheme=scheme, now=NOW), str,
+                                      (scheme, headers))
+
     def test_an_unknown_scheme_is_a_configuration_error(self):
         with self.assertRaises(ValueError):
             hmac_auth.verify({}, BODY, SECRET, scheme="any")

@@ -45,9 +45,15 @@ def _within(ts_seconds: float, now: float) -> str | None:
 
 
 def _int(value: str | None) -> int | None:
-    if value is None or not value.strip().isdigit():
+    # ASCII digits only: str.isdigit() also passes "²", which int() then rejects with a ValueError.
+    if value is None or not (value.strip().isascii() and value.strip().isdigit()):
         return None
     return int(value.strip())
+
+
+def _same(expected: str, given: str) -> bool:
+    # compare_digest raises on a str with non-ASCII characters; a header can carry any.
+    return given.isascii() and hmac.compare_digest(expected, given)
 
 
 def verify(headers: Mapping[str, str], raw_body: bytes, secret: bytes, *, scheme: str = "airwallex",
@@ -71,7 +77,7 @@ def verify(headers: Mapping[str, str], raw_body: bytes, secret: bytes, *, scheme
         if late:
             return late
         expected = _mac(secret, ts.strip().encode() + raw_body).hex()
-        return None if hmac.compare_digest(expected, sig.strip().lower()) else "the signature does not match"
+        return None if _same(expected, sig.strip().lower()) else "the signature does not match"
 
     if scheme == "acp":
         header = h.get("merchant-signature")
@@ -85,7 +91,7 @@ def verify(headers: Mapping[str, str], raw_body: bytes, secret: bytes, *, scheme
         if late:
             return late
         expected = _mac(secret, f"{t}.".encode() + raw_body).hex()
-        return None if hmac.compare_digest(expected, v1.strip().lower()) else "the signature does not match"
+        return None if _same(expected, v1.strip().lower()) else "the signature does not match"
 
     ts, sig = h.get("timestamp"), h.get("signature")
     t = _int(ts)
@@ -95,7 +101,7 @@ def verify(headers: Mapping[str, str], raw_body: bytes, secret: bytes, *, scheme
     if late:
         return late
     expected = base64.b64encode(_mac(secret, f"{t}.".encode() + raw_body)).decode()
-    return None if hmac.compare_digest(expected, sig.strip()) else "the signature does not match"
+    return None if _same(expected, sig.strip()) else "the signature does not match"
 
 
 def sign(raw_body: bytes, secret: bytes, *, scheme: str = "airwallex", now: float | None = None) -> dict[str, str]:
