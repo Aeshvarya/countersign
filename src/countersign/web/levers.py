@@ -13,6 +13,9 @@ nothing is charged (the countersign). With COUNTERSIGN_SYNC_CATALOG=1 and
 sandbox keys, the product is also upserted to Airwallex's catalogue, all of its
 variants in one call (C11: an upsert replaces a product with all its variants),
 so the merchant MCP's search shows the new value too.
+
+    POST /api/levers/reset   puts products back as uploaded, so the demo can run again
+    scripts/change_event.py  the same routes from a terminal, when the console is not open
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .. import catalog_gmc
+from ..merchant import synthetic_catalog
 from ..terms import minor_units, money
 
 MAX_STOCK = 1_000_000
@@ -93,6 +97,55 @@ def set_delivery(house: Any, sku: str, delivery: Any) -> Change:
         raise LeverError(f"delivery must be text of 1 to {MAX_DELIVERY} characters")
     house.merchant.set_delivery(sku, delivery.strip())
     return _done(house, sku, "delivery", product.delivery, delivery.strip())
+
+
+def reset(house: Any, sku: Any = None) -> list[Change]:
+    """Put products back as they were uploaded (`synthetic_catalog()`), so the demo can run again.
+
+    One product, or with no sku every product a lever or a purchase moved. Each product's
+    variant group is upserted once, after all its fields are back. Reset between takes, not
+    during one: a card payment still pending holds stock, and if it then fails the hold comes
+    back on top of the reset value.
+    """
+    original = {p.sku: p for p in synthetic_catalog()}
+    if sku is None:
+        skus = [s for s in house.merchant.catalog if s in original]
+    else:
+        _product(house, sku)
+        if sku not in original:
+            raise LeverError(f"{sku!r} is not in the uploaded catalogue")
+        skus = [sku]
+    merchant, currency = house.merchant, house.merchant.currency
+    moved: dict[str, list[Change]] = {}
+    for s in skus:
+        now, was = merchant.catalog[s], original[s]
+        changes = []
+        if now.price != was.price:
+            merchant.set_price(s, was.price)
+            changes.append(Change(s, "price", f"{now.price} {currency}", f"{was.price} {currency}", now.title))
+        if now.stock != was.stock:
+            merchant.set_stock(s, was.stock)
+            changes.append(Change(s, "stock", str(now.stock), str(was.stock), now.title))
+        if now.delivery != was.delivery:
+            merchant.set_delivery(s, was.delivery)
+            changes.append(Change(s, "delivery", now.delivery, was.delivery, now.title))
+        if changes:
+            moved[s] = changes
+    synced: dict[str, dict[str, Any]] = {}
+    feed = getattr(house, "feed", None)
+    for s, changes in moved.items():
+        sync = None
+        if getattr(house, "sync_catalog", False):
+            group = catalog_gmc.group_id(s)
+            if group not in synced:
+                synced[group] = sync_product(house, s)
+            sync = synced[group]
+        for change in changes:
+            change.sync = sync
+        if feed is not None:
+            feed.add("lever", "info", f"Merchant reset {changes[0].title}",
+                     " · ".join(f"{c.field} {c.before} → {c.after}" for c in changes) + _sync_note(sync), sku=s)
+    return [c for changes in moved.values() for c in changes]
 
 
 def _done(house: Any, sku: str, name: str, before: str, after: str) -> Change:
