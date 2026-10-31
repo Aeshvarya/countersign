@@ -167,6 +167,17 @@ class WebhookTest(unittest.TestCase):
         self.assertTrue(receipt.verify(signed, public, self.approval).ok)
         self.assertEqual(self.event(r.order.payment_id).json()["status"], "paid")  # Airwallex retries
 
+    def test_an_event_before_the_payment_succeeds_does_not_lose_the_receipt(self):
+        # Subscribed to payment_intent.*, the first event is payment_intent.created, while still pending.
+        r = self.result
+        early = self.event(r.order.payment_id, name="payment_intent.created").json()
+        self.assertEqual((early["status"], early["receipt"]), ("pending", False))
+        self.api.shopper_pays(r.order.payment_id, r.decision.charge, quote=r.decision.fx_quote_id)
+        out = self.event(r.order.payment_id).json()
+        self.assertEqual((out["status"], out["receipt"]), ("paid", True))
+        self.assertTrue(receipt.verify(self.house.store.get("k1"), self.house.signer.key.public_key(),
+                                       self.approval).ok)
+
     def test_a_forged_event_is_refused(self):
         r = self.event(self.result.order.payment_id, secret="x" * 32)
         self.assertEqual(r.status_code, 401)
