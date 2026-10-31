@@ -13,6 +13,7 @@ here just because the caller says it is somewhere else.
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -90,7 +91,10 @@ def read_approval(data: dict[str, Any]) -> Approval:
         raise ValueError("the approval has no items")
     if not approval.ceiling.is_finite():
         raise ValueError("the approval's ceiling is not a number")
-    return approval
+    # The agent writes this approval, so a shopper_assertion in it is the agent's claim, not the
+    # shopper's: anyone can sign one with a key of their own. Only /acp attaches an assertion,
+    # after checking it against the challenge it issued for that session (C13).
+    return replace(approval, shopper_assertion=None)
 
 
 def checkout_json(decision: Decision, order=None, receipt=None) -> dict[str, Any]:
