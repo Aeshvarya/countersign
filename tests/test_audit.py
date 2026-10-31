@@ -16,6 +16,8 @@ _spec.loader.exec_module(audit)
 # Built from pieces so this file never holds a credential-shaped string itself.
 FAKE_ANTHROPIC = "sk-" + "ant-" + "api03-" + "A" * 40
 FAKE_GITHUB = "gh" + "p_" + "B" * 36
+FAKE_CARD = "5555 5555 " + "5555 4444"  # Luhn-valid, not an Airwallex test card
+OUTSIDE_EMAIL = "someone@" + "gmail.com"
 
 
 def git(root, *args):
@@ -54,7 +56,7 @@ class AuditTest(unittest.TestCase):
     def test_credentials_and_card_numbers_fail_without_being_printed(self):
         self.commit({"src/config.py": f'KEY = "{FAKE_ANTHROPIC}"\n',
                      "deploy.sh": "export COUNTERSIGN_LEVER_TOKEN=abcdefghijklmnopqrstuvwxyz123456\n",
-                     "notes.md": "card 5555 5555 5555 4444 and the Airwallex test card 4035 5010 0000 0008\n"})
+                     "notes.md": f"card {FAKE_CARD} and the Airwallex test card 4035 5010 0000 0008\n"})
         fails = [f for f in self.fails() if "evidence" not in f.what]
         whats = " ".join(f.what for f in fails)
         self.assertIn("Anthropic API key", whats)
@@ -78,7 +80,7 @@ class AuditTest(unittest.TestCase):
         self.assertTrue(any(f.what.startswith("GitHub token in history") for f in fails), fails)
 
     def test_broken_links_fail_and_outside_emails_warn(self):
-        self.commit({"README.md": "Read [the plan](docs/PLAN.md) or write to someone@gmail.com.\n"})
+        self.commit({"README.md": f"Read [the plan](docs/PLAN.md) or write to {OUTSIDE_EMAIL}.\n"})
         findings, _ = audit.audit(self.root)
         self.assertIn(("FAIL", "link to a missing file: docs/PLAN.md"), [(f.level, f.what) for f in findings])
         self.assertIn(("WARN", "e-mail address at gmail.com"), [(f.level, f.what) for f in findings])
