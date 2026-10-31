@@ -71,15 +71,15 @@ Aeshvarya's time is light until Fri 10-30 (another deadline). V4′ and V10 need
 | F1 | **Fallback merchant MCP** (the 10-29 fallback rule): our own ACP-shaped MCP over the same `/acp` routes, for when Airwallex's merchant MCP is not live on our account | A | built ahead of the 11-01 decision | merged 10-30 (`web/merchant_mcp.py`, `/acp/mcp`); A13 can be written against it before A12 |
 | V5′ | `AirwallexMerchant`: C3 over the onboarding API and C9 payments; `find_order` by idempotency key | A (moved 10-29) | Wed 11-04 | done offline 10-30 (`airwallex_merchant.py`, held receipts, `/webhooks/airwallex`); live run waits on keys |
 | A16 | Declined path: a declining test card means no order, no retry, Claude reports it, and no duplicate charge | A | Wed 11-04 | todo |
-| V6 | Change events on the real catalogue through upsert (price, stock, delivery), driven from the console | V | Fri 11-06 | todo |
-| A15 | Merchant console: `web/` shows live checkout calls, decisions and receipts; the levers call V6 | A | Fri 11-06 | todo |
+| V6 | Change events on the real catalogue through upsert (price, stock, delivery), driven from the console | V | Fri 11-06 | lever route and functions built 10-31 by Aeshvarya on Varunika's proposal (`web/levers.py`, `POST /api/levers/*` behind `COUNTERSIGN_LEVER_TOKEN`, upsert to Airwallex with `COUNTERSIGN_SYNC_CATALOG=1`); Varunika's review |
+| A15 | Merchant console: `web/` shows live checkout calls, decisions and receipts; the levers call V6 | A | Fri 11-06 | done 10-31 (`/console`, `web/console.py`), on `claude/determined-noether-j6kzvn` |
 | V3′ | Registry shaped like Visa's agent directory (keep the reference-registry API); ask in Slack for a Visa contact | V | Fri 11-06 | todo |
 | U1 | **C13 shopper passkey** (agreed 10-29): verifier `edge/passkey.py`, `/acp/approvals/{id}` routes, `complete` waits for the signature (V); approval page in `web/` (A) | V + A | C13 shape Mon 11-02, verifier Thu 11-05 | verifier and routes merged 10-30; C13 fields on `varunika/c13-fields`, waiting on Aeshvarya's OK; approval page done 10-31 (`/approve/<id>`) |
 | V8 | Visual identity: palette Wed 10-28, applied to the console and receipt Fri 11-06 | V | 11-06 | todo |
 | V7 ✍ | SPEC claim and README narrative | V | Mon 11-09 | todo |
 | V9 ✍ | Video script and voice: outline Mon 11-02, voice Mon 11-09 | V | 11-09 | todo |
-| A9 | Video production: setup, Claude configuration, purchase, exception, order confirmation, receipt, bots | A | v1 Sun 11-08, final Wed 11-11 | todo |
-| A10 | Audits 11-08, 11-11, 11-12; submission | A | Thu 11-12 | todo |
+| A9 | Video production: setup, Claude configuration, purchase, exception, order confirmation, receipt, bots | A | v1 Sun 11-08, final Wed 11-11 | run sheet 10-31 (`docs/VIDEO_RUN.md`) |
+| A10 | Audits 11-08, 11-11, 11-12; submission | A | Thu 11-12 | `scripts/audit.py` built 10-31 and run in CI; the audits themselves on their dates |
 
 New contracts: **C10** checkout callback (Varunika), **C11** GMC catalogue mapping (Varunika), **C12** TAP envelope across the MCP hop (Aeshvarya). They freeze Sun 11-02; C1–C9 stay frozen. Same rules as before: one branch per task, `--no-ff` merges, offline tests, no secrets.
 
