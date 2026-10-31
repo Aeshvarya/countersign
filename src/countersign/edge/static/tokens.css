@@ -1,0 +1,85 @@
+/* Countersign colour tokens (V8). Every page and every product image takes its colours from here.
+   Light is the default, dark follows the device, and data-theme="light" or "dark" on <html> forces either.
+   One name per role, not per colour. Keep the two dark blocks equal (a test checks).
+   After a change: python scripts/apply_tokens.py, then python scripts/contrast.py, then the tests.
+   The values are the pages' existing set until V8's palette replaces them. */
+:root {
+  --bg: #f4f2ee;          /* page background */
+  --panel: #ffffff;       /* cards, panels */
+  --ink: #121212;         /* body text */
+  --ink-2: #4a4a48;       /* secondary text */
+  --ink-3: #8b8a86;       /* hints, labels */
+  --line: #e4e1da;        /* borders, rules */
+  --soft: #efece6;        /* quiet fills */
+  --go: #0f8a4b;          /* PROCEED: charged */
+  --go-bg: #e3f4ea;
+  --ask: #b86e00;         /* REASK: asked again */
+  --ask-bg: #fbefd9;
+  --no: #c0322b;          /* REFUSE: refused */
+  --no-bg: #fbe5e3;
+  --info: #4a4a48;        /* neutral notes */
+  --info-bg: #efece6;
+  --accent: #1f3df0;      /* links, primary buttons */
+  --accent-ink: #ffffff;  /* text on accent */
+  --on-status: #ffffff;   /* text on an ask or no button */
+  --cat-1: #3d5a80;       /* product images, one per category */
+  --cat-2: #5b7f5a;
+  --cat-3: #8c5a3c;
+  --cat-4: #6d597a;
+  --cat-5: #4a6c6f;
+  --cat-ink: #ffffff;     /* initials on a product image */
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d0d0f;
+    --panel: #17171a;
+    --ink: #f3f2ee;
+    --ink-2: #b9b8b3;
+    --ink-3: #7b7a76;
+    --line: #2a2a2f;
+    --soft: #202024;
+    --go: #3ccf7f;
+    --go-bg: #12301f;
+    --ask: #f2a93b;
+    --ask-bg: #33250f;
+    --no: #ff6b61;
+    --no-bg: #3a1714;
+    --info: #b9b8b3;
+    --info-bg: #202024;
+    --accent: #7f93ff;
+    --accent-ink: #0d0d0f;
+    --on-status: #ffffff;
+    --cat-1: #3d5a80;
+    --cat-2: #5b7f5a;
+    --cat-3: #8c5a3c;
+    --cat-4: #6d597a;
+    --cat-5: #4a6c6f;
+    --cat-ink: #ffffff;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d0d0f;
+  --panel: #17171a;
+  --ink: #f3f2ee;
+  --ink-2: #b9b8b3;
+  --ink-3: #7b7a76;
+  --line: #2a2a2f;
+  --soft: #202024;
+  --go: #3ccf7f;
+  --go-bg: #12301f;
+  --ask: #f2a93b;
+  --ask-bg: #33250f;
+  --no: #ff6b61;
+  --no-bg: #3a1714;
+  --info: #b9b8b3;
+  --info-bg: #202024;
+  --accent: #7f93ff;
+  --accent-ink: #0d0d0f;
+  --on-status: #ffffff;
+  --cat-1: #3d5a80;
+  --cat-2: #5b7f5a;
+  --cat-3: #8c5a3c;
+  --cat-4: #6d597a;
+  --cat-5: #4a6c6f;
+  --cat-ink: #ffffff;
+}
