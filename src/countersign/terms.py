@@ -14,6 +14,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_EVEN, Decimal
+from typing import Any, Mapping
 
 # Minor units for the currencies that differ from the default of 2. Airwallex's
 # rounding page, not ISO 4217, is the authority: it treats HUF, TWD and ISK as
@@ -136,6 +137,9 @@ class Approval:
     expires_at: datetime
     approver: str
     hash: str = field(default="")
+    # C13: the shopper's own passkey signature over these terms (edge.passkey), when U1
+    # is on. Not part of the hash or of equality: it signs the hash, it is not a term.
+    shopper_assertion: Mapping[str, Any] | None = field(default=None, compare=False)
 
     @classmethod
     def grant(cls, terms: Terms, ceiling: Decimal, approver: str, approved_at: datetime, expires_at: datetime) -> "Approval":

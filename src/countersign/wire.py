@@ -65,7 +65,7 @@ def terms_from_json(d: dict[str, Any]) -> Terms:
 
 
 def approval_to_json(a: Approval) -> dict[str, Any]:
-    return {
+    out = {
         "terms": terms_to_json(a.terms),
         "ceiling": _d(a.ceiling),
         "approved_at": _t(a.approved_at),
@@ -73,6 +73,9 @@ def approval_to_json(a: Approval) -> dict[str, Any]:
         "approver": a.approver,
         "hash": a.hash,
     }
+    if a.shopper_assertion is not None:  # C13, only when present, so older copies read the same
+        out["shopper_assertion"] = dict(a.shopper_assertion)
+    return out
 
 
 def approval_from_json(d: dict[str, Any]) -> Approval:
@@ -85,6 +88,7 @@ def approval_from_json(d: dict[str, Any]) -> Approval:
         expires_at=datetime.fromisoformat(d["expires_at"]),
         approver=d["approver"],
         hash=d["hash"],
+        shopper_assertion=d.get("shopper_assertion"),
     )
 
 

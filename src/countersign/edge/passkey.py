@@ -29,7 +29,7 @@ import json
 import string
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Mapping
 
 from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
@@ -138,3 +138,24 @@ def verify_assertion(*, public_key_spki_der: bytes, authenticator_data: bytes, c
         return "the signature does not verify"
     return Verified(user_verified=bool(flags & FLAG_USER_VERIFIED),
                     sign_count=int.from_bytes(authenticator_data[33:37], "big"))
+
+
+def verify_recorded(record: Mapping[str, Any], terms_hash: str, expires_at: str) -> Verified | str:
+    """Check a shopper signature as a receipt records it (C13), offline.
+
+    The challenge is recomputed from the receipt itself: the recorded session id,
+    the approval hash and the approval's expiry. The origin and RP id are read
+    from the record and reported, so whoever checks can see which site the shopper
+    signed on; the public key is what "this device" means. The merchant's
+    signature over the whole receipt is what stops any of these being swapped.
+    """
+    try:
+        raw = {name: b64url_decode(record[name])
+               for name in ("public_key_spki_der", "authenticator_data", "client_data_json", "signature")}
+        session_id, origin, rp_id = record["session_id"], record["origin"], record["rp_id"]
+        if not all(isinstance(v, str) and v for v in (session_id, origin, rp_id)):
+            raise ValueError("session_id, origin and rp_id must be strings")
+        challenge = approval_challenge(session_id, terms_hash, datetime.fromisoformat(expires_at))
+    except (KeyError, TypeError, ValueError):
+        return "the recorded signature is incomplete"
+    return verify_assertion(**raw, expected_challenge=challenge, origin=origin, rp_id=rp_id)

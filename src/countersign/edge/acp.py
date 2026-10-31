@@ -41,7 +41,7 @@ import json
 import logging
 import secrets
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Mapping
@@ -451,7 +451,10 @@ class AcpApi:
 
             now = self.clock()
             before = s.terms
-            result = countersign(self.merchant, s.approval, f"acp:{s.id}", now,
+            approval = s.approval
+            if s.shopper_assertion is not None and s.shopper_signed == self.challenge(s):
+                approval = replace(approval, shopper_assertion=s.shopper_assertion)  # C13: into the receipt
+            result = countersign(self.merchant, approval, f"acp:{s.id}", now,
                                  agent=None, signer=self.signer, store=self.store)
             d = result.decision
             if d.outcome is Outcome.PROCEED and result.order is not None:
