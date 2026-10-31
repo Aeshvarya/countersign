@@ -125,6 +125,12 @@ class ContrastTest(unittest.TestCase):
             self.assertIn(fg, roles, where)
             self.assertIn(bg, roles, where)
 
+    def test_the_palette_passes_wcag_aa_in_both_themes(self):
+        # A palette change that drops a pair below the bar must be a decision, not an accident.
+        failing = [(name, fg, bg, round(r, 2)) for name, theme in tokens.themes().items()
+                   for fg, bg, r, need, _ in contrast.rows(theme) if r < need]
+        self.assertEqual(failing, [])
+
     def test_strict_fails_exactly_when_a_pair_is_below_the_bar(self):
         failing = sum(r < need for theme in tokens.themes().values() for _, _, r, need, _ in contrast.rows(theme))
         lines = []

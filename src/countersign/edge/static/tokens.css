@@ -2,84 +2,85 @@
    Light is the default, dark follows the device, and data-theme="light" or "dark" on <html> forces either.
    One name per role, not per colour. Keep the two dark blocks equal (a test checks).
    After a change: python scripts/apply_tokens.py, then python scripts/contrast.py, then the tests.
-   The values are the pages' existing set until V8's palette replaces them. */
+   Palette from Varunika's ballpoint drawing: ivory paper, plum ink, the violet of a thin ink wash.
+   Charged, asked again and refused keep green, amber and red for their meaning. */
 :root {
-  --bg: #f4f2ee;          /* page background */
-  --panel: #ffffff;       /* cards, panels */
-  --ink: #121212;         /* body text */
-  --ink-2: #4a4a48;       /* secondary text */
-  --ink-3: #8b8a86;       /* hints, labels */
-  --line: #e4e1da;        /* borders, rules */
-  --soft: #efece6;        /* quiet fills */
-  --go: #0f8a4b;          /* PROCEED: charged */
-  --go-bg: #e3f4ea;
-  --ask: #b86e00;         /* REASK: asked again */
-  --ask-bg: #fbefd9;
-  --no: #c0322b;          /* REFUSE: refused */
-  --no-bg: #fbe5e3;
-  --info: #4a4a48;        /* neutral notes */
-  --info-bg: #efece6;
-  --accent: #1f3df0;      /* links, primary buttons */
-  --accent-ink: #ffffff;  /* text on accent */
-  --on-status: #ffffff;   /* text on an ask or no button */
-  --cat-1: #3d5a80;       /* product images, one per category */
-  --cat-2: #5b7f5a;
-  --cat-3: #8c5a3c;
-  --cat-4: #6d597a;
-  --cat-5: #4a6c6f;
-  --cat-ink: #ffffff;     /* initials on a product image */
+  --bg: #f7f2eb;          /* page background */
+  --panel: #fdfcf9;       /* cards, panels */
+  --ink: #28151e;         /* body text */
+  --ink-2: #634956;       /* secondary text */
+  --ink-3: #846c78;       /* hints, labels */
+  --line: #9c8a92;        /* borders, rules */
+  --soft: #eee8e0;        /* quiet fills */
+  --go: #1e7a4c;          /* PROCEED: charged */
+  --go-bg: #e1f4eb;
+  --ask: #915e24;         /* REASK: asked again */
+  --ask-bg: #f4ebe1;
+  --no: #b8372e;          /* REFUSE: refused */
+  --no-bg: #f4e3e1;
+  --info: #634956;        /* neutral notes */
+  --info-bg: #eee8e0;
+  --accent: #8642a1;      /* links, primary buttons */
+  --accent-ink: #fdfcf9;  /* text on accent */
+  --on-status: #fdfcf9;   /* text on an ask or no button */
+  --cat-1: #935da8;       /* product images, one per category */
+  --cat-2: #a65a7e;
+  --cat-3: #8d6d3d;
+  --cat-4: #916584;
+  --cat-5: #746aa6;
+  --cat-ink: #fdfcf9;     /* initials on a product image */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0d0d0f;
-    --panel: #17171a;
-    --ink: #f3f2ee;
-    --ink-2: #b9b8b3;
-    --ink-3: #7b7a76;
-    --line: #2a2a2f;
-    --soft: #202024;
-    --go: #3ccf7f;
-    --go-bg: #12301f;
-    --ask: #f2a93b;
-    --ask-bg: #33250f;
-    --no: #ff6b61;
-    --no-bg: #3a1714;
-    --info: #b9b8b3;
-    --info-bg: #202024;
-    --accent: #7f93ff;
-    --accent-ink: #0d0d0f;
-    --on-status: #ffffff;
-    --cat-1: #3d5a80;
-    --cat-2: #5b7f5a;
-    --cat-3: #8c5a3c;
-    --cat-4: #6d597a;
-    --cat-5: #4a6c6f;
-    --cat-ink: #ffffff;
+    --bg: #150c10;
+    --panel: #20151a;
+    --ink: #f4efe6;
+    --ink-2: #afa392;
+    --ink-3: #947d88;
+    --line: #74636b;
+    --soft: #2c2126;
+    --go: #24a866;
+    --go-bg: #123021;
+    --ask: #c57d2a;
+    --ask-bg: #302212;
+    --no: #db5e55;
+    --no-bg: #301412;
+    --info: #afa392;
+    --info-bg: #2c2126;
+    --accent: #c07fda;
+    --accent-ink: #150c10;
+    --on-status: #150c10;
+    --cat-1: #935da8;
+    --cat-2: #a65a7e;
+    --cat-3: #8d6d3d;
+    --cat-4: #916584;
+    --cat-5: #746aa6;
+    --cat-ink: #fdfcf9;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0d0d0f;
-  --panel: #17171a;
-  --ink: #f3f2ee;
-  --ink-2: #b9b8b3;
-  --ink-3: #7b7a76;
-  --line: #2a2a2f;
-  --soft: #202024;
-  --go: #3ccf7f;
-  --go-bg: #12301f;
-  --ask: #f2a93b;
-  --ask-bg: #33250f;
-  --no: #ff6b61;
-  --no-bg: #3a1714;
-  --info: #b9b8b3;
-  --info-bg: #202024;
-  --accent: #7f93ff;
-  --accent-ink: #0d0d0f;
-  --on-status: #ffffff;
-  --cat-1: #3d5a80;
-  --cat-2: #5b7f5a;
-  --cat-3: #8c5a3c;
-  --cat-4: #6d597a;
-  --cat-5: #4a6c6f;
-  --cat-ink: #ffffff;
+  --bg: #150c10;
+  --panel: #20151a;
+  --ink: #f4efe6;
+  --ink-2: #afa392;
+  --ink-3: #947d88;
+  --line: #74636b;
+  --soft: #2c2126;
+  --go: #24a866;
+  --go-bg: #123021;
+  --ask: #c57d2a;
+  --ask-bg: #302212;
+  --no: #db5e55;
+  --no-bg: #301412;
+  --info: #afa392;
+  --info-bg: #2c2126;
+  --accent: #c07fda;
+  --accent-ink: #150c10;
+  --on-status: #150c10;
+  --cat-1: #935da8;
+  --cat-2: #a65a7e;
+  --cat-3: #8d6d3d;
+  --cat-4: #916584;
+  --cat-5: #746aa6;
+  --cat-ink: #fdfcf9;
 }
