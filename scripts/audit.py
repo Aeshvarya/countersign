@@ -49,7 +49,7 @@ MODEL_ID = re.compile(r"\bclaude-(?:opus|sonnet|haiku|fable)-[0-9][0-9a-z.\-]*")
 MARKDOWN_LINK = re.compile(r"\]\((?!https?://|mailto:|#)([^)#\s]+)(?:#[^)]*)?\)")
 BINARY = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".woff", ".woff2", ".zip"}
 
-# Where a judge can see each Kit 10 requirement met. A missing file is a FAIL.
+# Where a reader can see each Kit 10 requirement met. A missing file is a FAIL.
 EVIDENCE = {
     "R1 merchant access, sandbox storefront": ["scripts/ac_onboard.py", "src/countersign/web/host.py"],
     "R2 100+ products in Airwallex's format": ["src/countersign/catalog_gmc.py", "scripts/upload_catalog.py",
