@@ -52,6 +52,7 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 .btn.primary { background: var(--accent); color: var(--accent-ink); }
 .btn.ghost { background: transparent; color: var(--ink); border: 2px solid var(--line); }
 .btn.small { min-height: 0; padding: 9px 13px; border-radius: 11px; font-size: 13.5px; }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .btn:disabled { opacity: .45; cursor: default; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 .chip { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 8px 14px; font-weight: 700; cursor: pointer; }
@@ -358,6 +359,18 @@ function renderEdge() {
   $("#edge").innerHTML = rows || `<div class="empty" style="padding:10px">No requests yet</div>`;
 }
 
+// /verify checks the receipt in the visitor's own browser. This visit's merchant has its own key,
+// so the link carries it; the fragment (#) never reaches a server.
+function b64url(text) {
+  const bytes = new TextEncoder().encode(text);
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function checkLink(r) {
+  return "/verify#r=" + b64url(JSON.stringify(r)) + "&k=" + encodeURIComponent(state.merchant_key);
+}
+
 function renderReceipts() {
   if (!state.receipts.length) return;
   $("#receipts").innerHTML = state.receipts.map((r, i) => {
@@ -365,7 +378,7 @@ function renderReceipts() {
     return `<div class="receipt"><div class="rn">${esc(b.order_number)}</div>
       <div>${fmt(b.charged.amount, b.charged.currency)} · ceiling ${fmt(b.approval.ceiling, b.approval.currency)}</div>
       <div class="hint">Signed by ${esc(r.key_id)} · agent ${esc(b.agent ? b.agent.key_id : "unknown")}</div>
-      <div class="actions"><button class="btn small" data-verify="${i}">Verify</button><button class="btn ghost small" data-tamper="${i}">Tamper, then verify</button></div>
+      <div class="actions"><button class="btn small" data-verify="${i}">Verify</button><button class="btn ghost small" data-tamper="${i}">Tamper, then verify</button><a class="btn ghost small" target="_blank" rel="noopener" href="${checkLink(r)}">Check in your browser ↗</a></div>
       ${v ? `<div class="verdict ${v.ok ? "ok" : "bad"}">${v.ok ? "Verified" : "Failed"}${v.tampered ? " (amount edited to 1.00)" : ""}</div><ul class="findings ${v.ok ? "" : "bad"}">${v.findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}</div>`;
   }).join("");
   document.querySelectorAll("[data-verify]").forEach((b) => b.onclick = () => verify(+b.dataset.verify, false));

@@ -1,7 +1,9 @@
 # Render blueprint for the public host: New > Blueprint, pick this repository.
 # One service serves the demo, Airwallex's create_checkout (/acp), the catalogue
 # pages (/p, /img) and the TAP door (see src/countersign/web/host.py).
-# Free plan; it sleeps when idle, and .github/workflows/keep-warm.yml wakes it.
+# Free plan; it sleeps after about 15 idle minutes, and the house keeps open checkout
+# sessions in memory, so a sleep forgets them. Keep it awake with an external monitor
+# on /healthz every 5 minutes (UptimeRobot); .github/workflows/keep-warm.yml is the backup.
 # Every value below is set by hand in the dashboard (sync: false), never in git.
 services:
   - type: web
@@ -32,9 +34,23 @@ services:
       # fake (default, pays instantly) or airwallex (real intents and Drop-in, V5′).
       - key: COUNTERSIGN_MERCHANT
         sync: false
+      # 1 once U1 is live: complete waits for the shopper's passkey on /approve/<id>.
+      - key: COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE
+        sync: false
       # Serves our fallback merchant MCP at /acp/mcp (32+ characters). Needs the HMAC secret above.
       - key: COUNTERSIGN_MCP_TOKEN
         sync: false
+      # The merchant console (/console#t=<token>) and the lever route, POST /api/levers/* (32+ characters).
+      # Must differ from the MCP token and the HMAC secret.
+      - key: COUNTERSIGN_LEVER_TOKEN
+        sync: false
+      # 1: a lever also upserts the changed product to Airwallex's catalogue (needs the Airwallex keys).
+      - key: COUNTERSIGN_SYNC_CATALOG
+        sync: false
+      # The demo agent stays the free scripted stand-in even if a key is set. Change this here
+      # (not in the dashboard) only once the Anthropic spend cap is on, then set the key.
+      - key: COUNTERSIGN_MODEL
+        value: scripted
       # Leave unset until Aeshvarya says otherwise: without it the demo agent is scripted and free.
       - key: ANTHROPIC_API_KEY
         sync: false

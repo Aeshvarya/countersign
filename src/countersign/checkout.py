@@ -128,8 +128,10 @@ def release(order: Order, signer: receipts.MerchantSigner, store: ReceiptStore) 
     """Sign the held receipt for an order whose payment has now been checked.
 
     Only a paid order gets one, and only for the payment it was built for. A
-    failed or refunded order's held receipt is dropped, never signed. Safe to
-    call again: a webhook can arrive twice.
+    failed or refunded order's held receipt is dropped, never signed. A pending
+    order keeps it held: an event that arrives before the payment succeeds
+    (payment_intent.created, say) must not lose the receipt. Safe to call
+    again: a webhook can arrive twice.
     """
     key = order.idempotency_key
     done = store.get(key)
@@ -137,6 +139,8 @@ def release(order: Order, signer: receipts.MerchantSigner, store: ReceiptStore) 
         return done
     body = store.held(key) if hasattr(store, "held") else None
     if body is None:
+        return None
+    if order.status == "pending":
         return None
     if order.status != "paid":
         store.drop(key)

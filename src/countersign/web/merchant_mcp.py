@@ -45,7 +45,10 @@ INSTRUCTIONS = (
     "shopper's currency. Show the shopper the total it returns and get a clear yes before complete_checkout. "
     "complete_checkout charges only if the live terms still match what the shopper was shown: if the price, "
     "rate, stock or delivery moved, it charges nothing and returns messages with resolution "
-    "requires_buyer_review. Show the shopper the new total and ask again; never retry on their behalf."
+    "requires_buyer_review. Show the shopper the new total and ask again; never retry on their behalf. "
+    "If a checkout returns an approval link, the shopper approves there with their passkey before "
+    "complete_checkout goes through. If the payment is pending with a pay_url, give the shopper that link: "
+    "they pay there in Airwallex's own form. Never ask for or handle card details yourself."
 )
 
 _ITEMS = {"type": "array", "minItems": 1, "description": "The whole cart.",
@@ -107,7 +110,7 @@ class AcpCaller:
     async def __call__(self, method: str, path: str, body: dict[str, Any] | None = None,
                        key: str | None = None) -> tuple[int, dict[str, Any]]:
         raw = json.dumps(body).encode() if body is not None else b""
-        headers = {"api-version": acp_api.API_VERSION,
+        headers = {"api-version": acp_api.API_VERSION, "x-countersign-door": "mcp",  # for the console's feed
                    **hmac_auth.sign(raw, self.config.secret, scheme=self.config.scheme)}
         if body is not None:
             headers["content-type"] = "application/json"
@@ -207,8 +210,11 @@ class MerchantMcp:
         order = self.house.merchant.find_order(key)
         if order is None:
             return None
-        return {"status": order.status, "order_number": order.order_number,
-                "amount": f"{order.amount} {order.currency}", "receipt": self.house.store.get(key)}
+        out = {"status": order.status, "order_number": order.order_number,
+               "amount": f"{order.amount} {order.currency}", "receipt": self.house.store.get(key)}
+        if order.status == "pending":  # the card payment is open in Airwallex's Drop-in, on the shopper's page
+            out["pay_url"] = f"{self.public_url or ''}/pay/{view['id']}"
+        return out
 
     # ------------------------------------------------------------ JSON-RPC
 
@@ -265,6 +271,9 @@ def _summary(name: str, out: dict[str, Any]) -> str:
         if pay:
             parts.append(f"Order {pay['order_number']}, payment {pay['status']}"
                          f"{', receipt signed' if pay['receipt'] else ', no receipt yet'}.")
+            if pay.get("pay_url"):
+                parts.append(f"The shopper pays at {pay['pay_url']} (card details go only into Airwallex's form); "
+                             "get_checkout shows when it is paid and the receipt is signed.")
         parts += [f"{m['type']} ({m.get('code')}): {m['content']}" for m in view["messages"]]
         parts += [f"The shopper approves these terms themselves at {link['url']}; complete_checkout waits for it."
                   for link in view.get("links", []) if link.get("type") == "approval"]

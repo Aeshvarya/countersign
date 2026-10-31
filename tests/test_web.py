@@ -1,5 +1,7 @@
+import os
 import time
 import unittest
+import unittest.mock
 
 try:
     from fastapi.testclient import TestClient
@@ -39,6 +41,13 @@ class WebFlowTest(unittest.TestCase):
         sid = self.client.post("/api/sessions", json={"request": "Buy me a kettle", "currency": "EUR", "model": "scripted"}).json()["id"]
         self.wait(sid, "awaiting_approval")
         self.assertEqual(self.client.post(f"/api/sessions/{sid}/approve", json={"ceiling": "1"}).status_code, 400)
+
+    def test_the_hosts_scripted_setting_beats_the_visitors_choice(self):
+        # With a key on the host, COUNTERSIGN_MODEL=scripted must still keep every visit free.
+        env = {"COUNTERSIGN_MODEL": "scripted", "ANTHROPIC_API_KEY": "not-a-real-key"}
+        with unittest.mock.patch.dict(os.environ, env):
+            state = self.client.post("/api/sessions", json={"request": "Buy me a kettle", "model": "claude"}).json()
+        self.assertEqual(state["model"], "scripted agent (offline)")
 
     def test_bots_are_refused_at_the_edge(self):
         sid = self.client.post("/api/sessions", json={"request": "Buy me a kettle", "model": "scripted"}).json()["id"]

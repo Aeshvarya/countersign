@@ -28,6 +28,8 @@ Configuration, all optional:
     AIRWALLEX_CLIENT_ID, AIRWALLEX_API_KEY   real rate locks, and the airwallex merchant
     AIRWALLEX_WEBHOOK_SECRET           verifies /webhooks/airwallex; without it every event is refused
     COUNTERSIGN_MCP_TOKEN              bearer token for /acp/mcp (at least 32 characters); needs /acp
+    COUNTERSIGN_LEVER_TOKEN            bearer token for the merchant console and its levers (32+ characters)
+    COUNTERSIGN_SYNC_CATALOG           1: a lever also upserts the product to Airwallex's catalogue
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ import base64
 import binascii
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
@@ -56,6 +58,7 @@ from ..edge import create_app as create_edge
 from ..edge import hmac_auth, pages
 from ..fx import AirwallexFx, FakeFx
 from ..merchant import FakeMerchant, MerchantGateway
+from .console import Feed, FeedMiddleware
 from .merchant_mcp import MCP_PATH, mcp_app
 
 log = logging.getLogger("countersign.host")
@@ -143,6 +146,10 @@ class House:
     webhook_secret: bytes = b""
     mcp_token: bytes = b""  # mounts the fallback merchant MCP when set
     public_url: str | None = None
+    feed: Feed = field(default_factory=Feed)  # what the merchant console shows (A15)
+    lever_token: bytes = b""  # mounts the console's API and the levers (V6) when set
+    airwallex: Airwallex | None = None  # for the levers' catalogue sync
+    sync_catalog: bool = False
 
     def public_key(self) -> dict[str, str]:
         raw = self.signer.key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -172,10 +179,20 @@ def house_from_env(environ: Mapping[str, str], *, merchant: MerchantGateway | No
         raise ValueError("COUNTERSIGN_MCP_TOKEN must be at least 32 characters")
     if mcp_token and acp is None:
         raise ValueError("COUNTERSIGN_MCP_TOKEN needs /acp: set COUNTERSIGN_ACP_HMAC_SECRET too")
+    lever_token = environ.get("COUNTERSIGN_LEVER_TOKEN", "").strip()
+    if lever_token and len(lever_token) < 32:
+        raise ValueError("COUNTERSIGN_LEVER_TOKEN must be at least 32 characters")
+    tokens = [t for t in (mcp_token, lever_token) if t]
+    if len(set(tokens)) < len(tokens) or (acp is not None and any(t.encode() == acp.secret for t in tokens)):
+        raise ValueError("COUNTERSIGN_MCP_TOKEN, COUNTERSIGN_LEVER_TOKEN and the HMAC secret must all differ")
     edge = create_edge(merchant, directory, authority=authority, signer=signer, acp=acp, store=store, **extra)
+    feed = Feed()
+    edge.add_middleware(FeedMiddleware, feed=feed)  # sees Airwallex's calls and our MCP's alike
+    sync = environ.get("COUNTERSIGN_SYNC_CATALOG", "").strip().lower() in ("1", "true", "yes")
     return House(merchant, edge, signer, authority, acp is not None, store,
                  environ.get("AIRWALLEX_WEBHOOK_SECRET", "").encode(), mcp_token.encode(),
-                 environ.get("COUNTERSIGN_PUBLIC_URL") or None)
+                 environ.get("COUNTERSIGN_PUBLIC_URL") or None, feed, lever_token.encode(),
+                 airwallex_from_env(environ), sync)
 
 
 def webhook_app(house: House) -> FastAPI:
@@ -209,9 +226,24 @@ def webhook_app(house: House) -> FastAPI:
         if order is None:
             return {"ignored": True}
         receipt = release(order, house.signer, house.store)
+        record_payment(house, order, receipt, "Airwallex webhook")
         return {"order_number": order.order_number, "status": order.status, "receipt": receipt is not None}
 
     return hooks
+
+
+def record_payment(house: House, order: Any, receipt: dict[str, Any] | None, source: str) -> None:
+    """One console line when a card payment settles, from the webhook or the shopper page's check."""
+    if order.status == "pending":
+        return
+    if order.status == "paid":
+        house.feed.add("payment", "go", f"Payment confirmed with Airwallex: {order.order_number}",
+                       f"{order.amount} {order.currency}" + (" · receipt signed" if receipt else "") + f" · {source}",
+                       order=order.order_number)
+    else:
+        reasons = "; ".join(getattr(house.merchant, "problems", {}).get(order.idempotency_key, ()))
+        house.feed.add("payment", "no", f"Payment {order.status}: {order.order_number}", reasons or source,
+                       order=order.order_number)
 
 
 class Host:

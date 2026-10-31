@@ -36,7 +36,8 @@ from ..agent import AgentKey, AgentSession, ClaudeModel, InProcessShop, Scripted
 from ..edge import create_app as create_edge
 from ..fx import FakeFx
 from ..merchant import FakeMerchant
-from .host import KEY_PATH, Host, house_from_env
+from . import public
+from .host import Host, house_from_env
 
 STATIC = Path(__file__).parent / "static"
 AGENT_DIRECTORY = "https://agents.countersign.dev"
@@ -147,27 +148,22 @@ class Lever(BaseModel):
     value: str | None = None
 
 
-@demo.get("/healthz")
-def healthz() -> dict[str, Any]:
-    return {"status": "ok", "acp": HOUSE.acp, "authority": HOUSE.authority}
-
-
-@demo.get(KEY_PATH)
-def merchant_key() -> dict[str, str]:
-    """The public key that verifies every receipt the house merchant signs."""
-    return HOUSE.public_key()
-
-
 @demo.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
+
+
+demo.include_router(public.router(HOUSE))
 
 
 @demo.post("/api/sessions")
 def start(body: Start) -> dict[str, Any]:
     if body.currency not in ("INR", "EUR"):
         raise HTTPException(400, "currency must be INR or EUR")
-    w = World(body.request.strip()[:300], body.currency, body.model or os.environ.get("COUNTERSIGN_MODEL"))
+    # COUNTERSIGN_MODEL=scripted on the host is a spend guard: a visitor's request cannot turn Claude on.
+    configured = os.environ.get("COUNTERSIGN_MODEL", "").strip().lower()
+    model = "scripted" if configured == "scripted" else (body.model or configured or None)
+    w = World(body.request.strip()[:300], body.currency, model)
     while len(WORLDS) >= MAX_WORLDS:  # a public demo must not grow without bound
         WORLDS.pop(next(iter(WORLDS)))
     WORLDS[w.session.id] = w
