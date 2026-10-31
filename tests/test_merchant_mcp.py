@@ -195,6 +195,22 @@ class MerchantMcpCardTest(MerchantMcpTest):
         public = self.house.signer.key.public_key()
         self.assertTrue(receipt.verify(pay["receipt"], public, self.approval_of(view["id"])).ok)
 
+    def test_the_agent_gets_the_shoppers_pay_link_while_the_payment_is_open(self):
+        _, view = self.checkout()
+        done = self.tool("complete_checkout", checkout_session_id=view["id"])
+        pay = done["structuredContent"]["payment"]
+        self.assertTrue(pay["pay_url"].endswith(f"/pay/{view['id']}"))
+        self.assertIn(f"/pay/{view['id']}", done["content"][0]["text"])
+        self.assertIn("Airwallex's form", done["content"][0]["text"])
+
+        key = f"acp:{view['id']}"
+        order = self.house.merchant.orders[key]
+        decision, _ = self.house.merchant._decisions[key]
+        self.api.shopper_pays(order.payment_id, decision.charge, quote=decision.fx_quote_id)
+        self.house.merchant.confirm(order.payment_id)
+        paid = self.tool("get_checkout", checkout_session_id=view["id"])["structuredContent"]["payment"]
+        self.assertNotIn("pay_url", paid)
+
 
 if __name__ == "__main__":
     unittest.main()

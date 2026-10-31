@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Check a receipt</title>
+<style>
+:root {
+  --bg: #f4f2ee; --panel: #ffffff; --ink: #121212; --ink-2: #4a4a48; --ink-3: #8b8a86;
+  --line: #e4e1da; --soft: #efece6;
+  --go: #0f8a4b; --go-bg: #e3f4ea; --no: #c0322b; --no-bg: #fbe5e3; --ask: #b86e00; --ask-bg: #fbefd9;
+  --accent: #1f3df0; --accent-ink: #ffffff;
+  --shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d0d0f; --panel: #17171a; --ink: #f3f2ee; --ink-2: #b9b8b3; --ink-3: #7b7a76;
+    --line: #2a2a2f; --soft: #202024;
+    --go: #3ccf7f; --go-bg: #12301f; --no: #ff6b61; --no-bg: #3a1714; --ask: #f2a93b; --ask-bg: #33250f;
+    --accent: #7f93ff; --accent-ink: #0d0d0f; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d0d0f; --panel: #17171a; --ink: #f3f2ee; --ink-2: #b9b8b3; --ink-3: #7b7a76;
+  --line: #2a2a2f; --soft: #202024;
+  --go: #3ccf7f; --go-bg: #12301f; --no: #ff6b61; --no-bg: #3a1714; --ask: #f2a93b; --ask-bg: #33250f;
+  --accent: #7f93ff; --accent-ink: #0d0d0f; --shadow: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 500; font-size: 15px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+button, input, textarea { font: inherit; color: inherit; }
+.wrap { max-width: 720px; margin: 0 auto; padding: 22px 16px 60px; }
+.brand { font-weight: 900; letter-spacing: -0.03em; font-size: 20px; margin: 0 0 18px; }
+.brand span { color: var(--accent); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 24px 20px; box-shadow: var(--shadow); }
+h1 { margin: 0 0 4px; font-size: clamp(24px, 6vw, 32px); font-weight: 900; letter-spacing: -0.03em; line-height: 1.1; }
+.sub { margin: 0 0 18px; color: var(--ink-2); font-weight: 600; }
+label { display: block; font-weight: 800; margin: 14px 0 6px; }
+textarea { width: 100%; min-height: 180px; padding: 12px; border-radius: 12px; border: 2px solid var(--line); background: var(--bg);
+           font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; resize: vertical; }
+input[type=text] { width: 100%; padding: 12px; border-radius: 12px; border: 2px solid var(--line); background: var(--bg);
+                   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+.hint { color: var(--ink-3); font-size: 13px; margin: 6px 0 0; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
+.btn { border: 0; border-radius: 14px; padding: 14px 20px; font-weight: 800; cursor: pointer; background: var(--accent); color: var(--accent-ink); min-height: 50px; }
+.file { color: var(--ink-2); font-weight: 600; font-size: 13.5px; }
+.verdict { margin: 20px 0 0; padding: 14px 16px; border-radius: 14px; font-weight: 800; font-size: 17px; }
+.verdict:empty { display: none; }
+.verdict.ok { background: var(--go-bg); color: var(--go); }
+.verdict.bad { background: var(--no-bg); color: var(--no); }
+.verdict.unknown { background: var(--ask-bg); color: var(--ask); }
+ul.checks { list-style: none; margin: 10px 0 0; padding: 0; }
+ul.checks li { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-weight: 600; color: var(--ink-2); overflow-wrap: anywhere; }
+ul.checks li::before { content: "✓"; color: var(--go); font-weight: 900; width: 1em; flex: none; }
+ul.checks li.bad::before { content: "✗"; color: var(--no); }
+ul.checks li.unknown::before { content: "–"; color: var(--ink-3); }
+.note { color: var(--ink-3); font-size: 13px; margin: 16px 0 0; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <p class="brand">Counter<span>sign</span></p>
+  <section class="card" aria-labelledby="title">
+    <h1 id="title">Check a receipt</h1>
+    <p class="sub">Did this merchant charge what the shopper approved, at the agreed rate, for the agent that asked? Every check below runs in this browser. Nothing you paste is sent anywhere.</p>
+    <label for="receipt">Receipt (JSON)</label>
+    <textarea id="receipt" spellcheck="false" placeholder='{"body": {...}, "key_id": "...", "alg": "ed25519", "signature": "..."}'></textarea>
+    <p class="hint"><input type="file" id="file" accept="application/json,.json" class="file" aria-label="Open a receipt file"></p>
+    <label for="key">Merchant's public key (Ed25519, base64)</label>
+    <input type="text" id="key" spellcheck="false" placeholder="Loaded from this merchant's /.well-known/countersign-merchant-key">
+    <p class="hint" id="key-hint">Leave it as loaded to trust this site's published key, or paste the key the merchant gave you.</p>
+    <div class="actions"><button class="btn" id="check" type="button">Check the receipt</button></div>
+    <p class="verdict" id="verdict" role="status" aria-live="polite"></p>
+    <ul class="checks" id="checks"></ul>
+  </section>
+  <p class="note">Same checks as <code>python -m countersign verify-receipt</code>: the merchant's signature over the exact receipt, the charge within the shopper's approved ceiling in their currency, and the shopper's own passkey signature when the receipt carries one.</p>
+</main>
+<script src="/static/receipt.js"></script>
+<script src="/static/verify.js"></script>
+</body>
+</html>

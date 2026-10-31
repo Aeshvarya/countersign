@@ -36,6 +36,7 @@ from ..agent import AgentKey, AgentSession, ClaudeModel, InProcessShop, Scripted
 from ..edge import create_app as create_edge
 from ..fx import FakeFx
 from ..merchant import FakeMerchant
+from . import shopper as shopper_api
 from .host import KEY_PATH, Host, house_from_env
 
 STATIC = Path(__file__).parent / "static"
@@ -163,31 +164,53 @@ def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
-# U1: the shopper's approval page. The session id in its address is the capability
-# (edge.acp), so the page loads nothing from other sites, sends no referrer, and
-# cannot be framed: a framed page could be clicked through by a page on top of it.
-APPROVAL_PAGE_HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; "
-                               "connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
-                               "frame-ancestors 'none'",
-    "Referrer-Policy": "no-referrer",
+# The shopper's page (U1 approval, the card payment, the receipt) and the public
+# receipt check. The session id in the shopper page's address is the capability
+# (edge.acp), so: only the origin is ever sent as a referrer, nothing loads from
+# other sites except Airwallex's Drop-in, and no other site can frame the page
+# (a framed page could be clicked through by a page laid on top of it).
+AIRWALLEX = "https://*.airwallex.com"
+SHOPPER_PAGE_HEADERS = {
+    "Content-Security-Policy": f"default-src 'none'; script-src 'self' {AIRWALLEX}; style-src 'unsafe-inline'; "
+                               f"connect-src 'self' {AIRWALLEX}; frame-src {AIRWALLEX}; img-src 'self' data: {AIRWALLEX}; "
+                               "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "Referrer-Policy": "strict-origin",
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "no-store",
 }
+VERIFY_PAGE_HEADERS = {
+    **SHOPPER_PAGE_HEADERS,
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; "
+                               "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+}
+SCRIPTS = ("shopper.js", "receipt.js", "verify.js")
 
 
 @demo.get("/approve/{session_id}")
-def approval_page(session_id: str) -> FileResponse:
-    """The link a waiting checkout session carries (`links`, type approval). The page reads
-    the terms from GET /acp/approvals/<id> and posts the passkey assertion back there."""
-    return FileResponse(STATIC / "approve.html", headers=APPROVAL_PAGE_HEADERS)
+@demo.get("/pay/{session_id}")
+def shopper_page(session_id: str) -> FileResponse:
+    """The link a waiting checkout carries (`links`, type approval), and the one the agent
+    gives the shopper to pay. One page: approve, wait for the agent, pay, keep the receipt."""
+    return FileResponse(STATIC / "shopper.html", headers=SHOPPER_PAGE_HEADERS)
 
 
-@demo.get("/static/approve.js")
-def approval_script() -> FileResponse:
-    return FileResponse(STATIC / "approve.js", media_type="text/javascript",
+@demo.get("/verify")
+def verify_page() -> FileResponse:
+    """Anyone with a receipt (the shopper, their bank, a dispute team) checks it in their own browser."""
+    return FileResponse(STATIC / "verify.html", headers=VERIFY_PAGE_HEADERS)
+
+
+@demo.get("/static/{name}")
+def static_script(name: str) -> FileResponse:
+    if name not in SCRIPTS:
+        raise HTTPException(404, "not found")
+    return FileResponse(STATIC / name, media_type="text/javascript",
                         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"})
+
+
+demo.include_router(shopper_api.router(HOUSE))
 
 
 @demo.post("/api/sessions")
