@@ -287,7 +287,8 @@ class AcpApi:
             out["order"] = {
                 "id": s.order.order_number,
                 "checkout_session_id": s.id,
-                "permalink_url": f"{self.config.public_url.rstrip('/')}{PREFIX}/{s.id}/receipt"
+                # The shopper's page shows the order, its payment and the signed receipt.
+                "permalink_url": f"{self.config.public_url.rstrip('/')}/pay/{s.id}"
                 if self.config.public_url else None,
             }
             out.setdefault("countersign", {})["receipt"] = s.receipt

@@ -110,7 +110,7 @@ class AcpCaller:
     async def __call__(self, method: str, path: str, body: dict[str, Any] | None = None,
                        key: str | None = None) -> tuple[int, dict[str, Any]]:
         raw = json.dumps(body).encode() if body is not None else b""
-        headers = {"api-version": acp_api.API_VERSION,
+        headers = {"api-version": acp_api.API_VERSION, "x-countersign-door": "mcp",  # for the console's feed
                    **hmac_auth.sign(raw, self.config.secret, scheme=self.config.scheme)}
         if body is not None:
             headers["content-type"] = "application/json"

@@ -36,6 +36,7 @@ from ..agent import AgentKey, AgentSession, ClaudeModel, InProcessShop, Scripted
 from ..edge import create_app as create_edge
 from ..fx import FakeFx
 from ..merchant import FakeMerchant
+from . import console as console_api
 from . import shopper as shopper_api
 from .host import KEY_PATH, Host, house_from_env
 
@@ -185,7 +186,8 @@ VERIFY_PAGE_HEADERS = {
                                "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "Referrer-Policy": "no-referrer",
 }
-SCRIPTS = ("shopper.js", "receipt.js", "verify.js")
+SCRIPTS = ("shopper.js", "receipt.js", "verify.js", "console.js")
+CONSOLE_PAGE_HEADERS = {**VERIFY_PAGE_HEADERS, "Referrer-Policy": "no-referrer"}
 
 
 @demo.get("/approve/{session_id}")
@@ -202,6 +204,12 @@ def verify_page() -> FileResponse:
     return FileResponse(STATIC / "verify.html", headers=VERIFY_PAGE_HEADERS)
 
 
+@demo.get("/console")
+def console_page() -> FileResponse:
+    """A15: the merchant's view. Open it as /console#t=<COUNTERSIGN_LEVER_TOKEN>; the fragment never leaves the browser."""
+    return FileResponse(STATIC / "console.html", headers=CONSOLE_PAGE_HEADERS)
+
+
 @demo.get("/static/{name}")
 def static_script(name: str) -> FileResponse:
     if name not in SCRIPTS:
@@ -211,6 +219,8 @@ def static_script(name: str) -> FileResponse:
 
 
 demo.include_router(shopper_api.router(HOUSE))
+if HOUSE.lever_token:
+    demo.include_router(console_api.router(HOUSE))
 
 
 @demo.post("/api/sessions")

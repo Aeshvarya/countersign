@@ -38,6 +38,7 @@ from ..airwallex import AirwallexError
 from ..checkout import release
 from ..edge.acp import AcpError, to_minor
 from ..terms import money, utc
+from .host import record_payment
 
 CONFIRM_EVERY = 3.0  # seconds between Airwallex lookups for one session
 
@@ -147,8 +148,10 @@ class Shopper:
             except AirwallexError:
                 return 503, {"type": "service_unavailable", "code": "airwallex_unreachable",
                              "message": "Airwallex could not be reached; the payment webhook will settle it"}
-        if order is not None:
-            release(order, self.house.signer, self.house.store)  # signs the held receipt once paid
+            receipt = release(order, self.house.signer, self.house.store)  # signs the held receipt once paid
+            record_payment(self.house, order, receipt, "checked from the shopper's page")
+        elif order is not None:
+            release(order, self.house.signer, self.house.store)
         return 200, self.state(session_id)
 
 

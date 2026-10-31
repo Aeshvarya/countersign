@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Merchant console</title>
+<style>
+:root {
+  --bg: #f4f2ee; --panel: #ffffff; --ink: #121212; --ink-2: #4a4a48; --ink-3: #8b8a86;
+  --line: #e4e1da; --soft: #efece6;
+  --go: #0f8a4b; --go-bg: #e3f4ea; --ask: #b86e00; --ask-bg: #fbefd9; --no: #c0322b; --no-bg: #fbe5e3;
+  --info: #4a4a48; --info-bg: #efece6;
+  --accent: #1f3df0; --accent-ink: #ffffff;
+  --shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d0d0f; --panel: #17171a; --ink: #f3f2ee; --ink-2: #b9b8b3; --ink-3: #7b7a76;
+    --line: #2a2a2f; --soft: #202024;
+    --go: #3ccf7f; --go-bg: #12301f; --ask: #f2a93b; --ask-bg: #33250f; --no: #ff6b61; --no-bg: #3a1714;
+    --info: #b9b8b3; --info-bg: #202024;
+    --accent: #7f93ff; --accent-ink: #0d0d0f; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d0d0f; --panel: #17171a; --ink: #f3f2ee; --ink-2: #b9b8b3; --ink-3: #7b7a76;
+  --line: #2a2a2f; --soft: #202024;
+  --go: #3ccf7f; --go-bg: #12301f; --ask: #f2a93b; --ask-bg: #33250f; --no: #ff6b61; --no-bg: #3a1714;
+  --info: #b9b8b3; --info-bg: #202024;
+  --accent: #7f93ff; --accent-ink: #0d0d0f; --shadow: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 500; font-size: 14.5px; line-height: 1.45;
+       font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; color: inherit; }
+.wrap { max-width: 1400px; margin: 0 auto; padding: 20px 16px 48px; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.brand h1 { margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -0.03em; }
+.brand h1 span { color: var(--accent); }
+.brand p { margin: 0; color: var(--ink-2); font-weight: 700; }
+.pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill { padding: 5px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-weight: 700; font-size: 12.5px; color: var(--ink-2); }
+.pill.on { color: var(--go); border-color: var(--go); }
+.grid { display: grid; grid-template-columns: 1.35fr 1fr 0.95fr; gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } .levers { grid-column: 1 / -1; } }
+@media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 16px; box-shadow: var(--shadow); min-width: 0; }
+.panel h2 { margin: 0 0 4px; font-size: 16px; font-weight: 900; letter-spacing: -0.01em; }
+.panel .hint { margin: 0 0 12px; color: var(--ink-3); font-size: 13px; font-weight: 600; }
+ol.feed { list-style: none; margin: 0; padding: 0; max-height: 72vh; overflow-y: auto; }
+ol.feed li { display: grid; grid-template-columns: 4px 1fr; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+ol.feed li:first-child { border-top: 0; }
+ol.feed li .bar { border-radius: 4px; background: var(--info); }
+ol.feed li.go .bar { background: var(--go); } ol.feed li.ask .bar { background: var(--ask); } ol.feed li.no .bar { background: var(--no); }
+ol.feed li.fresh { animation: fresh 1.6s ease-out; }
+@keyframes fresh { from { background: var(--soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { ol.feed li.fresh { animation: none; } }
+.ev-title { font-weight: 800; }
+.ev-meta { display: flex; gap: 8px; flex-wrap: wrap; color: var(--ink-3); font-size: 12.5px; font-weight: 600; margin-top: 2px; }
+.ev-detail { color: var(--ink-2); font-size: 13.5px; overflow-wrap: anywhere; }
+.chip { padding: 1px 7px; border-radius: 999px; background: var(--soft); color: var(--ink-2); font-weight: 700; }
+.empty { color: var(--ink-3); font-weight: 600; padding: 12px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; color: var(--ink-3); font-weight: 700; font-size: 12px; padding: 4px 6px 6px 0; }
+td { padding: 8px 6px 8px 0; border-top: 1px solid var(--line); vertical-align: top; }
+td.num { white-space: nowrap; }
+.status { display: inline-block; padding: 1px 8px; border-radius: 999px; font-weight: 800; font-size: 12px; background: var(--info-bg); color: var(--info); }
+.status.paid, .status.completed { background: var(--go-bg); color: var(--go); }
+.status.pending, .status.waiting { background: var(--ask-bg); color: var(--ask); }
+.status.refunded, .status.failed, .status.canceled { background: var(--no-bg); color: var(--no); }
+a { color: var(--accent); font-weight: 700; }
+.section { margin-top: 18px; }
+input[type=search], input[type=password] { width: 100%; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--line); background: var(--bg); }
+input:focus { outline: none; border-color: var(--accent); }
+ul.products { list-style: none; margin: 8px 0 0; padding: 0; max-height: 220px; overflow-y: auto; }
+ul.products li button { width: 100%; text-align: left; border: 0; background: none; padding: 8px 4px; border-top: 1px solid var(--line); cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+ul.products li button:hover, ul.products li button[aria-pressed=true] { background: var(--soft); }
+.picked { margin-top: 12px; padding: 12px; border-radius: 14px; background: var(--soft); }
+.picked h3 { margin: 0 0 6px; font-size: 15px; font-weight: 900; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; font-size: 13.5px; }
+.facts dt { color: var(--ink-3); font-weight: 700; } .facts dd { margin: 0; font-weight: 700; }
+.levers-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.btn { border: 0; border-radius: 12px; padding: 11px 12px; font-weight: 800; cursor: pointer; background: var(--ink); color: var(--bg); }
+.btn.ask { background: var(--ask); color: #fff; } .btn.no { background: var(--no); color: #fff; }
+.btn.ghost { background: transparent; color: var(--ink); border: 2px solid var(--line); }
+.btn:disabled { opacity: .45; cursor: default; }
+.quick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.quick button { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 10px; font-weight: 700; font-size: 12.5px; cursor: pointer; }
+.toast { margin-top: 10px; font-weight: 700; font-size: 13px; color: var(--ink-2); min-height: 1.4em; }
+.toast.bad { color: var(--no); }
+.login { max-width: 420px; margin: 12vh auto; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="panel login" id="login" hidden>
+    <h2>Merchant console</h2>
+    <p class="hint">Paste the console token (COUNTERSIGN_LEVER_TOKEN). It stays in this tab only.</p>
+    <input type="password" id="token" autocomplete="off" aria-label="Console token">
+    <p class="toast bad" id="login-error"></p>
+    <button class="btn" id="login-go" type="button">Open the console</button>
+  </section>
+
+  <div id="app" hidden>
+    <header>
+      <div class="brand"><h1>Counter<span>sign</span></h1><p>Merchant console</p></div>
+      <div class="pills" id="pills"></div>
+    </header>
+    <div class="grid">
+      <section class="panel" aria-labelledby="feed-title">
+        <h2 id="feed-title">Live: every checkout call and the countersign's answer</h2>
+        <p class="hint">From Airwallex's merchant MCP, our fallback MCP, TAP-signed agents and shoppers' passkeys. Newest first.</p>
+        <ol class="feed" id="feed" aria-live="polite"><li class="empty" id="feed-empty">Waiting for the first agent…</li></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="orders-title">
+        <h2 id="orders-title">Checkouts and orders</h2>
+        <p class="hint">An order exists only after the countersign said yes. Receipts open in the public checker.</p>
+        <table><thead><tr><th>Checkout</th><th>Items</th><th>Total</th><th>Status</th></tr></thead><tbody id="sessions"></tbody></table>
+        <div class="section">
+          <table><thead><tr><th>Order</th><th>Charged</th><th>Payment</th><th>Receipt</th></tr></thead><tbody id="orders"></tbody></table>
+        </div>
+      </section>
+
+      <section class="panel levers" aria-labelledby="levers-title">
+        <h2 id="levers-title">Levers</h2>
+        <p class="hint">Change the live catalogue. A shopper who approved the old terms is asked again; nothing is charged.</p>
+        <div id="quick-wrap" hidden><b style="font-size:13px">In the latest checkout:</b><div class="quick" id="quick"></div></div>
+        <input type="search" id="q" placeholder="Find a product (kettle, earbuds, AUD-018…)" aria-label="Find a product" style="margin-top:10px">
+        <ul class="products" id="products"></ul>
+        <div class="picked" id="picked" hidden>
+          <h3 id="p-title"></h3>
+          <dl class="facts">
+            <dt>Id</dt><dd id="p-id"></dd>
+            <dt>Price</dt><dd id="p-price"></dd>
+            <dt>Stock</dt><dd id="p-stock"></dd>
+            <dt>Delivery</dt><dd id="p-delivery"></dd>
+          </dl>
+          <div class="levers-row">
+            <button class="btn ask" type="button" data-lever="price-up">Raise price 12%</button>
+            <button class="btn no" type="button" data-lever="out">Out of stock</button>
+            <button class="btn ask" type="button" data-lever="slow">Slower delivery</button>
+            <button class="btn ghost" type="button" data-lever="restore">Restore</button>
+          </div>
+          <p class="toast" id="toast" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+<script src="/static/console.js"></script>
+</body>
+</html>
