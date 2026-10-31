@@ -9,6 +9,8 @@ import unittest.mock
 from decimal import Decimal
 
 from countersign import catalog_gmc
+from countersign.airwallex_merchant import AirwallexMerchant
+from countersign.fx import FakeFx
 from countersign.merchant import synthetic_catalog
 
 try:
@@ -183,6 +185,54 @@ class ScriptTest(tc.HouseCase):
                 change_event.main(argv, environ=environ, client=Unreachable(), out=self.lines.append)
             self.assertEqual(raised.exception.code, 2)
         self.assertEqual(self.lines, [])
+
+
+@unittest.skipIf(tc.TestClient is None, "needs the server extra")
+class AcpPathTest(tc.HouseCase):
+    """R7 on the path Airwallex calls: the shopper approved, then the merchant pulled a lever."""
+
+    def merchant(self):
+        self.api = tc.FakeAirwallex()
+        return AirwallexMerchant(self.api, FakeFx("84.10"))
+
+    def lever(self, *argv):
+        self.assertEqual(change_event.main(list(argv), environ=TOKEN, client=self.client, out=lambda _: None), 0)
+
+    def complete(self, sid):
+        return self.acp(f"{tc.SESSIONS}/{sid}/complete", {}).json()
+
+    def codes(self, view):
+        return [m["code"] for m in view["messages"]]
+
+    def test_a_price_change_after_approval_asks_again_and_pays_once(self):
+        s = self.session()
+        self.sign(s["id"])
+        self.lever("--sku", self.sku, "--percent", "12")
+        view = self.complete(s["id"])
+        self.assertIn("price_change", self.codes(view))
+        self.assertNotEqual(view["status"], "completed")
+        self.assertEqual((self.api.intents, self.house.merchant.orders), ({}, {}))  # nothing charged
+        self.sign(s["id"])  # the shopper approves the new total
+        self.assertEqual(self.complete(s["id"])["status"], "completed")
+        self.complete(s["id"])  # Airwallex retries the call
+        self.assertEqual(len(self.api.intents), 1)  # one payment, never two
+
+    def test_an_emptied_stock_answers_out_of_stock_and_charges_nothing(self):
+        s = self.session()
+        self.sign(s["id"])
+        self.lever("--sku", self.sku, "--stock", "0")
+        view = self.complete(s["id"])
+        self.assertIn("out_of_stock", self.codes(view))
+        self.assertNotEqual(view["status"], "completed")
+        self.assertEqual((self.api.intents, self.house.merchant.orders), ({}, {}))
+
+    def test_after_a_reset_the_same_purchase_goes_through(self):
+        self.lever("--sku", self.house.merchant.search("kettle")[0].sku, "--stock", "0")
+        self.lever("--reset")
+        s = self.session()
+        self.sign(s["id"])
+        self.assertEqual(self.complete(s["id"])["status"], "completed")
+        self.assertEqual(len(self.api.intents), 1)
 
 
 if __name__ == "__main__":
