@@ -6,27 +6,93 @@
 <meta name="referrer" content="no-referrer">
 <title>Check a receipt</title>
 <style>
+/* tokens:begin, copied from src/countersign/edge/static/tokens.css by scripts/apply_tokens.py: change colours there */
 :root {
-  --bg: #f4f2ee; --panel: #ffffff; --ink: #121212; --ink-2: #4a4a48; --ink-3: #8b8a86;
-  --line: #e4e1da; --soft: #efece6;
-  --go: #0f8a4b; --go-bg: #e3f4ea; --no: #c0322b; --no-bg: #fbe5e3; --ask: #b86e00; --ask-bg: #fbefd9;
-  --accent: #1f3df0; --accent-ink: #ffffff;
-  --shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12);
+  --bg: #f4f2ee;          /* page background */
+  --panel: #ffffff;       /* cards, panels */
+  --ink: #121212;         /* body text */
+  --ink-2: #4a4a48;       /* secondary text */
+  --ink-3: #8b8a86;       /* hints, labels */
+  --line: #e4e1da;        /* borders, rules */
+  --soft: #efece6;        /* quiet fills */
+  --go: #0f8a4b;          /* PROCEED: charged */
+  --go-bg: #e3f4ea;
+  --ask: #b86e00;         /* REASK: asked again */
+  --ask-bg: #fbefd9;
+  --no: #c0322b;          /* REFUSE: refused */
+  --no-bg: #fbe5e3;
+  --info: #4a4a48;        /* neutral notes */
+  --info-bg: #efece6;
+  --accent: #1f3df0;      /* links, primary buttons */
+  --accent-ink: #ffffff;  /* text on accent */
+  --on-status: #ffffff;   /* text on an ask or no button */
+  --cat-1: #3d5a80;       /* product images, one per category */
+  --cat-2: #5b7f5a;
+  --cat-3: #8c5a3c;
+  --cat-4: #6d597a;
+  --cat-5: #4a6c6f;
+  --cat-ink: #ffffff;     /* initials on a product image */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0d0d0f; --panel: #17171a; --ink: #f3f2ee; --ink-2: #b9b8b3; --ink-3: #7b7a76;
-    --line: #2a2a2f; --soft: #202024;
-    --go: #3ccf7f; --go-bg: #12301f; --no: #ff6b61; --no-bg: #3a1714; --ask: #f2a93b; --ask-bg: #33250f;
-    --accent: #7f93ff; --accent-ink: #0d0d0f; --shadow: none;
+    --bg: #0d0d0f;
+    --panel: #17171a;
+    --ink: #f3f2ee;
+    --ink-2: #b9b8b3;
+    --ink-3: #7b7a76;
+    --line: #2a2a2f;
+    --soft: #202024;
+    --go: #3ccf7f;
+    --go-bg: #12301f;
+    --ask: #f2a93b;
+    --ask-bg: #33250f;
+    --no: #ff6b61;
+    --no-bg: #3a1714;
+    --info: #b9b8b3;
+    --info-bg: #202024;
+    --accent: #7f93ff;
+    --accent-ink: #0d0d0f;
+    --on-status: #ffffff;
+    --cat-1: #3d5a80;
+    --cat-2: #5b7f5a;
+    --cat-3: #8c5a3c;
+    --cat-4: #6d597a;
+    --cat-5: #4a6c6f;
+    --cat-ink: #ffffff;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0d0d0f; --panel: #17171a; --ink: #f3f2ee; --ink-2: #b9b8b3; --ink-3: #7b7a76;
-  --line: #2a2a2f; --soft: #202024;
-  --go: #3ccf7f; --go-bg: #12301f; --no: #ff6b61; --no-bg: #3a1714; --ask: #f2a93b; --ask-bg: #33250f;
-  --accent: #7f93ff; --accent-ink: #0d0d0f; --shadow: none;
+  --bg: #0d0d0f;
+  --panel: #17171a;
+  --ink: #f3f2ee;
+  --ink-2: #b9b8b3;
+  --ink-3: #7b7a76;
+  --line: #2a2a2f;
+  --soft: #202024;
+  --go: #3ccf7f;
+  --go-bg: #12301f;
+  --ask: #f2a93b;
+  --ask-bg: #33250f;
+  --no: #ff6b61;
+  --no-bg: #3a1714;
+  --info: #b9b8b3;
+  --info-bg: #202024;
+  --accent: #7f93ff;
+  --accent-ink: #0d0d0f;
+  --on-status: #ffffff;
+  --cat-1: #3d5a80;
+  --cat-2: #5b7f5a;
+  --cat-3: #8c5a3c;
+  --cat-4: #6d597a;
+  --cat-5: #4a6c6f;
+  --cat-ink: #ffffff;
 }
+/* tokens:end */
+:root { --shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --shadow: none; }
+}
+:root[data-theme="dark"] { --shadow: none; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); }
 body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 500; font-size: 15px; line-height: 1.45; -webkit-font-smoothing: antialiased; }

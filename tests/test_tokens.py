@@ -29,6 +29,12 @@ contrast = importlib.util.module_from_spec(_spec)
 sys.modules["contrast"] = contrast
 _spec.loader.exec_module(contrast)
 
+_APPLY = Path(__file__).resolve().parent.parent / "scripts" / "apply_tokens.py"
+_spec = importlib.util.spec_from_file_location("apply_tokens", _APPLY)
+apply_tokens = importlib.util.module_from_spec(_spec)
+sys.modules["apply_tokens"] = apply_tokens
+_spec.loader.exec_module(apply_tokens)
+
 HEX = re.compile(r"#[0-9a-fA-F]{6}\b")
 ROLES = {"bg", "panel", "ink", "ink-2", "ink-3", "line", "soft", "go", "go-bg", "ask", "ask-bg", "no", "no-bg",
          "info", "info-bg", "accent", "accent-ink", "on-status", "cat-ink"}
@@ -111,6 +117,37 @@ class ServedTest(unittest.TestCase):
         self.assertIn(tokens.themes()["light"]["bg"], svg)
         self.assertIn("prefers-color-scheme: dark", svg)
         self.assertIn(tokens.css(), client.get(f"/p/{sku}").text)
+
+
+class WebPagesTest(unittest.TestCase):
+    """Every page the host serves takes all its colours from the token file, both themes."""
+
+    def pages(self):
+        found = sorted(apply_tokens.PAGES_DIR.glob("*.html"))
+        self.assertEqual([p.name for p in found], ["console.html", "index.html", "shopper.html", "verify.html"])
+        return found
+
+    def test_each_page_carries_the_current_tokens(self):
+        for page in self.pages():
+            text = page.read_text()
+            self.assertEqual(tokens.MARKED.findall(text), [tokens.block()], f"{page.name}: run scripts/apply_tokens.py")
+
+    def test_no_page_has_a_colour_of_its_own(self):
+        for page in self.pages():
+            outside = tokens.MARKED.sub("", page.read_text())
+            self.assertEqual(re.findall(r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b", outside), [], page.name)
+
+    def test_the_script_rewrites_a_stale_page_and_check_mode_catches_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            page = Path(tmp) / "a.html"
+            page.write_text("<style>\n/* tokens:begin old */\n:root { --bg: #000000; }\n/* tokens:end */\n</style>")
+            self.assertEqual(apply_tokens.main(["--check"], pages_dir=Path(tmp), out=lambda _: None), 1)
+            self.assertIn("#000000", page.read_text())  # check changes nothing
+            self.assertEqual(apply_tokens.main([], pages_dir=Path(tmp), out=lambda _: None), 0)
+            self.assertIn(tokens.block(), page.read_text())
+            self.assertEqual(apply_tokens.main(["--check"], pages_dir=Path(tmp), out=lambda _: None), 0)
+            (Path(tmp) / "b.html").write_text("<style>no block</style>")
+            self.assertEqual(apply_tokens.main(["--check"], pages_dir=Path(tmp), out=lambda _: None), 1)
 
 
 class ContrastTest(unittest.TestCase):
