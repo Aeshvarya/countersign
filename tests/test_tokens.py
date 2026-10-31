@@ -1,6 +1,8 @@
 """V8: one colour source, light and dark, and the catalogue pages and images drawn from it."""
 
+import importlib.util
 import re
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -20,6 +22,12 @@ try:
     from countersign.edge import create_app
 except ImportError:  # the server extra is not installed
     TestClient = None
+
+_PATH = Path(__file__).resolve().parent.parent / "scripts" / "contrast.py"
+_spec = importlib.util.spec_from_file_location("contrast", _PATH)
+contrast = importlib.util.module_from_spec(_spec)
+sys.modules["contrast"] = contrast
+_spec.loader.exec_module(contrast)
 
 HEX = re.compile(r"#[0-9a-fA-F]{6}\b")
 ROLES = {"bg", "panel", "ink", "ink-2", "ink-3", "line", "soft", "go", "go-bg", "ask", "ask-bg", "no", "no-bg",
@@ -103,6 +111,26 @@ class ServedTest(unittest.TestCase):
         self.assertIn(tokens.themes()["light"]["bg"], svg)
         self.assertIn("prefers-color-scheme: dark", svg)
         self.assertIn(tokens.css(), client.get(f"/p/{sku}").text)
+
+
+class ContrastTest(unittest.TestCase):
+    def test_the_ratio_matches_wcag_reference_values(self):
+        self.assertAlmostEqual(contrast.ratio("#000000", "#ffffff"), 21.0, places=2)
+        self.assertAlmostEqual(contrast.ratio("#777777", "#ffffff"), 4.48, places=2)
+        self.assertEqual(contrast.ratio("#1f3df0", "#ffffff"), contrast.ratio("#ffffff", "#1f3df0"))
+
+    def test_every_pair_it_checks_names_a_role_both_themes_have(self):
+        roles = set(tokens.themes()["light"])
+        for fg, bg, _, where in contrast.pairs():
+            self.assertIn(fg, roles, where)
+            self.assertIn(bg, roles, where)
+
+    def test_strict_fails_exactly_when_a_pair_is_below_the_bar(self):
+        failing = sum(r < need for theme in tokens.themes().values() for _, _, r, need, _ in contrast.rows(theme))
+        lines = []
+        self.assertEqual(contrast.main([], out=lines.append), 0)
+        self.assertEqual(lines[-1], f"{failing} pair(s) below WCAG AA")
+        self.assertEqual(contrast.main(["--strict"], out=lambda _: None), 1 if failing else 0)
 
 
 if __name__ == "__main__":
