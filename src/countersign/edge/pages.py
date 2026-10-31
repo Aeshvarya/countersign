@@ -4,7 +4,9 @@ These are the only routes at the edge that answer without a TAP signature. They
 show what anyone may see in a shop window (title, variant, price, availability)
 and nothing an agent could act on: no offer, no checkout, no order.
 
-The colours are one table so V8's palette can replace them in one place.
+The colours come from V8's tokens (`edge/static/tokens.css`), light and dark:
+the page inlines them, and the image draws in light colours with a dark rule
+for devices that prefer it (a renderer without CSS still gets a whole picture).
 """
 
 from __future__ import annotations
@@ -14,15 +16,8 @@ from html import escape
 
 from ..catalog_gmc import MERCHANT_NAME, description, gmc_price
 from ..merchant import Product, hash_int
+from . import tokens
 
-# Neutral until V8 lands: background, surface, ink, muted ink, accent per category.
-PALETTE = {
-    "bg": "#f4f4f2",
-    "surface": "#ffffff",
-    "ink": "#1d1d1b",
-    "muted": "#6b6b66",
-    "accents": ("#3d5a80", "#5b7f5a", "#8c5a3c", "#6d597a", "#4a6c6f"),
-}
 
 # Exactly the paths these pages answer, so the TAP exemption can never widen by accident.
 _SKU = r"[A-Za-z0-9]{1,16}(?:-[A-Za-z0-9]{1,16}){1,3}"
@@ -34,14 +29,16 @@ def is_public(method: str, path: str) -> bool:
     return method in ("GET", "HEAD") and bool(PAGE_PATH.match(path) or IMAGE_PATH.match(path))
 
 
-def _accent(product: Product) -> str:
-    accents = PALETTE["accents"]
-    return accents[hash_int(product.category) % len(accents)]
+def _category(product: Product) -> str:
+    """The token role of this product's category colour."""
+    roles = tokens.categories()
+    return roles[hash_int(product.category) % len(roles)]
 
 
 def product_svg(product: Product) -> str:
     """A deterministic placeholder image: the same SKU always draws the same picture."""
-    accent = _accent(product)
+    light, dark = tokens.themes()["light"], tokens.themes()["dark"]
+    cat = _category(product)
     seed = hash_int(product.sku)
     name, _, variant = product.title.rpartition(" ")
     initials = "".join(word[0] for word in name.split()[:2]).upper()
@@ -49,15 +46,17 @@ def product_svg(product: Product) -> str:
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600" '
         f'role="img" aria-label="{escape(product.title)}">'
-        f'<rect width="600" height="600" fill="{PALETTE["bg"]}"/>'
-        f'<rect x="150" y="110" width="300" height="300" rx="48" fill="{accent}" '
+        f'<style>@media (prefers-color-scheme: dark) {{ .bg {{ fill: {dark["bg"]} }} .card {{ fill: {dark[cat]} }} '
+        f'.mark {{ fill: {dark["cat-ink"]} }} .name {{ fill: {dark["ink"]} }} .variant {{ fill: {dark["ink-2"]} }} }}</style>'
+        f'<rect class="bg" width="600" height="600" fill="{light["bg"]}"/>'
+        f'<rect class="card" x="150" y="110" width="300" height="300" rx="48" fill="{light[cat]}" '
         f'transform="rotate({rotate} 300 260)"/>'
-        f'<text x="300" y="290" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" '
-        f'font-size="120" font-weight="700" fill="{PALETTE["surface"]}">{escape(initials)}</text>'
-        f'<text x="300" y="490" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" '
-        f'font-size="34" fill="{PALETTE["ink"]}">{escape(name)}</text>'
-        f'<text x="300" y="535" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" '
-        f'font-size="26" fill="{PALETTE["muted"]}">{escape(variant)}</text>'
+        f'<text class="mark" x="300" y="290" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" '
+        f'font-size="120" font-weight="700" fill="{light["cat-ink"]}">{escape(initials)}</text>'
+        f'<text class="name" x="300" y="490" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" '
+        f'font-size="34" fill="{light["ink"]}">{escape(name)}</text>'
+        f'<text class="variant" x="300" y="535" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" '
+        f'font-size="26" fill="{light["ink-2"]}">{escape(variant)}</text>'
         "</svg>"
     )
 
@@ -68,12 +67,13 @@ def product_page(product: Product, currency: str = "USD", merchant_name: str = M
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(product.title)} | {escape(merchant_name)}</title>
+<meta name="color-scheme" content="light dark">
 <style>
-body {{ margin: 0; background: {PALETTE["bg"]}; color: {PALETTE["ink"]}; font: 16px/1.5 Helvetica, Arial, sans-serif; }}
-main {{ max-width: 720px; margin: 40px auto; padding: 24px; background: {PALETTE["surface"]}; border-radius: 16px; }}
+{tokens.css()}body {{ margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 Helvetica, Arial, sans-serif; }}
+main {{ max-width: 720px; margin: 40px auto; padding: 24px; background: var(--panel); border-radius: 16px; }}
 img {{ width: 100%; max-width: 360px; display: block; margin: 0 auto 16px; }}
 .price {{ font-size: 28px; font-weight: 700; }}
-.muted {{ color: {PALETTE["muted"]}; }}
+.muted {{ color: var(--ink-2); }}
 </style></head>
 <body><main>
 <img src="/img/{escape(product.sku)}.svg" alt="{escape(product.title)}">
