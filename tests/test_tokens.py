@@ -49,7 +49,11 @@ class TokensFileTest(unittest.TestCase):
 
     def test_a_broken_file_is_refused(self):
         source = tokens.SOURCE.read_text()
-        drifted = source.replace("  --bg: #0d0d0f;", "  --bg: #000000;", 1)  # only the device-dark block
+        media, forced = source.index("@media"), source.index(':root[data-theme="dark"]')
+        bg = re.search(r"--bg: (#[0-9a-fA-F]{6});", source[media:forced]).group(1)
+        other = "#010203" if bg.lower() != "#010203" else "#030201"
+        # only the device-dark block changes, whatever the palette is
+        drifted = source[:media] + source[media:forced].replace(f"--bg: {bg};", f"--bg: {other};", 1) + source[forced:]
         no_dark = source[:source.index("@media")]
         for text, error in ((drifted, "differ"), (no_dark, "three blocks")):
             with tempfile.TemporaryDirectory() as tmp:
