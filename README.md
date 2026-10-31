@@ -14,9 +14,9 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 | Public product pages and images the catalogue links to | done |
 | Checkout API Airwallex calls (`create_checkout`, C10), on ACP 2026-04-17 | done offline; onboarding script ready; live run waits on sandbox keys, a public host and Kit 10 onboarding |
 | Real card payments through Airwallex (C9) | done offline: the shopper pays in Drop-in on `/pay/<id>`, paid only from Airwallex's own record; first live run waits on sandbox keys |
-| Shopper passkey approval (U1, C13) | verifier, edge routes and the shopper page (`/approve/<id>`) done; receipt field (C13) proposed |
+| Shopper passkey approval (U1, C13) | done: verifier, edge routes, the shopper page (`/approve/<id>`), and the signature in the receipt (C13), attached only on `/acp` after it checks, never taken from an agent on the TAP door |
 | Receipts anyone can check (C8) | done: the shopper page and `/verify` check the merchant's signature in the browser, no server asked |
-| Merchant console and levers (A15, V6) | done: `/console` shows every checkout call and the countersign's answer live; price, stock and delivery change on cue |
+| Merchant console and levers (A15, V6) | done: `/console` shows every checkout call and the countersign's answer live; price, stock and delivery change on cue, and a reset puts the catalogue back for the next take; `scripts/change_event.py` does the same from a terminal |
 | Deploy checks (A7, A10) | `scripts/smoke.py` checks every door of the deployed host; `scripts/audit.py` (also in CI) keeps credentials, real card numbers and dead links out of the public repo |
 
 ## Quickstart
@@ -43,6 +43,8 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/ac_onboard.py --onboard --base-url https://<public host>      # onboard once (add --dry-run to see the body, secrets hidden)
 .venv/bin/python scripts/smoke.py --base-url https://<public host>       # every door of the deployed host (more with each secret in .env)
 .venv/bin/python scripts/smoke.py --base-url https://<public host> --buy # one purchase end to end: you approve and pay, it checks the receipt
+.venv/bin/python scripts/change_event.py --base-url https://<public host> --sku <sku> --percent 12   # the price moves on cue (also --price, --stock, --delivery)
+.venv/bin/python scripts/change_event.py --base-url https://<public host> --reset                    # every moved product back as uploaded
 .venv/bin/python scripts/audit.py                                        # before the repo goes public: credentials, .env, card numbers, links
 ```
 
@@ -54,7 +56,7 @@ With `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1` (it needs `COUNTERSIGN_PUBLIC_URL
 
 **The shopper's page** (`/approve/<id>`, the same page at `/pay/<id>`, `web/static/shopper.html`) takes the shopper from the agent's request to the receipt: it shows the exact terms and signs them with a passkey (a device's first approval creates one; the page keeps its credential id and public key, and signs the server's challenge bytes, never the terms hash, refetching the challenge first so it never signs terms the shopper has not seen), waits for the agent to complete, mounts Airwallex's Drop-in when the order is a card payment (`GET /api/checkout/<id>` hands it the intent's client secret and the locked quote; the card never touches this service), asks the merchant to check the payment with Airwallex after Drop-in's success (`POST /api/checkout/<id>/confirm`, throttled; the webhook settles it too), and shows the signed receipt with every check run in the browser. The order's `permalink_url` points here, and our MCP gives the agent this link as `pay_url` while a payment is open. `/verify` checks any receipt the same way, in the browser that opens it (a `#r=` link carries the receipt in the fragment, which never reaches a server).
 
-**The merchant console** (`/console#t=<COUNTERSIGN_LEVER_TOKEN>`; the token moves to the tab and leaves the address bar at once) shows each checkout call as it lands, from Airwallex, our MCP, TAP-signed agents and shoppers' passkeys, with the countersign's answer, plus checkouts, orders and receipts. Its levers raise a price, empty the stock or slow the delivery of the product in the latest checkout; a script calls the same functions at `POST /api/levers/price|stock|delivery` with the same bearer token (`web/levers.py`). With `COUNTERSIGN_SYNC_CATALOG=1` a lever also upserts the product, all its variants in one call, to Airwallex's catalogue. The feed reads response status and our own response JSON, never a request body. The host serves that page at `/approve/<id>` (`web/static/approve.html`): it creates a passkey on a device's first approval, keeps its credential id and public key in the browser, and signs the server's challenge bytes, never the terms hash.
+**The merchant console** (`/console#t=<COUNTERSIGN_LEVER_TOKEN>`; the token moves to the tab and leaves the address bar at once) shows each checkout call as it lands, from Airwallex, our MCP, TAP-signed agents and shoppers' passkeys, with the countersign's answer, plus checkouts, orders and receipts. Its levers raise a price, empty the stock or slow the delivery of the product in the latest checkout; a script calls the same functions at `POST /api/levers/price|stock|delivery|reset` with the same bearer token (`web/levers.py`, `scripts/change_event.py`: exit 1 if the host changed but Airwallex's catalogue did not). With `COUNTERSIGN_SYNC_CATALOG=1` a lever also upserts the product, all its variants in one call, to Airwallex's catalogue. The feed reads response status and our own response JSON, never a request body. The host serves that page at `/approve/<id>` (`web/static/approve.html`): it creates a passkey on a device's first approval, keeps its credential id and public key in the browser, and signs the server's challenge bytes, never the terms hash.
 
 The probe is read-only and asks both config paths (`/pa/agentic_commerce/config`, documented, and `/agentic-commerce/config`, where another team saw a 401 with a scoped key): a 401 on either means the key needs full access, not that onboarding is missing. Onboarding happens once: Airwallex ignores a second `POST /onboard`. `ac_onboard.py --onboard` first checks that the host answers an unsigned call from the `/acp` door (not the TAP door, not a 404) and sends nothing if it does not. It reads the PSP key from `AIRWALLEX_PSP_CLIENT_ID` and `AIRWALLEX_PSP_API_KEY`, or the login key if those are empty. It exits 1 when something is not ready, 2 when Airwallex refuses.
 
@@ -100,6 +102,7 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `scripts/upload_catalog.py` | upload the catalogue to Airwallex (dry run without keys) |
 | `scripts/ac_onboard.py` | onboarding probe, host check, and the one-time Kit 10 onboarding |
 | `scripts/smoke.py` | checks every door of the deployed host; `--buy` runs one purchase end to end |
+| `scripts/change_event.py` | V6 from a terminal: price, stock, delivery or reset on the running host, through its lever routes |
 | `scripts/audit.py` | the audit before the repo goes public (A10), also run in CI |
 | `docs/VIDEO_RUN.md` | the video, shot by shot: what is on screen and what to type (A9) |
 | `PROGRESS.md`, `WORKPLAN.md` | where the work stands, who does what |
