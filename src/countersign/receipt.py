@@ -130,7 +130,8 @@ def verify(receipt: dict[str, Any], merchant_key: Ed25519PublicKey, approval: Ap
         if isinstance(result, str):
             return Check(False, (*findings, f"the shopper's passkey signature does not check: {result}"))
         presence = "user verified" if result.user_verified else "user present"
-        findings.append(f"the shopper's own passkey signed these exact terms at {shopper['origin']} ({presence})")
+        # Offline, the key alone cannot say whose it is: report what checks, and where it was signed.
+        findings.append(f"a passkey registered at {shopper['rp_id']} signed this approval, at {shopper['origin']} ({presence})")
 
     if body["agent"] is None:
         findings.append("no agent identity recorded")
