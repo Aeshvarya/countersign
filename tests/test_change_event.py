@@ -1,7 +1,11 @@
 """V6: change events on cue. The reset that lets the demo run again, scripts/change_event.py,
 and proof on the real /acp path that a change charges nothing."""
 
+import importlib.util
+import pathlib
+import sys
 import unittest
+import unittest.mock
 from decimal import Decimal
 
 from countersign import catalog_gmc
@@ -15,7 +19,14 @@ except ImportError:  # run by discover with -s tests
 if tc.TestClient is not None:
     from countersign.web import levers
 
+_PATH = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "change_event.py"
+_spec = importlib.util.spec_from_file_location("change_event", _PATH)
+change_event = importlib.util.module_from_spec(_spec)
+sys.modules["change_event"] = change_event
+_spec.loader.exec_module(change_event)
+
 ORIGINAL = {p.sku: p for p in synthetic_catalog()}
+TOKEN = {"COUNTERSIGN_LEVER_TOKEN": tc.LEVER}
 
 
 def group_of(sku):
@@ -80,6 +91,98 @@ class ResetTest(tc.HouseCase):
         r = self.client.post("/api/levers/reset", json={}, headers=self.auth())
         self.assertEqual(r.json(), {"changes": []})
         self.assertEqual(self.client.post("/api/levers/reset", json={"sku": "x"}, headers=self.auth()).status_code, 400)
+
+
+class RowsFailClient(tc.FakeCatalogClient):
+    """Airwallex answers, but refuses some rows: records_failed > 0."""
+
+    def post(self, path, body):
+        self.calls.append((path, body))
+        return {"records_updated": len(body["gmc_products"]) - 1, "records_failed": 1}
+
+
+class Unreachable:
+    def post(self, *args, **kwargs):
+        raise ConnectionError("no route to host")
+
+
+@unittest.skipIf(tc.TestClient is None, "needs the server extra")
+class ScriptTest(tc.HouseCase):
+    def setUp(self):
+        super().setUp()
+        self.sku = self.house.merchant.search("kettle")[0].sku
+        self.lines = []
+
+    def run_script(self, *argv, environ=TOKEN, client=None):
+        return change_event.main(list(argv), environ=environ, client=client or self.client, out=self.lines.append)
+
+    def test_a_price_change_lands_on_the_host_and_in_airwallex(self):
+        self.house.airwallex, self.house.sync_catalog = tc.FakeCatalogClient(), True
+        self.assertEqual(self.run_script("--sku", self.sku, "--price", "54.99"), 0, self.lines)
+        self.assertEqual(self.house.merchant.catalog[self.sku].price, Decimal("54.99"))
+        (_, body), = self.house.airwallex.calls
+        row = next(r for r in body["gmc_products"] if r["id"] == self.sku)
+        self.assertEqual(row["price"], "54.99 USD")
+        self.assertTrue(self.lines[0].startswith(f"CHANGED  {self.sku} price"))
+        self.assertIn("Airwallex catalogue updated", self.lines[-1])
+
+    def test_percent_stock_and_delivery(self):
+        was = self.house.merchant.catalog[self.sku].price
+        self.assertEqual(self.run_script("--sku", self.sku, "--percent", "10"), 0)
+        self.assertGreater(self.house.merchant.catalog[self.sku].price, was)
+        self.assertEqual(self.run_script("--sku", self.sku, "--stock", "0"), 0)
+        self.assertEqual(self.house.merchant.catalog[self.sku].stock, 0)
+        self.assertEqual(self.run_script("--sku", self.sku, "--delivery", "express, 2 business days"), 0)
+        self.assertEqual(self.house.merchant.catalog[self.sku].delivery, "express, 2 business days")
+
+    def test_without_sync_it_says_airwallex_was_not_asked(self):
+        self.assertEqual(self.run_script("--sku", self.sku, "--stock", "3"), 0)
+        self.assertIn("COUNTERSIGN_SYNC_CATALOG", self.lines[-1])
+
+    def test_a_failed_upsert_exits_1_and_says_which_side_changed(self):
+        self.house.airwallex, self.house.sync_catalog = tc.FakeCatalogClient(fail=True), True
+        self.assertEqual(self.run_script("--sku", self.sku, "--stock", "0"), 1)
+        self.assertEqual(self.house.merchant.catalog[self.sku].stock, 0)
+        self.assertIn("NOT updated", self.lines[-1])
+        self.assertIn("the host has the change, Airwallex does not", self.lines[-1])
+
+    def test_failed_rows_count_as_a_failed_upsert(self):
+        self.house.airwallex, self.house.sync_catalog = RowsFailClient(), True
+        self.assertEqual(self.run_script("--sku", self.sku, "--stock", "0"), 1)
+        self.assertIn("1 rows failed", self.lines[-1])
+
+    def test_reset_all_and_one(self):
+        self.house.airwallex, self.house.sync_catalog = tc.FakeCatalogClient(), True
+        self.run_script("--sku", self.sku, "--stock", "0")
+        self.run_script("--sku", self.sku, "--price", "1.00")
+        self.lines.clear()
+        self.assertEqual(self.run_script("--reset"), 0, self.lines)
+        now, was = self.house.merchant.catalog[self.sku], ORIGINAL[self.sku]
+        self.assertEqual((now.price, now.stock), (was.price, was.stock))
+        self.assertEqual(sum(line.startswith("CHANGED") for line in self.lines), 2)
+        self.assertEqual(sum("Airwallex catalogue updated" in line for line in self.lines), 1)  # one product, one upsert
+        self.lines.clear()
+        self.assertEqual(self.run_script("--sku", self.sku, "--reset"), 0)
+        self.assertEqual(self.lines, ["Nothing to reset: every product is as uploaded."])
+
+    def test_nothing_changes_on_a_refusal(self):
+        before = self.house.merchant.catalog[self.sku]
+        self.assertEqual(self.run_script("--sku", self.sku, "--stock", "-1"), 2)
+        self.assertIn("NOT CHANGED: 400", self.lines[-1])
+        self.assertEqual(self.run_script("--sku", self.sku, "--stock", "0", environ={"COUNTERSIGN_LEVER_TOKEN": "x" * 40}), 2)
+        self.assertIn("NOT CHANGED: 401", self.lines[-1])
+        self.assertEqual(self.run_script("--sku", self.sku, "--stock", "0", client=Unreachable()), 2)
+        self.assertIn("the host did not answer (ConnectionError)", self.lines[-1])
+        self.assertEqual(self.house.merchant.catalog[self.sku], before)
+
+    def test_the_command_line_is_checked_before_anything_is_sent(self):
+        for argv, environ in ((["--stock", "0"], TOKEN),                   # no product
+                              (["--sku", self.sku, "--stock", "0"], {}),     # no token
+                              (["--sku", self.sku, "--stock", "0", "--price", "2"], TOKEN)):  # two changes at once
+            with self.assertRaises(SystemExit) as raised, unittest.mock.patch("sys.stderr"):
+                change_event.main(argv, environ=environ, client=Unreachable(), out=self.lines.append)
+            self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(self.lines, [])
 
 
 if __name__ == "__main__":
