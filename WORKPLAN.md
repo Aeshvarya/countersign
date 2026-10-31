@@ -75,7 +75,7 @@ Aeshvarya's time is light until Fri 10-30 (another deadline). V4′ and V10 need
 | A15 | Merchant console: `web/` shows live checkout calls, decisions and receipts; the levers call V6 | A | Fri 11-06 | done 10-31 (`/console`, `web/console.py`), on `claude/determined-noether-j6kzvn` |
 | V3′ | Registry shaped like Visa's agent directory (keep the reference-registry API); ask in Slack for a Visa contact | V | Fri 11-06 | todo |
 | U1 | **C13 shopper passkey** (agreed 10-29): verifier `edge/passkey.py`, `/acp/approvals/{id}` routes, `complete` waits for the signature (V); approval page in `web/` (A) | V + A | C13 shape Mon 11-02, verifier Thu 11-05 | verifier and routes merged 10-30; approval page done 10-31 (`/approve/<id>`); C13 merged 10-31 with Aeshvarya's TAP-door fix (`f379319`); open: a key, not a shopper (PROGRESS) |
-| V8 | Visual identity: palette Wed 10-28, applied to the console and receipt Fri 11-06 | V | 11-06 | todo |
+| V8 | Visual identity: palette Wed 10-28, applied to the console and receipt Fri 11-06 | V | 11-06 | plumbing done 11-01: `edge/static/tokens.css` (light + dark) on main with the catalogue pages, images and `scripts/contrast.py` (`c91b5c2`); web pages on `varunika/v8-apply-web` for Aeshvarya's review, no colour changed; palette from Varunika's drawing still to come |
 | V7 ✍ | SPEC claim and README narrative | V | Mon 11-09 | todo |
 | V9 ✍ | Video script and voice: outline Mon 11-02, voice Mon 11-09 | V | 11-09 | todo |
 | A9 | Video production: setup, Claude configuration, purchase, exception, order confirmation, receipt, bots | A | v1 Sun 11-08, final Wed 11-11 | run sheet 10-31 (`docs/VIDEO_RUN.md`) |

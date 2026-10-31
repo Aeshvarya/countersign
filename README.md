@@ -17,6 +17,7 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 | Shopper passkey approval (U1, C13) | done: verifier, edge routes, the shopper page (`/approve/<id>`), and the signature in the receipt (C13), attached only on `/acp` after it checks, never taken from an agent on the TAP door. It proves a passkey for this site signed the exact terms, not whose passkey it is (Decisions 2026-10-31) |
 | Receipts anyone can check (C8) | done: the shopper page and `/verify` check the merchant's signature in the browser, no server asked |
 | Merchant console and levers (A15, V6) | done: `/console` shows every checkout call and the countersign's answer live; price, stock and delivery change on cue, and a reset puts the catalogue back for the next take; `scripts/change_event.py` does the same from a terminal |
+| Colours (V8) | one token file, light and dark (`edge/static/tokens.css`); the catalogue pages and product images use it; the web pages move onto it on `varunika/v8-apply-web` (in review); `scripts/contrast.py` checks every pair against WCAG AA. Values are the pages' existing set until the palette replaces them |
 | Deploy checks (A7, A10) | `scripts/smoke.py` checks every door of the deployed host; `scripts/audit.py` (also in CI) keeps credentials, real card numbers and dead links out of the public repo |
 
 ## Quickstart
@@ -45,6 +46,7 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/smoke.py --base-url https://<public host> --buy # one purchase end to end: you approve and pay, it checks the receipt
 .venv/bin/python scripts/change_event.py --base-url https://<public host> --sku <sku> --percent 12   # the price moves on cue (also --price, --stock, --delivery)
 .venv/bin/python scripts/change_event.py --base-url https://<public host> --reset                    # every moved product back as uploaded
+.venv/bin/python scripts/contrast.py                                     # WCAG AA contrast of every colour pair, light and dark (--strict exits 1)
 .venv/bin/python scripts/audit.py                                        # before the repo goes public: credentials, .env, card numbers, links
 ```
 
@@ -92,6 +94,7 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `src/countersign/payments.py` | the card payment: Airwallex intent, Drop-in handoff, server-side check |
 | `src/countersign/airwallex_merchant.py` | V5′ the merchant on Airwallex: pending orders, confirm from Airwallex's own record, refund on mismatch |
 | `src/countersign/edge/` | the merchant's HTTP API behind the TAP check, plus the public product pages (`edge/pages.py`) |
+| `src/countersign/edge/static/tokens.css`, `edge/tokens.py` | V8 the colour tokens, light and dark, and their reader |
 | `src/countersign/edge/acp.py` | C10 the checkout API Airwallex calls: sessions, complete runs the countersign, REASK messages |
 | `src/countersign/edge/passkey.py` | U1 the shopper's passkey: the approval challenge and the six-check WebAuthn verifier |
 | `src/countersign/edge/hmac_auth.py`, `edge/idempotency.py` | the platform HMAC check (one scheme by config) and ACP idempotency rules |
@@ -102,6 +105,7 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `scripts/upload_catalog.py` | upload the catalogue to Airwallex (dry run without keys) |
 | `scripts/ac_onboard.py` | onboarding probe, host check, and the one-time Kit 10 onboarding |
 | `scripts/smoke.py` | checks every door of the deployed host; `--buy` runs one purchase end to end |
+| `scripts/contrast.py` | V8 WCAG AA contrast of every colour pair the pages use, light and dark |
 | `scripts/change_event.py` | V6 from a terminal: price, stock, delivery or reset on the running host, through its lever routes |
 | `scripts/audit.py` | the audit before the repo goes public (A10), also run in CI |
 | `docs/VIDEO_RUN.md` | the video, shot by shot: what is on screen and what to type (A9) |

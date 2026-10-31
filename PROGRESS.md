@@ -13,7 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-10-31_
+_Updated 2026-11-01_
+
+- **2026-11-01 (Varunika): V8 plumbing, light and dark everywhere.** One token file, `edge/static/tokens.css`, one name per role, light by default, dark by device or `data-theme`. On main (`c91b5c2`): the catalogue pages and product images draw from it in both themes, and `scripts/contrast.py` checks every pair against WCAG AA. **Aeshvarya to review `varunika/v8-apply-web`:** your four pages' colour blocks become a marked copy of the token file (inline, as your CSP needs), shadow and radius stay yours, every colour checked unchanged before the swap, the console's white button text is `--on-status`; `scripts/apply_tokens.py` keeps the copies equal and a test fails if one drifts. Contrast on the current set: 9 pairs below AA, mostly hint text, two light badges and white on the ask/no buttons in dark; the palette fixes them. The colours themselves are still to come from Varunika's drawing. V10 live: still blocked (no keys, no deploy, Kit 10 expected 11-02).
 
 - **2026-10-31 evening (Varunika):** reviewed and merged all three of Aeshvarya's branches: `fix-cvc-flake`, `c9-half-even` (the shopper page's minor-units table updated in the same merge, or its own test failed) and `c13-assertion-fix`, so **C13 is on main** (`f379319`). His `acp.py` permalink line and `web/levers.py` are reviewed and kept. **V6 is done offline** (`6c2bd85`): `POST /api/levers/reset` and `scripts/change_event.py`, and R7 is proven on `/acp` (a lever after approval charges nothing; one intent after the re-approval even on retry). C10 nit fixed (`7eaa894`: odd characters in the HMAC headers are a 401). 391 tests. **U1 decided (a):** it claims only that a passkey signed the exact terms, not whose (Decisions); reopen if `managed_payment` charges without Drop-in. **Aeshvarya:** your OK on C10, C11 (its line is now in Decisions), C13 as merged and U1 (a) (it rewords your console line, receipt finding and run sheet beat 3); a Reset button on the console if you want one (the route is there). **Varunika next:** V8 palette, V9 outline, A13 against the fallback MCP, A16.
 
@@ -108,6 +110,9 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-11-01
+- **V8 plumbing** (Varunika): `edge/static/tokens.css` (light + dark, one name per role) and `edge/tokens.py`; the catalogue pages and product images on it in both themes; `scripts/contrast.py` (WCAG AA, 9 pairs below the bar on the current set). His four pages moved onto it on `varunika/v8-apply-web` with no colour changed, for his review. V10 live checked: keys, deploy and Kit 10 onboarding still missing, so it did not run.
 
 ### 2026-10-31
 - **Reviews, V6 and a C10 fix** (Varunika): merged `aeshvarya/fix-cvc-flake`, `aeshvarya/c9-half-even` (plus the shopper page's minor-units table) and `aeshvarya/c13-assertion-fix` (C13 on main; `/verify` wording matched). V6: `levers.reset` + `POST /api/levers/reset` (one upsert per product group), `scripts/change_event.py` (exit 1 when the host and Airwallex differ, 2 when nothing changed), and `tests/test_change_event.py` proving R7 on `/acp` through `AirwallexMerchant`. `hmac_auth` refuses odd header characters with a 401 instead of a 500. Found: U1 proves a key, not a shopper; decided (a), wording matched across code, receipts, console, run sheet and README (`4678b78`). 391 tests.
