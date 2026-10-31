@@ -12,6 +12,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from countersign import receipt, tap, wire
+from countersign.agent import AgentKey, InProcessShop
+from countersign.edge import passkey
 from countersign.edge.passkey import b64url
 from countersign.fx import FakeFx
 from countersign.merchant import FakeMerchant
@@ -125,6 +127,35 @@ class ShopperReceiptTest(unittest.TestCase):
         self.assertTrue(check.ok, check.findings)
         self.assertFalse([f for f in check.findings if "passkey" in f])
 
+
+    def test_an_agent_cannot_bring_its_own_shopper_signature_through_the_tap_door(self):
+        """Only /acp attaches a verified assertion. On the TAP door the agent writes the approval itself,
+        so an assertion it signs with its own key must never reach the receipt."""
+        agent = Ed25519PrivateKey.generate()
+        app = create_app(self.merchant, tap.StaticDirectory({("https://agents.example", "k1"): agent.public_key()}),
+                         authority="testserver", clock=lambda: NOW, signer=self.signer)
+        shop = InProcessShop(app, AgentKey(agent, "k1", "https://agents.example"), "testserver")
+        terms = shop.offer({self.sku: 1}, "INR")
+        approval = Approval.grant(terms, terms.shopper_total, "agent-says-shopper", NOW, NOW + timedelta(minutes=15))
+        # The agent's own "passkey": any key it likes, over a challenge it can compute itself.
+        expires = approval.expires_at
+        challenge = passkey.approval_challenge("cs_made_up", approval.hash, expires)
+        authenticator_data = hashlib.sha256(b"shop.example").digest() + b"\x05" + (1).to_bytes(4, "big")
+        client_data_json = json.dumps({"type": "webauthn.get", "challenge": b64url(challenge),
+                                       "origin": "https://shop.example"}).encode()
+        forged = {"session_id": "cs_made_up", "origin": "https://shop.example", "rp_id": "shop.example",
+                  "credential_id": b64url(b"agent"),
+                  "public_key_spki_der": b64url(self.device.public_key().public_bytes(
+                      serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)),
+                  "authenticator_data": b64url(authenticator_data), "client_data_json": b64url(client_data_json),
+                  "signature": b64url(self.device.sign(authenticator_data + hashlib.sha256(client_data_json).digest(),
+                                                       ec.ECDSA(hashes.SHA256())))}
+        result = shop.checkout(replace(approval, shopper_assertion=forged), "tap-1")
+        self.assertEqual(result.decision.outcome.value, "proceed")
+        self.assertNotIn("shopper_assertion", result.receipt["body"]["approval"])
+        check = receipt.verify(result.receipt, self.merchant_key.public_key(), approval)
+        self.assertTrue(check.ok)
+        self.assertFalse(any("passkey" in f for f in check.findings))
 
 class ApprovalFieldTest(unittest.TestCase):
     def setUp(self):
