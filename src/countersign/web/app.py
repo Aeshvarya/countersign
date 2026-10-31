@@ -163,11 +163,41 @@ def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
+# U1: the shopper's approval page. The session id in its address is the capability
+# (edge.acp), so the page loads nothing from other sites, sends no referrer, and
+# cannot be framed: a framed page could be clicked through by a page on top of it.
+APPROVAL_PAGE_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; "
+                               "connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
+                               "frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-store",
+}
+
+
+@demo.get("/approve/{session_id}")
+def approval_page(session_id: str) -> FileResponse:
+    """The link a waiting checkout session carries (`links`, type approval). The page reads
+    the terms from GET /acp/approvals/<id> and posts the passkey assertion back there."""
+    return FileResponse(STATIC / "approve.html", headers=APPROVAL_PAGE_HEADERS)
+
+
+@demo.get("/static/approve.js")
+def approval_script() -> FileResponse:
+    return FileResponse(STATIC / "approve.js", media_type="text/javascript",
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"})
+
+
 @demo.post("/api/sessions")
 def start(body: Start) -> dict[str, Any]:
     if body.currency not in ("INR", "EUR"):
         raise HTTPException(400, "currency must be INR or EUR")
-    w = World(body.request.strip()[:300], body.currency, body.model or os.environ.get("COUNTERSIGN_MODEL"))
+    # COUNTERSIGN_MODEL=scripted on the host is a spend guard: a visitor's request cannot turn Claude on.
+    configured = os.environ.get("COUNTERSIGN_MODEL", "").strip().lower()
+    model = "scripted" if configured == "scripted" else (body.model or configured or None)
+    w = World(body.request.strip()[:300], body.currency, model)
     while len(WORLDS) >= MAX_WORLDS:  # a public demo must not grow without bound
         WORLDS.pop(next(iter(WORLDS)))
     WORLDS[w.session.id] = w

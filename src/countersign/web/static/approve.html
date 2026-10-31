@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The session id in this page's address is what lets you approve: never send it anywhere else. -->
+<meta name="referrer" content="no-referrer">
+<title>Approve purchase</title>
+<style>
+:root {
+  --bg: #f4f2ee; --panel: #ffffff; --ink: #121212; --ink-2: #4a4a48; --ink-3: #8b8a86;
+  --line: #e4e1da; --soft: #efece6;
+  --go: #0f8a4b; --go-bg: #e3f4ea; --ask: #b86e00; --ask-bg: #fbefd9; --no: #c0322b; --no-bg: #fbe5e3;
+  --accent: #1f3df0; --accent-ink: #ffffff;
+  --shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d0d0f; --panel: #17171a; --ink: #f3f2ee; --ink-2: #b9b8b3; --ink-3: #7b7a76;
+    --line: #2a2a2f; --soft: #202024;
+    --go: #3ccf7f; --go-bg: #12301f; --ask: #f2a93b; --ask-bg: #33250f; --no: #ff6b61; --no-bg: #3a1714;
+    --accent: #7f93ff; --accent-ink: #0d0d0f; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d0d0f; --panel: #17171a; --ink: #f3f2ee; --ink-2: #b9b8b3; --ink-3: #7b7a76;
+  --line: #2a2a2f; --soft: #202024;
+  --go: #3ccf7f; --go-bg: #12301f; --ask: #f2a93b; --ask-bg: #33250f; --no: #ff6b61; --no-bg: #3a1714;
+  --accent: #7f93ff; --accent-ink: #0d0d0f; --shadow: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 500; font-size: 15px; line-height: 1.45;
+       font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+button { font: inherit; }
+.wrap { max-width: 560px; margin: 0 auto; padding: 22px 16px 60px; }
+.brand { font-weight: 900; letter-spacing: -0.03em; font-size: 20px; margin: 0 0 18px; }
+.brand span { color: var(--accent); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 24px 20px; box-shadow: var(--shadow); }
+h1 { margin: 0 0 4px; font-size: clamp(24px, 6vw, 32px); font-weight: 900; letter-spacing: -0.03em; line-height: 1.1; }
+.sub { margin: 0 0 20px; color: var(--ink-2); font-weight: 600; }
+.merchant { color: var(--ink-2); font-weight: 700; }
+ul.items { list-style: none; margin: 0 0 16px; padding: 0; border-top: 1px solid var(--line); }
+ul.items li { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); font-weight: 700; }
+ul.items li .qty { color: var(--ink-3); white-space: nowrap; }
+.row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; color: var(--ink-2); }
+.row b { color: var(--ink); text-align: right; }
+.total { margin: 16px 0 4px; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.total .label { font-weight: 800; }
+.total .amount { font-size: clamp(26px, 7vw, 34px); font-weight: 900; letter-spacing: -0.02em; }
+.ceiling { margin: 0 0 16px; padding: 10px 12px; border-radius: 12px; background: var(--soft); color: var(--ink-2); font-weight: 600; }
+.ceiling b { color: var(--ink); }
+.valid { color: var(--ink-3); font-weight: 600; font-size: 13.5px; margin: 0 0 18px; }
+.valid.late { color: var(--ask); }
+.btn { width: 100%; border: 0; border-radius: 14px; padding: 16px 20px; font-weight: 800; cursor: pointer; background: var(--accent); color: var(--accent-ink); min-height: 54px; font-size: 16px; }
+.btn:disabled { opacity: .45; cursor: default; }
+.link { background: none; border: 0; padding: 8px 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font-weight: 600; font-size: 13.5px; }
+.status { margin: 14px 0 0; padding: 12px 14px; border-radius: 12px; font-weight: 700; }
+.status:empty { display: none; }
+.status.info { background: var(--soft); color: var(--ink-2); }
+.status.ok { background: var(--go-bg); color: var(--go); }
+.status.warn { background: var(--ask-bg); color: var(--ask); }
+.status.error { background: var(--no-bg); color: var(--no); }
+details { margin-top: 18px; color: var(--ink-2); font-size: 13.5px; }
+details summary { cursor: pointer; font-weight: 700; }
+details dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 10px 0 0; }
+details dt { color: var(--ink-3); }
+details dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.note { color: var(--ink-3); font-size: 13px; margin: 16px 0 0; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <p class="brand">Counter<span>sign</span></p>
+  <section class="card" aria-labelledby="title">
+    <h1 id="title">Approve this purchase</h1>
+    <p class="sub" id="sub">Loading the terms your agent was quoted…</p>
+
+    <div id="terms" hidden>
+      <p class="merchant" id="merchant"></p>
+      <ul class="items" id="items"></ul>
+      <div class="row"><span>Delivery</span><b id="delivery"></b></div>
+      <div class="row" id="rate-row"><span>Merchant price</span><b id="merchant-total"></b></div>
+      <div class="total"><span class="label">You pay</span><span class="amount" id="total"></span></div>
+      <p class="ceiling" id="ceiling"></p>
+      <p class="valid" id="valid"></p>
+      <button class="btn" id="approve" type="button" disabled>Approve with passkey</button>
+      <button class="link" id="reset" type="button" hidden>Use a different passkey</button>
+    </div>
+
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+
+    <details id="what" hidden>
+      <summary>What your passkey signs</summary>
+      <p>A challenge the merchant derives from these exact terms, this checkout and the time they are valid until. The merchant checks the signature before it charges anything; if the terms change, you are asked again.</p>
+      <dl>
+        <dt>Terms hash</dt><dd id="hash"></dd>
+        <dt>Checkout</dt><dd id="session"></dd>
+        <dt>Valid until</dt><dd id="expires"></dd>
+        <dt>Site</dt><dd id="rp"></dd>
+      </dl>
+    </details>
+  </section>
+  <p class="note">A passkey proves this device approved these terms. Nothing on this page can change the amount.</p>
+</main>
+<script src="/static/approve.js"></script>
+</body>
+</html>
