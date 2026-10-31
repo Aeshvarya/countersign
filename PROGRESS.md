@@ -13,7 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-10-30 (evening)_
+_Updated 2026-10-31_
+
+- **2026-10-31:** the U1 approval page is built (`/approve/<id>`, signs the server's challenge, checked in Chromium with a virtual passkey), and the hosted demo can no longer be switched to Claude by a visitor while `COUNTERSIGN_MODEL=scripted`. **Slack:** Kit 10 onboarding and the full `create_checkout` contract are expected **Mon 2026-11-02** (Terry, 10-30), so the 11-01 20:00 IST check will find it not live; Terry also suggested waiting for their MCP rather than intents and Drop-in, and said a TAP interceptor in our service counts as Visa tooling. **The deadline moved to Sun 2026-11-15 23:59 PST (Mon 11-16 13:29 IST).** The `managed_payment` question is not in Slack: it still has to be posted. Still needs Aeshvarya's hands: A12 sandbox + one #help message to Turner, the Render deploy + UptimeRobot + spend cap, A2/A6 live run; decide with Varunika who runs onboarding (HMAC secret) and the V6 lever route.
 
 - **2026-10-30, Aeshvarya's code side is unblocked:** A7's host code is merged: one service serves the demo, `/acp/checkout_sessions`, `/p/<sku>`, `/img/<sku>.svg`, the TAP door, the merchant's receipt key and `/webhooks/airwallex`. V5′ `AirwallexMerchant` is merged offline (pending orders, confirm from Airwallex's record, refund on mismatch, receipt signed only after `check_paid`). Half-even rounding waits on Varunika's review (`aeshvarya/c9-half-even`, touches her GMC test). **What is left needs Aeshvarya's hands, not code:** A12 sandbox account (SG or UK) and keys, then the Render deploy with the variables in `render.yaml`, then `ac_onboard.py --check-host`. Varunika: review c9-half-even; V10 live once the host is up (the 10-30 review fixes are merged); U1: verifier and `/acp/approvals/{id}` merged 10-30, C13 fields wait on Aeshvarya's OK (`varunika/c13-fields`, Decisions), his approval page can start now (routes and body in README); V8. Open: which of three cases `complete` is under `managed_payment` (Open questions). **Fallback merchant MCP built and merged 10-30** (`web/merchant_mcp.py`, `/acp/mcp`, on when `COUNTERSIGN_MCP_TOKEN` is set), so the 11-01 fallback decision is only about which MCP the submission uses; the rule itself is unchanged. Varunika: review `aeshvarya/fix-cvc-flake` (a random id containing 737 failed `PaymentDataTest` about 1 run in 20).
 
@@ -21,7 +23,7 @@ _Updated 2026-10-30 (evening)_
 - **State (10-19):** the whole product runs offline. `uvicorn countersign.web.app:app` serves the demo: a shopper asks, the agent (Claude, or the scripted stand-in without a key) searches, gets exact terms with a rate lock, pauses for approval with a ceiling in the shopper's currency, and checks out; the merchant's edge verifies every call with TAP and the countersign charges, asks again or refuses; a paid order comes with a signed receipt anyone can verify. Levers move the rate, the price, the delivery, or send bots. TAP interop with Visa's reference code is proven both ways. 111 tests pass offline. Nothing has run against Airwallex yet.
 - **Next action:** Aeshvarya: sandbox keys into `.env`, then `python scripts/payment_spike.py --shopper INR` (A2 + A6 live in one run); deploy A7 to Render. Varunika: V1; read the C9 proposal below before starting V5; V3 Visa Slack ask. Aeshvarya: the TAP validity cap is merged (see Decisions 2026-10-19); object there if it should come out. Both: the application text (closes Fri 10-23).
 - **Waiting on:** Airwallex devhelp for merchant-side Agentic Commerce enablement and Airi CLI access (requested 2026-10-10, auto-reply only).
-- **Deadline:** Fri 2026-11-13 23:59 IST. **Target submission: Thu 2026-11-12.** Plan: [WORKPLAN.md](WORKPLAN.md).
+- **Deadline:** ~~Fri 2026-11-13 23:59 IST~~ extended 2026-10-30 to Sun 2026-11-15 23:59 PST (Mon 2026-11-16 13:29 IST, #announcements). **Target submission: Thu 2026-11-12** (unchanged unless we both decide otherwise). Plan: [WORKPLAN.md](WORKPLAN.md).
 
 ## Decisions
 
@@ -56,12 +58,12 @@ _Updated 2026-10-30 (evening)_
 
 ## Open questions
 
-- **Is Kit 10 onboarding on our account?** (2026-10-30) Sandbox maintenance ended 2026-10-30 01:52 IST (#announcements); no Kit 10 onboarding announcement yet and no answer to our 2026-10-29 post. Once keys exist, `scripts/ac_onboard.py` answers it in one read-only run over both config paths: 404 `MERCHANT_CONFIG_NOT_FOUND` on the documented path = live and ready to onboard; a 401 on either = the key's scope (make a full-access key); both 404 with no code = not on the account. Per the onboarding docs `managed_payment` is a response field, not something we send.
+- **Is Kit 10 onboarding on our account?** (2026-10-30) Sandbox maintenance ended 2026-10-30 01:52 IST (#announcements); no Kit 10 onboarding announcement yet and no answer to our 2026-10-29 post. Once keys exist, `scripts/ac_onboard.py` answers it in one read-only run over both config paths: 404 `MERCHANT_CONFIG_NOT_FOUND` on the documented path = live and ready to onboard; a 401 on either = the key's scope (make a full-access key); both 404 with no code = not on the account. Per the onboarding docs `managed_payment` is a response field, not something we send. **2026-10-31:** Terry (10-30, thread on our #commerce-kits-9-and-10 post): Kit 10 readiness and the full API contract expected Mon 2026-11-02.
 - ~~**Nothing serves the edge with the ACP door yet**~~ Answered 2026-10-30: `web/host.py` serves `/acp`, `/p`, `/img` and the TAP door from the deployed service (A7).
 
 - ~~**The public host must serve the catalogue pages**~~ Answered 2026-10-30, same change.
 - **How does a pending card payment look through the ACP door?** (2026-10-30) With `COUNTERSIGN_MERCHANT=airwallex`, `complete` gets a pending order with no receipt yet, and `acp.py` reports the session `completed`. Depends on what `managed_payment: true` sends on complete; Varunika's call once the contract is known.
-- **What does `complete` carry under `managed_payment: true`?** (2026-10-30, Aeshvarya asked in #commerce-kits-9-and-10) Three cases. (a) A payment token or intent id for us to verify: V10 passes it to the merchant and V5′ `check_paid` must verify an intent we did not create. (b) Airwallex charges before calling us: `complete` must confirm that charge, never start one, and `check_paid` again checks an intent we did not create. (c) We create the intent: today's path through `self.merchant`, unchanged. `complete` now keeps `payment_data` (card fields removed) and logs whether it came, so the first live call shows which. Code waits for the answer.
+- **What does `complete` carry under `managed_payment: true`?** (2026-10-30, Aeshvarya asked in #commerce-kits-9-and-10) Three cases. (a) A payment token or intent id for us to verify: V10 passes it to the merchant and V5′ `check_paid` must verify an intent we did not create. (b) Airwallex charges before calling us: `complete` must confirm that charge, never start one, and `check_paid` again checks an intent we did not create. (c) We create the intent: today's path through `self.merchant`, unchanged. `complete` now keeps `payment_data` (card fields removed) and logs whether it came, so the first live call shows which. Code waits for the answer. **2026-10-31: no such message is in Slack** (channel and search read in full), so it still has to be posted; the 11-02 contract may answer it too.
 - **Does Airwallex accept SVG for `image_link`?** Google Merchant Center itself wants JPEG, PNG, GIF, WebP, BMP or TIFF. If the live upload fails rows on the image, render PNGs instead.
 - **Does Airwallex accept GMC fields beyond its example** (brand, condition, product_type, identifier_exists)? Sent only with `--extended` until confirmed.
 
@@ -70,6 +72,8 @@ _Updated 2026-10-30 (evening)_
 - **Is INR a convertible shopper currency** on our sandbox? A2 answers it.
 - **Does Airwallex round the shopper amount half-up?** A2 compares their payment intent amount with `computed_shopper_total()`. Their MCP docs (read 2026-10-19) say half to even, on the cart total; A2's live run confirms it.
 - **Live Visa TAP key directory or VIC sandbox for teams?** V3 asks.
+- ~~**Does TAP count as Visa tooling for the Visa Award?**~~ Answered 2026-10-30 by Terry: a TAP header interceptor in our service counts. He asked whether we build one; nobody has replied yet (yes: the edge verifies TAP on every request).
+- ~~**Can the build differ from the registration idea?**~~ Answered 2026-10-30 by Dan Kim in #help: yes; one submission per team. Still open there: several awards for one project, and whether judges need a public repo.
 - **Merchant-side enablement:** when, and does it include the Agent Trust & Risk SDK?
 - **Does code written before the 10-25 build start count?** The public page is silent. Asked Airwallex devhelp directly on 2026-10-16 (same thread as the access request). Still worth copying the HackerEarth rules tab here.
 - **C2: should payment requests bind the body?** Answered by `aeshvarya/c2-content-digest` (see Decisions 2026-10-16); waiting on Varunika's review.
@@ -85,6 +89,11 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-10-31
+- **U1 approval page** (Aeshvarya, `web/static/approve.html`, `approve.js`): `/approve/<id>` shows the terms from `GET /acp/approvals/<id>`, creates a passkey on first use (keeps its credential id and SPKI key in localStorage), signs the server's challenge bytes and posts the assertion. No third-party loads, no referrer, cannot be framed. Driven in Chromium with a CDP virtual authenticator: `complete` held before signing, completed after; a second checkout reuses the passkey; a dismissed prompt signs nothing.
+- **Spend guard fixed** (Aeshvarya): a visitor's `model` field overrode `COUNTERSIGN_MODEL=scripted`, so with a key on the host anyone could run Claude. `render.yaml` now pins `COUNTERSIGN_MODEL=scripted` and lists `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE`. 320 tests.
+- **Slack read** (A11): Kit 10 + contract expected 11-02; deadline moved to 11-15 PST; Visa tooling and build-vs-registration answered (Open questions); the `managed_payment` question was never posted.
 
 ### 2026-10-30
 - **Fallback merchant MCP merged** (Aeshvarya, `93d2256`, `591ab86`): our own ACP-shaped MCP at `/acp/mcp` (streamable HTTP, stateless, bearer token). Tools: `search_products`, `create_checkout`, `update_checkout`, `get_checkout`, `complete_checkout`, `cancel_checkout`. Every checkout tool is an HMAC-signed call to `/acp/checkout_sessions`, the call Airwallex makes, so the countersign, idempotency and receipts are the real path's. It reports the order's real payment state (pending until the webhook) and the receipt once signed, and points the agent at `/approve/<id>` when U1 is on. Smoke-tested under uvicorn with curl. 24 tests; 315 in all.
