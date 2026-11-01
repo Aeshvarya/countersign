@@ -172,10 +172,40 @@ class AcpTest(unittest.TestCase):
         self.assertIn("price_change", [m["code"] for m in r["messages"]])
         self.assertEqual(self.merchant.orders, {})
 
+    def ceiling_for(self, factor):
+        total = self.merchant.catalog[self.sku].price * Decimal("84.10")
+        return to_minor((total * Decimal(factor)).quantize(Decimal("0.01")), "INR")
+
     def test_a_price_change_is_reported_once_as_the_total_not_also_as_the_items(self):
         s = self.create()
         self.merchant.set_price(self.sku, self.merchant.catalog[self.sku].price * 2)
         self.assertEqual([m["code"] for m in self.complete(s["id"]).json()["messages"]], ["price_change"])
+
+    def test_a_requote_over_the_shoppers_ceiling_waits_for_a_new_ceiling(self):
+        ceiling = self.ceiling_for("1.03")
+        s = self.create(ceiling=ceiling)
+        self.assertEqual(s["countersign"]["shopper_ceiling"], ceiling)
+        self.merchant.set_price(self.sku, self.merchant.catalog[self.sku].price * Decimal("1.12"))
+        r = self.complete(s["id"]).json()
+        self.assertEqual(r["status"], "not_ready_for_payment")
+        self.assertEqual([m["code"] for m in r["messages"]], ["price_change", "over_ceiling"])
+        self.assertEqual(r["countersign"]["shopper_ceiling"], ceiling)  # never raised behind the shopper's back
+        # Completing again is the agent's yes, not the shopper's: still nothing charged.
+        again = self.complete(s["id"]).json()
+        self.assertEqual((again["status"], [m["code"] for m in again["messages"]]),
+                         ("not_ready_for_payment", ["over_ceiling"]))
+        self.assertEqual(self.merchant.orders, {})
+        new_total = next(t["amount"] for t in again["totals"] if t["type"] == "total")
+        lifted = self.call("POST", f"{SESSIONS}/{s['id']}", {"ceiling": new_total}).json()
+        self.assertEqual(lifted["status"], "ready_for_payment")
+        self.assertEqual(self.complete(s["id"]).json()["status"], "completed")
+        self.assertEqual(len(self.merchant.orders), 1)
+
+    def test_a_ceiling_below_the_quoted_total_is_held_from_the_start(self):
+        s = self.create(ceiling=self.ceiling_for("0.95"))
+        self.assertEqual((s["status"], [m["code"] for m in s["messages"]]), ("not_ready_for_payment", ["over_ceiling"]))
+        self.assertEqual(self.complete(s["id"]).json()["status"], "not_ready_for_payment")
+        self.assertEqual(self.merchant.orders, {})
 
     def test_out_of_stock_at_complete_charges_nothing(self):
         s = self.create()
@@ -425,6 +455,19 @@ class ShopperPasskeyTest(unittest.TestCase):
         again = self.client.post(f"/acp/approvals/{s['id']}", json=old)
         self.assertEqual((again.status_code, again.json()["message"]), (400, "the challenge is not for these terms"))
         self.assertEqual(self.sign(s["id"]).status_code, 200)
+        self.assertEqual(self.complete(s["id"])["status"], "completed")
+        self.assertEqual(len(self.merchant.orders), 1)
+
+    def test_over_the_ceiling_the_shoppers_passkey_on_the_new_terms_is_the_new_yes(self):
+        total = self.merchant.catalog[self.sku].price * Decimal("84.10")
+        r = self.post(SESSIONS, {"items": [{"id": self.sku, "quantity": 1}], "currency": "INR",
+                                 "ceiling": to_minor((total * Decimal("1.03")).quantize(Decimal("0.01")), "INR")})
+        s = r.json()
+        self.assertEqual(self.sign(s["id"]).status_code, 200)
+        self.merchant.set_price(self.sku, self.merchant.catalog[self.sku].price * Decimal("1.12"))
+        self.assertEqual([m["code"] for m in self.complete(s["id"])["messages"]], ["price_change", "approval_required"])
+        self.assertEqual(self.merchant.orders, {})
+        self.assertEqual(self.sign(s["id"]).status_code, 200)  # they saw the new total on their own device
         self.assertEqual(self.complete(s["id"])["status"], "completed")
         self.assertEqual(len(self.merchant.orders), 1)
 
