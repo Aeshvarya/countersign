@@ -221,6 +221,11 @@ def _amount(value: Decimal, currency: str) -> int:
     return to_minor(money(value, currency), currency)
 
 
+def _same_cart(approved: Any, live: Any) -> bool:
+    """The same products in the same quantities: what moved, if anything, is a price."""
+    return [(i.sku, i.quantity) for i in approved] == [(i.sku, i.quantity) for i in live]
+
+
 class AcpApi:
     def __init__(self, merchant: MerchantGateway, config: AcpConfig, *, clock: Callable[[], datetime],
                  signer: receipts.MerchantSigner | None, store: ReceiptStore | None) -> None:
@@ -356,6 +361,8 @@ class AcpApi:
                              "content_type": "plain", "content": str(change.live)})
             elif change.field in ("shopper_total", "merchant_total"):
                 pass  # reported once below, in the shopper's currency
+            elif change.field == "items" and _same_cart(change.approved, change.live):
+                pass  # only unit prices moved: that is the total, reported once below
             else:
                 msgs.append({"type": "warning", "code": "terms_changed", "resolution": "requires_buyer_review",
                              "param": f"$.{change.field}", "content_type": "plain",

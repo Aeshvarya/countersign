@@ -172,6 +172,11 @@ class AcpTest(unittest.TestCase):
         self.assertIn("price_change", [m["code"] for m in r["messages"]])
         self.assertEqual(self.merchant.orders, {})
 
+    def test_a_price_change_is_reported_once_as_the_total_not_also_as_the_items(self):
+        s = self.create()
+        self.merchant.set_price(self.sku, self.merchant.catalog[self.sku].price * 2)
+        self.assertEqual([m["code"] for m in self.complete(s["id"]).json()["messages"]], ["price_change"])
+
     def test_out_of_stock_at_complete_charges_nothing(self):
         s = self.create()
         self.merchant.set_stock(self.sku, 0)
