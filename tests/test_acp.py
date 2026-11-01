@@ -201,6 +201,31 @@ class AcpTest(unittest.TestCase):
         self.assertEqual(self.complete(s["id"]).json()["status"], "completed")
         self.assertEqual(len(self.merchant.orders), 1)
 
+    def test_a_currency_change_after_the_ceiling_holds_until_a_ceiling_in_the_new_currency(self):
+        s = self.create(ceiling=self.ceiling_for("1.03"))
+        # 865,000-odd paise must not become $8,650: the shopper's number was in rupees.
+        moved = self.call("POST", f"{SESSIONS}/{s['id']}", {"currency": "usd"}).json()
+        self.assertEqual((moved["status"], [m["code"] for m in moved["messages"]]),
+                         ("not_ready_for_payment", ["over_ceiling"]))
+        self.assertEqual(moved["messages"][0]["ceiling_currency"], "inr")
+        self.assertEqual(moved["countersign"]["shopper_ceiling_currency"], "inr")
+        self.merchant.set_price(self.sku, self.merchant.catalog[self.sku].price * Decimal("1.12"))
+        for _ in range(2):  # the agent paying twice is still not the shopper's yes
+            self.assertEqual(self.complete(s["id"]).json()["status"], "not_ready_for_payment")
+        self.assertEqual(self.merchant.orders, {})
+        dollars = self.call("POST", f"{SESSIONS}/{s['id']}", {"ceiling": 11000}).json()
+        self.assertEqual((dollars["status"], dollars["countersign"]["shopper_ceiling_currency"]),
+                         ("ready_for_payment", "usd"))
+        self.assertEqual(self.complete(s["id"]).json()["status"], "completed")
+
+    def test_a_ceiling_sent_with_a_currency_change_is_read_in_the_new_currency(self):
+        s = self.create(ceiling=self.ceiling_for("1.03"))
+        r = self.call("POST", f"{SESSIONS}/{s['id']}", {"currency": "usd", "ceiling": 900000}).json()
+        self.assertEqual((r["status"], r["countersign"]["ceiling"]), ("ready_for_payment", 900000))
+        # Read as paise, $9,000 would be ₹9,000, above the rupee price: it must hold anyway.
+        back = self.call("POST", f"{SESSIONS}/{s['id']}", {"currency": "inr"}).json()
+        self.assertEqual([m["code"] for m in back["messages"]], ["over_ceiling"])
+
     def test_a_ceiling_below_the_quoted_total_is_held_from_the_start(self):
         s = self.create(ceiling=self.ceiling_for("0.95"))
         self.assertEqual((s["status"], [m["code"] for m in s["messages"]]), ("not_ready_for_payment", ["over_ceiling"]))
