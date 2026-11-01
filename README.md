@@ -12,7 +12,8 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 |---|---|
 | Catalogue for Airwallex's merchant MCP, in Google Merchant Center format (C11) | done offline; live upload waits on sandbox keys and Kit 10 onboarding |
 | Public product pages and images the catalogue links to | done |
-| Checkout API Airwallex calls (`create_checkout`, C10), on ACP 2026-04-17 | done offline; onboarding script ready; live run waits on sandbox keys, a public host and Kit 10 onboarding |
+| Checkout API Airwallex calls (`create_checkout`, C10), on ACP 2026-04-17 | done offline; the shopper's ceiling holds: a re-quote above it waits for a new ceiling or, with U1, the shopper's passkey on the new terms; onboarding script ready; live run waits on sandbox keys, a public host and Kit 10 onboarding |
+| Claude as the shopper's agent (A13) | done on our fallback MCP: `docs/RUNBOOK.md` (clean profile, the add commands, a purchase prompt and each exception, rehearsed five times); `scripts/mcp_token.py` puts Airwallex's MCP token in the shell; Airwallex's MCP waits on Kit 10 onboarding |
 | Real card payments through Airwallex (C9) | done offline: the shopper pays in Drop-in on `/pay/<id>`, paid only from Airwallex's own record; first live run waits on sandbox keys |
 | Shopper passkey approval (U1, C13) | done: verifier, edge routes, the shopper page (`/approve/<id>`), and the signature in the receipt (C13), attached only on `/acp` after it checks, never taken from an agent on the TAP door. It proves a passkey for this site signed the exact terms, not whose passkey it is (Decisions 2026-10-31) |
 | Receipts anyone can check (C8) | done: the shopper page and `/verify` check the merchant's signature in the browser, no server asked |
@@ -46,6 +47,7 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/smoke.py --base-url https://<public host> --buy # one purchase end to end: you approve and pay, it checks the receipt
 .venv/bin/python scripts/change_event.py --base-url https://<public host> --sku <sku> --percent 12   # the price moves on cue (also --price, --stock, --delivery)
 .venv/bin/python scripts/change_event.py --base-url https://<public host> --reset                    # every moved product back as uploaded
+eval "$(.venv/bin/python scripts/mcp_token.py)"                          # Airwallex's merchant MCP token into the shell, never on screen (docs/RUNBOOK.md)
 .venv/bin/python scripts/contrast.py                                     # WCAG AA contrast of every colour pair, light and dark (--strict exits 1)
 .venv/bin/python scripts/audit.py                                        # before the repo goes public: credentials, .env, card numbers, links
 ```
@@ -107,8 +109,10 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `scripts/smoke.py` | checks every door of the deployed host; `--buy` runs one purchase end to end |
 | `scripts/contrast.py` | V8 WCAG AA contrast of every colour pair the pages use, light and dark |
 | `scripts/change_event.py` | V6 from a terminal: price, stock, delivery or reset on the running host, through its lever routes |
+| `scripts/mcp_token.py` | A13 the bearer token for Airwallex's merchant MCP, straight into the shell |
 | `scripts/audit.py` | the audit before the repo goes public (A10), also run in CI |
 | `docs/VIDEO_RUN.md` | the video, shot by shot: what is on screen and what to type (A9) |
+| `docs/RUNBOOK.md` | A13 what to type to Claude and what should come back: connecting the MCP, the purchase, each exception |
 | `PROGRESS.md`, `WORKPLAN.md` | where the work stands, who does what |
 
 ## Licence
