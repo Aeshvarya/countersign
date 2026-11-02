@@ -2,6 +2,7 @@
 
 import json
 import unittest
+import urllib.error
 from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -138,6 +139,51 @@ class CurrencyTest(unittest.TestCase):
         sid = self.create("XYZ").json()["id"]
         view = self.call("POST", f"{SESSIONS}/{sid}", {"currency": "INR"}).json()
         self.assertEqual((view["status"], view["messages"]), ("ready_for_payment", []))
+
+    # -- an outage is never a currency problem
+
+    OUTAGES = [AirwallexError(401, {"code": "unauthorized"}), AirwallexError(403, {"code": "forbidden"}),
+               AirwallexError(404, "not found"), AirwallexError(429, {"code": "too_many_requests"}),
+               AirwallexError(500, "oops"), AirwallexError(503, {"code": "service_unavailable"}),
+               urllib.error.URLError("connection refused"), TimeoutError("timed out"),
+               ConnectionResetError("reset")]
+
+    def assert_unavailable(self, r):
+        self.assertEqual(r.status_code, 503, r.text)
+        body = r.json()
+        self.assertEqual((body["type"], body["code"]), ("service_unavailable", "rate_lock_unavailable"))
+        self.assertNotIn("param", body)
+        self.assertNotIn("currency", body["message"].lower())
+        self.assertIn("Retry-After", r.headers)
+
+    def test_an_outage_on_create_is_a_503_and_no_session(self):
+        for err in self.OUTAGES:
+            with self.subTest(err=repr(err)):
+                fx = AirwallexLikeFx()
+                fx.down = err
+                self.build(fx)
+                self.assert_unavailable(self.create("INR"))
+                self.assertFalse(self.app.state.acp.sessions)
+
+    def test_a_create_retried_after_the_outage_runs_again(self):
+        fx = AirwallexLikeFx()
+        fx.down = AirwallexError(503, "down")
+        self.build(fx)
+        self.assert_unavailable(self.create("INR", key="same"))
+        fx.down = None
+        r = self.create("INR", key="same")
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertNotIn("Idempotent-Replayed", r.headers)
+
+    def test_an_outage_on_update_leaves_the_priced_session(self):
+        fx = AirwallexLikeFx()
+        self.build(fx)
+        before = self.create("INR").json()
+        fx.down = AirwallexError(401, {"code": "unauthorized"})
+        self.assert_unavailable(self.call("POST", f"{SESSIONS}/{before['id']}", {"currency": "EUR"}))
+        after = self.view(before["id"])
+        self.assertEqual((after["status"], after["currency"], after["totals"]),
+                         ("ready_for_payment", "inr", before["totals"]))
 
 
 if __name__ == "__main__":

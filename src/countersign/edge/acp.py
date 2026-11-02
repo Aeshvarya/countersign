@@ -22,6 +22,11 @@ the approval is the exact terms this API last returned, hashed when they were
 returned. Completing means "these terms"; anything that has changed since is
 asked again, never charged.
 
+A currency we cannot price is an `invalid` message at `$.currency`. Airwallex
+failing to lock a rate (any status but 400 or 422, or no answer at all) is a 503
+`service_unavailable` / `rate_lock_unavailable`, never reported as the
+shopper's currency, and the session stays as it was.
+
 With U1 on (COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE), the shopper signs those terms
 with a passkey on the approval page, which calls two routes outside the HMAC
 check, because the caller is the shopper's browser, not Airwallex:
@@ -139,16 +144,31 @@ def from_minor(value: Any, currency: str) -> Decimal:
 
 
 class AcpError(Exception):
+    type = "invalid_request"
+    headers: Mapping[str, str] = {}
+
     def __init__(self, status: int, code: str, message: str, param: str | None = None, **extra: Any):
         super().__init__(message)
         self.status, self.code, self.message, self.param, self.extra = status, code, message, param, extra
 
     def body(self) -> dict[str, Any]:
-        out = {"type": "invalid_request", "code": self.code, "message": self.message}
+        out = {"type": self.type, "code": self.code, "message": self.message}
         if self.param:
             out["param"] = self.param
         out.update(self.extra)
         return out
+
+
+class RateLockUnavailable(AcpError):
+    """Airwallex failed, not the request: a 503 to retry. A 5xx is never stored, so the retry runs again."""
+
+    type = "service_unavailable"
+    headers = {"Retry-After": "5"}
+
+    def __init__(self, detail: str):
+        super().__init__(503, "rate_lock_unavailable",
+                         f"No exchange rate could be locked right now ({detail}). Nothing was charged; "
+                         "retry with the same Idempotency-Key.")
 
 
 @dataclass
@@ -307,16 +327,17 @@ class AcpApi:
     # ---------------------------------------------------------------- the logic
 
     def _quote(self, s: Session, now: datetime) -> None:
-        """Price the cart now and record it as what the shopper is being shown."""
+        """Price the cart now and record it as what the shopper is being shown.
+
+        Priced before anything is cleared, so an outage (RateLockUnavailable)
+        leaves the session as it was and a retried complete still finds its terms.
+        """
+        terms, problem = self._price(s, now) if s.cart else (None, None)
         s.messages = []
         s.terms = s.approval = None
         s.shopper_signed = s.shopper_assertion = None  # a signature never carries over to new terms
-        if not s.cart:
-            s.status = "not_ready_for_payment"
-            return
-        terms, problem = self._price(s, now)
         if terms is None:
-            s.status, s.messages = "not_ready_for_payment", [problem]
+            s.status, s.messages = "not_ready_for_payment", [problem] if problem else []
             return
         ceiling = terms.shopper_total
         named = self._ceiling(s)
@@ -352,10 +373,15 @@ class AcpApi:
         except AirwallexError as err:
             # Only a 400 or 422 is Airwallex saying no to the request itself, and a
             # rate lock request carries nothing from the shopper but the currency.
-            if err.status not in CURRENCY_REFUSED:
-                raise
             code = err.body.get("code") if isinstance(err.body, dict) else None
+            if err.status not in CURRENCY_REFUSED:
+                # Our key, our scope, their limits or their servers: never the shopper's currency.
+                log.warning("acp quote %s: no rate lock, Airwallex HTTP %s %s", s.id, err.status, code or "")
+                raise RateLockUnavailable(f"Airwallex answered HTTP {err.status}") from None
             return None, self._unpriceable(s.currency, f"Airwallex would not lock a rate ({code or err.status})")
+        except OSError as err:  # no connection, a timeout, a dropped connection
+            log.warning("acp quote %s: no rate lock, %s", s.id, type(err).__name__)
+            raise RateLockUnavailable(f"Airwallex could not be reached: {type(err).__name__}") from None
 
     def _prices_without_fx(self, s: Session, now: datetime) -> bool:
         try:
@@ -701,7 +727,7 @@ def router(api: AcpApi) -> APIRouter:
         try:
             status, payload = await run_in_threadpool(action, body)
         except AcpError as err:
-            return JSONResponse(err.body(), status_code=err.status, headers=echo)
+            return JSONResponse(err.body(), status_code=err.status, headers={**echo, **err.headers})
         return JSONResponse(payload, status_code=status, headers=echo)
 
     @r.post(PREFIX)
