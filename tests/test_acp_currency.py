@@ -103,6 +103,28 @@ class CurrencyTest(unittest.TestCase):
         after = self.call("POST", f"{SESSIONS}/{before['id']}", {}).json()
         self.assertEqual(after["line_items"], before["line_items"])
 
+    def test_an_update_that_fails_unexpectedly_changes_nothing(self):
+        fx = AirwallexLikeFx()
+        self.build(fx)
+        before = self.create("INR").json()
+        fx.down = RuntimeError("a bug, not an outage")
+        with self.assertRaises(RuntimeError):
+            self.app.state.acp.update(before["id"], {"items": [{"id": self.other, "quantity": 2}], "currency": "EUR"})
+        fx.down = None
+        after = self.call("POST", f"{SESSIONS}/{before['id']}", {}).json()
+        self.assertEqual((after["line_items"], after["currency"]), (before["line_items"], "inr"))
+
+    def complete(self, sid, key="complete-1", body=None):
+        return self.call("POST", f"{SESSIONS}/{sid}/complete", body or {}, key=key)
+
+    def test_a_refused_complete_leaves_the_session_as_it_was(self):
+        sid = self.call("POST", SESSIONS, {"items": [], "currency": "INR",
+                                           "buyer": {"email": "first@example.com"}}).json()["id"]
+        r = self.complete(sid, body={"buyer": {"email": "second@example.com"}, "payment_data": {"token": "tok_1"}})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "invalid_state"))
+        s = self.app.state.acp.sessions[sid]
+        self.assertEqual((s.buyer, s.payment_data), ({"email": "first@example.com"}, None))
+
     # -- a currency is one we can price
 
     def currency_message(self, view):

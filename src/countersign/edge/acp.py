@@ -25,7 +25,8 @@ asked again, never charged.
 A currency we cannot price is an `invalid` message at `$.currency`. Airwallex
 failing to lock a rate (anything but a 400 or 422 that names a currency, or no
 usable answer at all) is a 503 `service_unavailable` / `rate_lock_unavailable`,
-never reported as the shopper's currency, and the session stays as it was.
+never reported as the shopper's currency. A failed create, update or complete
+leaves the session as it was.
 
 With U1 on (COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE), the shopper signs those terms
 with a passkey on the approval page, which calls two routes outside the HMAC
@@ -209,6 +210,16 @@ class Session:
     order: Any = None
     receipt: dict[str, Any] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
+def _snapshot(s: Session) -> dict[str, Any]:
+    """Every field but the lock. Shallow is enough: requests replace values, never mutate them."""
+    return {f.name: getattr(s, f.name) for f in fields(Session) if f.name != "lock"}
+
+
+def _restore(s: Session, saved: dict[str, Any]) -> None:
+    for name, value in saved.items():
+        setattr(s, name, value)
 
 
 def _read_items(body: dict[str, Any]) -> dict[str, int] | None:
@@ -557,9 +568,9 @@ class AcpApi:
         s = self._session(session_id)
         with s.lock:
             self._open(s)
-            # A refused update changes nothing: otherwise the cart from a 400 is
-            # what the next quote prices, and the shopper never asked for it.
-            saved = {f.name: getattr(s, f.name) for f in fields(Session) if f.name != "lock"}
+            # A refused or failed update changes nothing: otherwise the cart from a
+            # 400 is what the next quote prices, and the shopper never asked for it.
+            saved = _snapshot(s)
             try:
                 cart = _read_items(body)
                 if cart is not None:
@@ -569,9 +580,8 @@ class AcpApi:
                     s.currency = currency
                 self._apply_extras(s, body)
                 self._quote(s, self.clock())
-            except AcpError:
-                for name, value in saved.items():
-                    setattr(s, name, value)
+            except Exception:
+                _restore(s, saved)
                 raise
             return 200, self.view(s)
 
@@ -585,45 +595,54 @@ class AcpApi:
             if s.status == "completed":
                 return 200, self.view(s)  # completing twice never charges twice
             self._open(s)
-            if isinstance(body.get("buyer"), dict):
-                s.buyer = body["buyer"]
-            payment = body.get("payment_data")
-            if isinstance(payment, dict):
-                s.payment_data = without_card_data(payment)
-            # WARNING so it shows under the host's default log level; presence and key names only.
-            log.warning("acp complete %s: payment_data %s", s.id,
-                        f"present, keys {sorted(map(str, payment))}" if isinstance(payment, dict)
-                        else "absent" if payment is None else f"present but a {type(payment).__name__}")
-            if s.approval is None or s.terms is None:
-                raise AcpError(400, "invalid_state", "the session has nothing ready to pay for")
-            if self.awaiting_shopper(s):
-                s.status = "not_ready_for_payment"
-                s.messages = [{"type": "error", "code": "approval_required", "content_type": "plain",
-                               "content": "The shopper has not approved these exact terms. Nothing was charged."}]
-                return 200, self.view(s)
-            if self.over_ceiling(s) and not self.config.require_shopper_signature:
-                s.status, s.messages = "not_ready_for_payment", [self._over_ceiling_message(s)]
-                return 200, self.view(s)
+            saved = _snapshot(s)
+            try:
+                return self._complete(s, body)
+            except Exception:
+                _restore(s, saved)  # a failed complete leaves the session as it was
+                raise
 
-            now = self.clock()
-            before = s.terms
-            approval = s.approval
-            if s.shopper_assertion is not None and s.shopper_signed == self.challenge(s):
-                approval = replace(approval, shopper_assertion=s.shopper_assertion)  # C13: into the receipt
-            result = countersign(self.merchant, approval, f"acp:{s.id}", now,
-                                 agent=None, signer=self.signer, store=self.store)
-            d = result.decision
-            if d.outcome is Outcome.PROCEED and result.order is not None:
-                s.status, s.order, s.receipt, s.messages = "completed", result.order, result.receipt, []
-            elif d.outcome is Outcome.REASK:
-                self._quote(s, now)  # the new terms the shopper must look at again
-                if s.terms is not None:  # requoted; not a cart that can no longer be priced
-                    s.messages = self._reask_messages(s, d, before) + s.messages
-            else:
-                s.status = "not_ready_for_payment"
-                s.messages = [{"type": "error", "code": "invalid", "content_type": "plain",
-                               "content": f"Refused: {d.reason}. Nothing was charged."}]
+    def _complete(self, s: Session, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """complete() under the session lock; anything it raises is undone by the caller."""
+        if isinstance(body.get("buyer"), dict):
+            s.buyer = body["buyer"]
+        payment = body.get("payment_data")
+        if isinstance(payment, dict):
+            s.payment_data = without_card_data(payment)
+        # WARNING so it shows under the host's default log level; presence and key names only.
+        log.warning("acp complete %s: payment_data %s", s.id,
+                    f"present, keys {sorted(map(str, payment))}" if isinstance(payment, dict)
+                    else "absent" if payment is None else f"present but a {type(payment).__name__}")
+        if s.approval is None or s.terms is None:
+            raise AcpError(400, "invalid_state", "the session has nothing ready to pay for")
+        if self.awaiting_shopper(s):
+            s.status = "not_ready_for_payment"
+            s.messages = [{"type": "error", "code": "approval_required", "content_type": "plain",
+                           "content": "The shopper has not approved these exact terms. Nothing was charged."}]
             return 200, self.view(s)
+        if self.over_ceiling(s) and not self.config.require_shopper_signature:
+            s.status, s.messages = "not_ready_for_payment", [self._over_ceiling_message(s)]
+            return 200, self.view(s)
+
+        now = self.clock()
+        before = s.terms
+        approval = s.approval
+        if s.shopper_assertion is not None and s.shopper_signed == self.challenge(s):
+            approval = replace(approval, shopper_assertion=s.shopper_assertion)  # C13: into the receipt
+        result = countersign(self.merchant, approval, f"acp:{s.id}", now,
+                             agent=None, signer=self.signer, store=self.store)
+        d = result.decision
+        if d.outcome is Outcome.PROCEED and result.order is not None:
+            s.status, s.order, s.receipt, s.messages = "completed", result.order, result.receipt, []
+        elif d.outcome is Outcome.REASK:
+            self._quote(s, now)  # the new terms the shopper must look at again
+            if s.terms is not None:  # requoted; not a cart that can no longer be priced
+                s.messages = self._reask_messages(s, d, before) + s.messages
+        else:
+            s.status = "not_ready_for_payment"
+            s.messages = [{"type": "error", "code": "invalid", "content_type": "plain",
+                           "content": f"Refused: {d.reason}. Nothing was charged."}]
+        return 200, self.view(s)
 
     def cancel(self, session_id: str) -> tuple[int, dict[str, Any]]:
         s = self._session(session_id)
