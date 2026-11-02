@@ -62,7 +62,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import receipt as receipts
 from ..airwallex import AirwallexError
-from ..checkout import ReceiptStore, countersign
+from ..checkout import ReceiptStore, countersign, release
 from ..decide import Decision, Outcome
 from ..merchant import MerchantGateway
 from ..terms import Approval, Terms, minor_units, money, utc
@@ -79,6 +79,12 @@ SESSION_TTL = timedelta(hours=1)
 PREFIX = "/acp/checkout_sessions"
 APPROVALS = "/acp/approvals"  # the shopper's approval page (U1); no HMAC
 ASSERTION_FIELDS = ("credential_id", "public_key_spki_der", "authenticator_data", "client_data_json", "signature")
+# A16: Airwallex's payment attempt failure_code is one of authentication_failed, capture_failed,
+# authorization_failed, provider_unavailable, system_unavailable, fraud_rejected
+# (airwallex.com/docs/api/payments/payment_attempts). These mean the card was refused:
+CARD_DECLINES = ("authorization_failed", "authentication_failed", "fraud_rejected")
+# and these that Airwallex or the card provider could not process it. Anything else is reported as the code.
+OUTAGES = ("provider_unavailable", "system_unavailable")
 
 
 @dataclass
@@ -315,9 +321,11 @@ class AcpApi:
         cur = s.currency
         # "expired" is ours: on the wire a session past SESSION_TTL is canceled, with the reason.
         expired = s.status == "expired"
+        failed, code = self.payment_failure(s)
         out: dict[str, Any] = {
             "id": s.id,
-            "status": "canceled" if expired else s.status,
+            # A refused card leaves the order open for another card: not completed until it is paid.
+            "status": "canceled" if expired else "not_ready_for_payment" if failed else s.status,
             "currency": cur.lower(),
             "payment_provider": {"provider": "airwallex", "supported_payment_methods": ["card"]},
             "line_items": [],
@@ -325,7 +333,8 @@ class AcpApi:
             "fulfillment_options": [],
             "messages": list(s.messages) + ([{"type": "error", "code": "expired", "content_type": "plain",
                                                "content": "This checkout session expired. Nothing was charged; "
-                                                          "start a new one."}] if expired else []),
+                                                          "start a new one."}] if expired else [])
+                        + ([self._payment_failure_message(s, code)] if failed else []),
             "links": [],
         }
         if self.awaiting_shopper(s):
@@ -370,7 +379,46 @@ class AcpApi:
                 if self.config.public_url else None,
             }
             out.setdefault("countersign", {})["receipt"] = s.receipt
+            if failed:
+                out["countersign"]["payment_failure"] = code  # Airwallex's code for the last attempt; None if none
         return out
+
+    def open_payment(self, s: Session) -> Any:
+        """The session's card order while its payment is still open (pending in Drop-in), else None."""
+        if s.status != "completed" or s.order is None:
+            return None
+        order = self.merchant.find_order(f"acp:{s.id}")
+        return order if order is not None and order.status == "pending" else None
+
+    def payment_failure(self, s: Session) -> tuple[bool, str | None]:
+        """(failed, code): did the last card attempt on the open payment fail (A16), and Airwallex's code.
+
+        Only a merchant that takes cards in Drop-in keeps declines; the order stays
+        pending on the same intent, so the shopper can pay it with another card.
+        The code is None when Airwallex gave none.
+        """
+        key = f"acp:{s.id}"
+        declines = getattr(self.merchant, "declines", {})
+        if self.open_payment(s) is None or key not in declines:
+            return False, None
+        return True, declines[key]
+
+    def _payment_failure_message(self, s: Session, code: str | None) -> dict[str, Any]:
+        """Say what Airwallex reported and no more: a decline only on a card code, an outage only on an outage code."""
+        where = (f" at {self.config.public_url.rstrip('/')}/pay/{s.id}" if self.config.public_url
+                 else " on the payment page")
+        if code in CARD_DECLINES:
+            return {"type": "error", "code": "payment_declined", "content_type": "plain",
+                    "content": f"The card was declined ({code}). Nothing was charged. The shopper can pay this "
+                               f"order with another card{where}; nothing is retried automatically."}
+        if code in OUTAGES:  # never tell the shopper their card was refused when Airwallex or a provider failed
+            return {"type": "error", "code": "payment_unavailable", "content_type": "plain",
+                    "content": f"The payment did not go through: Airwallex reported {code}, not a declined card. "
+                               f"Nothing was charged. The shopper can try again{where}."}
+        said = f"Airwallex reported {code}" if code else "Airwallex gave no reason"
+        return {"type": "error", "code": "payment_failed", "content_type": "plain",
+                "content": f"The card payment did not go through: {said}. Nothing was charged. "
+                           f"The shopper can try again{where}; nothing is retried automatically."}
 
     # ---------------------------------------------------------------- the logic
 
@@ -604,6 +652,11 @@ class AcpApi:
             return 200, self.view(s)
 
     def _open(self, s: Session) -> None:
+        failed, code = self.payment_failure(s)
+        if failed:  # the wire says not_ready_for_payment, so say why it still cannot change (A16)
+            said = self._payment_failure_message(s, code)
+            raise AcpError(405, said["code"], said["content"] + " These terms cannot change while their payment "
+                           "is open: the shopper pays there, or cancel this checkout and start a new one.")
         if s.status in ("completed", "canceled", "expired"):
             raise AcpError(405, "invalid_state", f"the session is {s.status}")
 
@@ -674,9 +727,31 @@ class AcpApi:
     def cancel(self, session_id: str) -> tuple[int, dict[str, Any]]:
         s = self._session(session_id)
         with s.lock:
+            if self.open_payment(s) is not None and hasattr(self.merchant, "cancel_payment"):
+                return self._cancel_open_payment(s)
             self._open(s)
             s.status, s.messages = "canceled", []
             return 200, self.view(s)
+
+    def _cancel_open_payment(self, s: Session) -> tuple[int, dict[str, Any]]:
+        """Cancel a card order still open in Drop-in, declined or not (A16). Airwallex's record decides the answer."""
+        order = self.merchant.cancel_payment(f"acp:{s.id}")
+        if order is None or order.status == "pending":
+            raise AcpError(503, "service_unavailable",
+                           "Airwallex could not be reached to cancel the payment; nothing changed here. Try again.")
+        if order.status == "paid":
+            # A card paid before the cancel landed, so the order stands. Sign its held receipt the way the
+            # webhook and the shopper page do (checkout.release; safe to repeat), so this answer carries it.
+            s.order = order
+            if self.signer is not None and self.store is not None:
+                s.receipt = release(order, self.signer, self.store)
+            return 200, self.view(s)
+        s.status, s.order, s.receipt, s.messages = "canceled", None, None, []
+        if order.status == "refunded":  # a card paid an amount the countersign did not allow; it went back
+            s.messages = [{"type": "warning", "code": "payment_refunded", "content_type": "plain",
+                           "content": "A card payment for this checkout did not match the approved terms, so it "
+                                      "was refunded in full. The checkout is canceled."}]
+        return 200, self.view(s)
 
     # ---------------------------------------------------------------- U1, the shopper's passkey
 

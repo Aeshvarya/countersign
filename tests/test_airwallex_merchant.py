@@ -7,6 +7,7 @@ from decimal import Decimal
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from countersign import receipt as receipts
+from countersign.airwallex import AirwallexError
 from countersign.airwallex_merchant import AirwallexMerchant, intent_of
 from countersign.checkout import MemoryReceiptStore, countersign, release
 from countersign.decide import Outcome
@@ -23,11 +24,19 @@ class FakeAirwallex:
         self.intents = {}
         self.refunds = []
         self.creates = 0
+        self.posts = []  # every POST path, in order: a decline must add none
 
     def request_id(self):
         return "req"
 
     def post(self, path, body=None, extra_headers=None):
+        self.posts.append(path)
+        if path.startswith("/pa/payment_intents/") and path.endswith("/cancel"):
+            intent = self.intents[path.split("/")[3]]
+            if intent["status"] == "SUCCEEDED":  # too late: Airwallex refuses to cancel a paid intent
+                raise AirwallexError(400, {"code": "invalid_status_for_operation"})
+            intent["status"] = "CANCELLED"
+            return dict(intent)
         if path == "/pa/payment_intents/create":
             self.creates += 1
             for intent in self.intents.values():
@@ -51,7 +60,19 @@ class FakeAirwallex:
     def shopper_pays(self, intent_id, amount, currency="INR", quote="cvq_fake_1", status="SUCCEEDED"):
         """What Drop-in leaves behind: the intent reads back in the shopper's currency."""
         self.intents[intent_id].update(status=status, amount=float(amount), currency=currency,
-                                       conversion_quote_id=quote)
+                                       conversion_quote_id=quote,
+                                       latest_payment_attempt={"id": "att_ok", "payment_intent_id": intent_id,
+                                                               "status": "CAPTURE_REQUESTED"})
+
+    def card_declined(self, intent_id, code="authorization_failed"):
+        """A card refused in Drop-in: the attempt FAILED and the intent waits for another payment method.
+
+        code=None is an attempt that FAILED with no failure code at all.
+        """
+        attempt = {"id": "att_1", "payment_intent_id": intent_id, "status": "FAILED"}
+        if code is not None:
+            attempt.update(failure_code=code, failure_details={"code": code, "message": "Do not honor"})
+        self.intents[intent_id].update(status="REQUIRES_PAYMENT_METHOD", latest_payment_attempt=attempt)
 
 
 class AirwallexMerchantTest(unittest.TestCase):
@@ -131,6 +152,80 @@ class AirwallexMerchantTest(unittest.TestCase):
         self.assertEqual(intent_of({"name": "payment_intent.succeeded", "data": {"object": {"id": "int_9"}}}), "int_9")
         self.assertIsNone(intent_of({"name": "refund.succeeded", "data": {"object": {"id": "rfd_1"}}}))
         self.assertIsNone(intent_of({"name": "payment_intent.succeeded"}))
+
+    # -- A16: a declined card
+
+    def declined(self, code="authorization_failed"):
+        r = self.checkout()
+        self.api.card_declined(r.order.payment_id, code)
+        return r, self.shop.confirm(r.order.payment_id)
+
+    def test_a_declined_card_charges_nothing_signs_nothing_and_keeps_the_payment_open(self):
+        r, order = self.declined()
+        self.assertEqual(order.status, "pending")  # the shopper can still pay this order with another card
+        self.assertEqual(self.shop.declines["k1"], "authorization_failed")
+        self.assertIsNone(release(order, self.signer, self.store))
+        self.assertEqual(self.api.refunds, [])
+        self.assertIsNotNone(self.shop.handoff("k1"))  # Drop-in can mount again on the same intent
+        self.assertEqual(self.shop.catalog[self.sku].stock, self.stock - 1)
+
+    def test_a_decline_is_never_retried_and_a_retried_checkout_starts_no_second_intent(self):
+        self.declined()
+        self.shop.confirm(self.api.intents["int_1"]["id"])  # the webhook again
+        again = self.checkout()  # the agent completes again after the decline
+        self.assertEqual(again.order.status, "pending")
+        self.assertEqual((self.api.creates, len(self.api.intents)), (1, 1))
+        self.assertEqual(self.api.posts, ["/pa/payment_intents/create"])  # nothing else asked of Airwallex
+
+    def test_another_card_after_a_decline_is_one_order_one_charge_one_receipt(self):
+        r, _ = self.declined()
+        self.api.shopper_pays(r.order.payment_id, r.decision.charge, quote=r.decision.fx_quote_id)
+        order = self.shop.confirm(r.order.payment_id)
+        self.assertEqual(order.status, "paid")
+        self.assertNotIn("k1", self.shop.declines)
+        signed = release(order, self.signer, self.store)
+        self.assertTrue(receipts.verify(signed, self.key.public_key(), self.approval).ok)
+        self.assertEqual((len(self.shop.orders), self.api.creates, self.api.refunds), (1, 1, []))
+
+    def test_a_failed_attempt_with_no_code_is_kept_as_failed_with_no_reason(self):
+        self.declined(code=None)
+        self.assertIn("k1", self.shop.declines)
+        self.assertIsNone(self.shop.declines["k1"])  # never a made-up code
+
+    def test_cancelling_an_open_payment_before_any_card_is_tried(self):
+        r = self.checkout()
+        self.assertEqual(self.shop.cancel_payment("k1").status, "failed")
+        self.assertEqual(self.api.intents[r.order.payment_id]["status"], "CANCELLED")
+        self.assertEqual(self.shop.catalog[self.sku].stock, self.stock)
+
+    def test_a_new_attempt_clears_the_decline(self):
+        r, _ = self.declined()
+        self.api.intents[r.order.payment_id].update(
+            status="REQUIRES_CUSTOMER_ACTION", latest_payment_attempt={"status": "AUTHENTICATION_REDIRECTED"})
+        self.assertEqual(self.shop.confirm(r.order.payment_id).status, "pending")
+        self.assertNotIn("k1", self.shop.declines)
+
+    def test_cancelling_after_a_decline_closes_the_intent_and_gives_the_stock_back(self):
+        r, _ = self.declined()
+        order = self.shop.cancel_payment("k1")
+        self.assertEqual(order.status, "failed")
+        self.assertEqual(self.api.intents[r.order.payment_id]["status"], "CANCELLED")  # no later card can pay it
+        self.assertEqual(self.api.posts, ["/pa/payment_intents/create", f"/pa/payment_intents/{r.order.payment_id}/cancel"])
+        self.assertEqual(self.shop.catalog[self.sku].stock, self.stock)
+        self.assertIsNone(self.shop.handoff("k1"))
+        self.assertNotIn("k1", self.shop.declines)
+
+    def test_a_cancel_that_loses_the_race_to_another_card_keeps_the_payment(self):
+        r, _ = self.declined()
+        self.api.shopper_pays(r.order.payment_id, r.decision.charge, quote=r.decision.fx_quote_id)
+        self.assertEqual(self.shop.cancel_payment("k1").status, "paid")  # Airwallex refused the cancel
+        self.assertEqual((self.api.refunds, self.shop.catalog[self.sku].stock), ([], self.stock - 1))
+
+    def test_payment_attempt_events_name_their_intent(self):
+        for name in ("payment_attempt.authorization_failed", "payment_attempt.authentication_failed"):
+            event = {"name": name, "data": {"object": {"id": "att_1", "payment_intent_id": "int_9"}}}
+            self.assertEqual(intent_of(event), "int_9")
+        self.assertIsNone(intent_of({"name": "payment_attempt.authorization_failed", "data": {"object": {"id": "att_1"}}}))
 
 
 if __name__ == "__main__":
