@@ -156,6 +156,7 @@ class Session:
     currency: str  # shopper currency, upper case inside, lower case on the wire
     cart: dict[str, int] = field(default_factory=dict)
     ceiling_minor: int | None = None  # shopper's ceiling, if they set one above the quoted total
+    ceiling_currency: str | None = None  # the currency they named it in; minor units mean nothing without it
     buyer: dict[str, Any] | None = None
     payment_data: dict[str, Any] | None = None  # as sent on complete, card fields removed; never echoed or logged
     status: str = "not_ready_for_payment"  # ACP's enum only, plus "expired" internally
@@ -221,6 +222,11 @@ def _amount(value: Decimal, currency: str) -> int:
     return to_minor(money(value, currency), currency)
 
 
+def _same_cart(approved: Any, live: Any) -> bool:
+    """The same products in the same quantities: what moved, if anything, is a price."""
+    return [(i.sku, i.quantity) for i in approved] == [(i.sku, i.quantity) for i in live]
+
+
 class AcpApi:
     def __init__(self, merchant: MerchantGateway, config: AcpConfig, *, clock: Callable[[], datetime],
                  signer: receipts.MerchantSigner | None, store: ReceiptStore | None) -> None:
@@ -277,6 +283,8 @@ class AcpApi:
             out["countersign"] = {
                 "terms_hash": s.approval.hash if s.approval else None,
                 "ceiling": _amount(s.approval.ceiling, cur) if s.approval else None,
+                "shopper_ceiling": s.ceiling_minor,  # what they said, in minor units; None if they named none
+                "shopper_ceiling_currency": s.ceiling_currency.lower() if s.ceiling_currency else None,
                 "merchant_currency": t.merchant_currency.lower(),
                 "merchant_total": _amount(t.merchant_total, t.merchant_currency),
                 "rate": format(t.fx.rate, "f") if t.fx else None,
@@ -317,16 +325,63 @@ class AcpApi:
                            "content_type": "plain", "content": str(err)}]
             return
         ceiling = terms.shopper_total
-        if s.ceiling_minor is not None:
-            ceiling = max(ceiling, from_minor(s.ceiling_minor, s.currency))
+        named = self._ceiling(s)
+        if named is not None and named[1] == s.currency:
+            ceiling = max(ceiling, named[0])
         s.terms = terms
         s.approval = Approval.grant(terms, ceiling, self._approver(s), now, now + APPROVAL_TTL)
         if self.awaiting_shopper(s):
             s.status = "not_ready_for_payment"
             s.messages = [{"type": "info", "code": "approval_required", "content_type": "plain",
                            "content": f"The shopper approves these exact terms here: {self.approval_link(s)}"}]
+        elif self.over_ceiling(s):
+            s.status = "not_ready_for_payment"
+            s.messages = [self._over_ceiling_message(s)]
         else:
             s.status = "ready_for_payment"
+
+    def _ceiling(self, s: Session) -> tuple[Decimal, str] | None:
+        """The shopper's ceiling and the currency they named it in, or None if they named none."""
+        if s.ceiling_minor is None:
+            return None
+        cur = s.ceiling_currency or s.currency
+        return from_minor(s.ceiling_minor, cur), cur
+
+    def over_ceiling(self, s: Session) -> bool:
+        """The shopper named the most they will pay, and these terms cost more.
+
+        The approval above still carries a ceiling of at least the total (an
+        approval below its own price cannot exist), so only this check keeps
+        the shopper's number binding. With U1 on, the shopper's passkey on the
+        new exact terms is their new yes; without it, only a new ceiling sent
+        as an update is.
+
+        A ceiling named in another currency holds too. The session moved
+        currency after the shopper named it, and their number says nothing
+        about a price in the new one: paise read as cents allowed about 84
+        times what the shopper meant.
+        """
+        named = self._ceiling(s)
+        return (named is not None and s.terms is not None
+                and (named[1] != s.currency or s.terms.shopper_total > named[0]))
+
+    def _over_ceiling_message(self, s: Session) -> dict[str, Any]:
+        named = self._ceiling(s)
+        assert s.terms is not None and named is not None
+        cur, total = s.currency, s.terms.shopper_total
+        ceiling, named_in = named
+        if named_in == cur:
+            content = (f"The total is {total} {cur}, over the shopper's ceiling of {ceiling} {cur}. "
+                       "Nothing was charged. It goes ahead only with a new ceiling from the shopper, "
+                       "sent as an update.")
+        else:
+            content = (f"The total is {total} {cur}, and the shopper's ceiling of {ceiling} {named_in} "
+                       f"was named before the checkout moved to {cur}. Nothing was charged. It goes ahead "
+                       f"only with a new ceiling in {cur} from the shopper, sent as an update.")
+        return {"type": "warning", "code": "over_ceiling", "resolution": "requires_buyer_review",
+                "param": "$.ceiling", "content_type": "plain", "content": content,
+                "ceiling": s.ceiling_minor, "ceiling_currency": named_in.lower(),
+                "current_amount": _amount(total, cur)}
 
     def awaiting_shopper(self, s: Session) -> bool:
         """U1 is on and the shopper has not signed the terms now on the session."""
@@ -356,6 +411,8 @@ class AcpApi:
                              "content_type": "plain", "content": str(change.live)})
             elif change.field in ("shopper_total", "merchant_total"):
                 pass  # reported once below, in the shopper's currency
+            elif change.field == "items" and _same_cart(change.approved, change.live):
+                pass  # only unit prices moved: that is the total, reported once below
             else:
                 msgs.append({"type": "warning", "code": "terms_changed", "resolution": "requires_buyer_review",
                              "param": f"$.{change.field}", "content_type": "plain",
@@ -395,7 +452,7 @@ class AcpApi:
                 from_minor(ceiling, s.currency)
             except ValueError as err:
                 raise AcpError(400, "invalid", str(err), "$.ceiling") from None
-            s.ceiling_minor = ceiling
+            s.ceiling_minor, s.ceiling_currency = ceiling, s.currency
 
     def _session(self, session_id: str) -> Session:
         s = self.sessions.get(session_id)
@@ -447,6 +504,9 @@ class AcpApi:
                 s.status = "not_ready_for_payment"
                 s.messages = [{"type": "error", "code": "approval_required", "content_type": "plain",
                                "content": "The shopper has not approved these exact terms. Nothing was charged."}]
+                return 200, self.view(s)
+            if self.over_ceiling(s) and not self.config.require_shopper_signature:
+                s.status, s.messages = "not_ready_for_payment", [self._over_ceiling_message(s)]
                 return 200, self.view(s)
 
             now = self.clock()
