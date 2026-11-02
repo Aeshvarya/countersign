@@ -528,6 +528,11 @@ class AcpApi:
             return 200, self.view(s)
 
     def _open(self, s: Session) -> None:
+        failed, code = self.payment_failure(s)
+        if failed:  # the wire says not_ready_for_payment, so say why it still cannot change (A16)
+            said = self._payment_failure_message(s, code)
+            raise AcpError(405, said["code"], said["content"] + " These terms cannot change while their payment "
+                           "is open: the shopper pays there, or cancel this checkout and start a new one.")
         if s.status in ("completed", "canceled", "expired"):
             raise AcpError(405, "invalid_state", f"the session is {s.status}")
 

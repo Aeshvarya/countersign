@@ -149,6 +149,19 @@ class DeclinedCardTest(unittest.TestCase):
         self.assertNotIn("declined", content.lower())
         self.assertEqual(view["countersign"]["payment_failure"], "capture_failed")
 
+    # -- review fix 4: update stays refused, and says why
+
+    def test_update_after_a_decline_says_where_the_shopper_pays_or_to_cancel(self):
+        sid, _ = self.declined()
+        r = self.call("POST", f"{SESSIONS}/{sid}", {"items": [{"id": self.sku, "quantity": 2}]})
+        self.assertEqual(r.status_code, 405, r.text)
+        body = r.json()
+        self.assertEqual(body["code"], "payment_declined")
+        self.assertIn("The card was declined", body["message"])
+        self.assertIn(f"{PUBLIC}/pay/{sid}", body["message"])
+        self.assertIn("cancel this checkout", body["message"])
+        self.assertNotIn("the session is completed", body["message"])
+
     def test_the_shopper_can_cancel_after_a_decline(self):
         sid, order = self.declined()
         r = self.call("POST", f"{SESSIONS}/{sid}/cancel", {})
