@@ -184,6 +184,61 @@ class DeclinedCardTest(unittest.TestCase):
         self.assertEqual(self.merchant.orders[f"acp:{sid}"].status, "pending")
         self.assertEqual(self.codes(self.app.state.acp.view(self.app.state.acp.sessions[sid])), ["payment_declined"])
 
+    # -- review fix 2: a cancel that loses to a paid card answers paid, with its receipt
+
+    def pays_now(self, sid, order, extra=0):
+        """Another card pays in Drop-in; nothing has told us yet (no webhook, no page check)."""
+        decision, _ = self.merchant._decisions[f"acp:{sid}"]
+        self.api.shopper_pays(order.payment_id, decision.charge + extra, quote=decision.fx_quote_id)
+
+    def test_a_cancel_after_another_card_paid_answers_paid_with_its_receipt(self):
+        sid, order = self.declined()
+        self.pays_now(sid, order)
+        r = self.call("POST", f"{SESSIONS}/{sid}/cancel", {})
+        self.assertEqual(r.status_code, 200, r.text)
+        view = r.json()
+        self.assertEqual((view["status"], view["messages"]), ("completed", []))
+        self.assertEqual(view["order"]["id"], order.order_number)
+        signed = view["countersign"]["receipt"]
+        approval = self.app.state.acp.sessions[sid].approval
+        self.assertTrue(receipt.verify(signed, self.key.public_key(), approval).ok)
+        self.assertEqual(self.app.state.acp.store.get(f"acp:{sid}"), signed)  # the same receipt the webhook would sign
+        self.assertEqual(self.merchant.orders[f"acp:{sid}"].status, "paid")
+
+    # -- review fix 3: any unpaid open card payment can be canceled, decline or not
+
+    def test_an_open_card_payment_can_be_canceled_before_any_card_is_tried(self):
+        sid, order = self.started()
+        r = self.call("POST", f"{SESSIONS}/{sid}/cancel", {})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()["status"], r.json()["messages"]), ("canceled", []))
+        self.assertEqual(self.api.intents[order.payment_id]["status"], "CANCELLED")
+        self.assertEqual(self.merchant.orders[f"acp:{sid}"].status, "failed")
+        self.assertEqual(self.merchant.catalog[self.sku].stock, self.stock)
+
+    def test_a_cancel_that_finds_the_open_payment_paid_keeps_it_paid(self):
+        sid, order = self.started()  # paid in Drop-in, the webhook not here yet
+        self.pays_now(sid, order)
+        r = self.call("POST", f"{SESSIONS}/{sid}/cancel", {})
+        self.assertEqual((r.status_code, r.json()["status"]), (200, "completed"))
+        self.assertIsNotNone(r.json()["countersign"]["receipt"])
+        self.assertEqual(self.api.refunds, [])
+
+    # -- review fix 5: a refund found while canceling is said, never a clean cancel
+
+    def test_a_cancel_that_meets_a_refunded_payment_says_a_payment_was_refunded(self):
+        sid, order = self.declined()
+        self.app.state.acp.sessions[sid].receipt = {"stale": True}
+        self.pays_now(sid, order, extra=500)  # a card paid the wrong amount
+        r = self.call("POST", f"{SESSIONS}/{sid}/cancel", {})
+        self.assertEqual(r.status_code, 200, r.text)
+        view = r.json()
+        self.assertEqual((view["status"], self.codes(view)), ("canceled", ["payment_refunded"]))
+        self.assertIn("refunded in full", view["messages"][0]["content"])
+        self.assertNotIn("order", view)
+        self.assertIsNone(self.app.state.acp.sessions[sid].receipt)
+        self.assertEqual([x["payment_intent_id"] for x in self.api.refunds], [order.payment_id])
+
     def test_a_paid_session_still_cannot_be_canceled(self):
         sid, order = self.declined()
         decision, _ = self.merchant._decisions[f"acp:{sid}"]

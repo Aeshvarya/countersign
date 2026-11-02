@@ -52,7 +52,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .. import receipt as receipts
-from ..checkout import ReceiptStore, countersign
+from ..checkout import ReceiptStore, countersign, release
 from ..decide import Decision, Outcome
 from ..merchant import MerchantGateway
 from ..terms import Approval, Terms, minor_units, money, utc
@@ -585,19 +585,31 @@ class AcpApi:
     def cancel(self, session_id: str) -> tuple[int, dict[str, Any]]:
         s = self._session(session_id)
         with s.lock:
-            if self.payment_failure(s)[0] and hasattr(self.merchant, "cancel_payment"):
-                # After a declined card the payment is still open: close it at Airwallex first (A16).
-                order = self.merchant.cancel_payment(f"acp:{s.id}")
-                if order is not None and order.status == "paid":
-                    return 200, self.view(s)  # another card paid first: the order stands
-                if order is not None and order.status == "pending":
-                    raise AcpError(503, "service_unavailable",
-                                   "Airwallex could not cancel the payment yet. Nothing was charged; try again.")
-                s.status, s.order, s.messages = "canceled", None, []
-                return 200, self.view(s)
+            if self.open_payment(s) is not None and hasattr(self.merchant, "cancel_payment"):
+                return self._cancel_open_payment(s)
             self._open(s)
             s.status, s.messages = "canceled", []
             return 200, self.view(s)
+
+    def _cancel_open_payment(self, s: Session) -> tuple[int, dict[str, Any]]:
+        """Cancel a card order still open in Drop-in, declined or not (A16). Airwallex's record decides the answer."""
+        order = self.merchant.cancel_payment(f"acp:{s.id}")
+        if order is None or order.status == "pending":
+            raise AcpError(503, "service_unavailable",
+                           "Airwallex could not be reached to cancel the payment; nothing changed here. Try again.")
+        if order.status == "paid":
+            # A card paid before the cancel landed, so the order stands. Sign its held receipt the way the
+            # webhook and the shopper page do (checkout.release; safe to repeat), so this answer carries it.
+            s.order = order
+            if self.signer is not None and self.store is not None:
+                s.receipt = release(order, self.signer, self.store)
+            return 200, self.view(s)
+        s.status, s.order, s.receipt, s.messages = "canceled", None, None, []
+        if order.status == "refunded":  # a card paid an amount the countersign did not allow; it went back
+            s.messages = [{"type": "warning", "code": "payment_refunded", "content_type": "plain",
+                           "content": "A card payment for this checkout did not match the approved terms, so it "
+                                      "was refunded in full. The checkout is canceled."}]
+        return 200, self.view(s)
 
     # ---------------------------------------------------------------- U1, the shopper's passkey
 

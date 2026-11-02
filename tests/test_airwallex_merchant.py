@@ -192,6 +192,12 @@ class AirwallexMerchantTest(unittest.TestCase):
         self.assertIn("k1", self.shop.declines)
         self.assertIsNone(self.shop.declines["k1"])  # never a made-up code
 
+    def test_cancelling_an_open_payment_before_any_card_is_tried(self):
+        r = self.checkout()
+        self.assertEqual(self.shop.cancel_payment("k1").status, "failed")
+        self.assertEqual(self.api.intents[r.order.payment_id]["status"], "CANCELLED")
+        self.assertEqual(self.shop.catalog[self.sku].stock, self.stock)
+
     def test_a_new_attempt_clears_the_decline(self):
         r, _ = self.declined()
         self.api.intents[r.order.payment_id].update(
