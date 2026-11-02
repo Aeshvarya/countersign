@@ -1,9 +1,13 @@
-/* Countersign colour tokens (V8). Every page and every product image takes its colours from here.
+/* Countersign design tokens (V8). Every page and every product image takes its colours, type and spacing from here.
    Light is the default, dark follows the device, and data-theme="light" or "dark" on <html> forces either.
    One name per role, not per colour. Keep the two dark blocks equal (a test checks).
    After a change: python scripts/apply_tokens.py, then python scripts/contrast.py, then the tests.
    Palette from Varunika's marker drawing: cobalt wash and line, white paper; charged is its teal,
-   asked again its gold, refused its magenta. */
+   asked again its gold, refused its magenta.
+   Type, space, shape and motion live in the first block only: they are the same in both themes.
+   No web fonts (the pages allow inline styles only and an image cannot load a font), so each face
+   is a stack of fonts devices already have: a book serif for display, a humanist sans for reading
+   and controls, and a monospace only for machine strings (hashes, ids, keys). */
 :root {
   --bg: #f5f6fb;          /* page background */
   --panel: #ffffff;       /* cards, panels */
@@ -29,6 +33,40 @@
   --cat-4: #986c16;
   --cat-5: #7666c5;
   --cat-ink: #ffffff;     /* initials on a product image */
+
+  /* type: three stacks, unquoted so they also go into SVG attributes */
+  --font-display: Charter, Bitstream Charter, Sitka Text, Cambria, Iowan Old Style, Georgia, serif;
+  --font-sans: Avenir Next, Avenir, Seravek, Segoe UI, Ubuntu, Noto Sans, Helvetica Neue, sans-serif;
+  --font-mono: ui-monospace, SF Mono, Menlo, Cascadia Mono, Consolas, monospace;
+  /* a modular scale, ratio 1.2: each step is the one below times the ratio */
+  --ratio: 1.2;
+  --step--1: 0.833rem;    /* labels, captions, table heads */
+  --step-0: 1rem;         /* body */
+  --step-1: 1.2rem;
+  --step-2: 1.44rem;      /* prices, section heads */
+  --step-3: 1.728rem;
+  --step-4: 2.074rem;     /* page heads */
+  --step-5: 2.488rem;
+  --measure: 68ch;        /* longest line of running text */
+
+  /* space: one 4px unit; tight inside a group, wide between groups */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --container: 1040px;    /* widest a page gets; wider screens grow the margins */
+
+  /* shape: two radii, one per nesting level, and edges drawn with a line, never a shadow */
+  --radius-1: 8px;        /* controls, tags, inner pieces */
+  --radius-2: 14px;       /* panels */
+
+  /* motion: short and decelerating, transform and opacity only */
+  --dur: 180ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {

@@ -1,4 +1,4 @@
-"""V8: the colour tokens every page and product image takes its colours from.
+"""V8: the tokens every page and product image takes its colours, type and spacing from.
 
 One file, `static/tokens.css`, holds them: light by default, dark when the
 device prefers it, and `data-theme="light"` or `"dark"` on <html> forces either.
@@ -56,6 +56,19 @@ def themes() -> dict[str, dict[str, str]]:
     if set(out["light"]) != set(dark):
         raise ValueError("tokens.css: light and dark name different roles")
     return out
+
+
+_FONT = re.compile(r"--font-([a-z]+):\s*([^;]+);")
+
+
+@lru_cache(maxsize=1)
+def _fonts() -> dict[str, str]:
+    return dict(_FONT.findall(SOURCE.read_text()))
+
+
+def font(role: str) -> str:
+    """A font stack by role (display, sans, mono): for the images, which cannot read the CSS variables."""
+    return _fonts()[role].strip()
 
 
 def categories() -> list[str]:
