@@ -22,6 +22,13 @@ the approval is the exact terms this API last returned, hashed when they were
 returned. Completing means "these terms"; anything that has changed since is
 asked again, never charged.
 
+A currency we cannot price is an `invalid` message at `$.currency`. Airwallex
+failing to lock a rate (anything but a 400 or 422 that names a currency, or no
+usable answer at all) is a 503 `service_unavailable` / `rate_lock_unavailable`,
+never reported as the shopper's currency. The same failure inside complete is
+`payment_service_unavailable`, which never claims nothing was charged. A failed
+create, update or complete leaves the session as it was.
+
 With U1 on (COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE), the shopper signs those terms
 with a passkey on the approval page, which calls two routes outside the HMAC
 check, because the caller is the shopper's browser, not Airwallex:
@@ -37,13 +44,15 @@ correction never reaches the core.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import secrets
 import threading
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
@@ -52,6 +61,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .. import receipt as receipts
+from ..airwallex import AirwallexError
 from ..checkout import ReceiptStore, countersign
 from ..decide import Decision, Outcome
 from ..merchant import MerchantGateway
@@ -64,6 +74,7 @@ log = logging.getLogger("countersign.acp")
 API_VERSION = "2026-04-17"
 SUPPORTED_VERSIONS = (API_VERSION,)
 APPROVAL_TTL = timedelta(minutes=15)
+CURRENCY_REFUSED = (400, 422)  # Airwallex refusing the request; about the currency only if the error names one
 SESSION_TTL = timedelta(hours=1)
 PREFIX = "/acp/checkout_sessions"
 APPROVALS = "/acp/approvals"  # the shopper's approval page (U1); no HMAC
@@ -137,16 +148,65 @@ def from_minor(value: Any, currency: str) -> Decimal:
 
 
 class AcpError(Exception):
+    type = "invalid_request"
+    headers: Mapping[str, str] = MappingProxyType({})  # read only: shared by every instance
+
     def __init__(self, status: int, code: str, message: str, param: str | None = None, **extra: Any):
         super().__init__(message)
         self.status, self.code, self.message, self.param, self.extra = status, code, message, param, extra
 
     def body(self) -> dict[str, Any]:
-        out = {"type": "invalid_request", "code": self.code, "message": self.message}
+        out = {"type": self.type, "code": self.code, "message": self.message}
         if self.param:
             out["param"] = self.param
         out.update(self.extra)
         return out
+
+
+class RateLockUnavailable(AcpError):
+    """Airwallex failed, not the request: a 503 to retry. A 5xx is never stored, so the retry runs again."""
+
+    type = "service_unavailable"
+    headers = MappingProxyType({"Retry-After": "5"})
+
+    def __init__(self, detail: str):
+        super().__init__(503, "rate_lock_unavailable",
+                         f"No exchange rate could be locked right now ({detail}). Nothing was charged; "
+                         "retry with the same Idempotency-Key.")
+
+
+class PaymentServiceUnavailable(AcpError):
+    """Airwallex failed while complete was rebuilding the offer or paying.
+
+    Unlike a quote, we cannot know whether the payment started, so the message
+    never says nothing was charged. What holds either way: the merchant key is
+    acp:<session id>, so completing this session again never charges twice.
+    """
+
+    type = "service_unavailable"
+    headers = MappingProxyType({"Retry-After": "5"})
+
+    def __init__(self, detail: str):
+        super().__init__(503, "payment_service_unavailable",
+                         f"The payment service did not answer ({detail}). Completing this session again "
+                         "never charges twice.")
+
+
+# What the Airwallex client lets out when there is no usable answer: no connection,
+# a timeout, a cut-off body, a body that is not JSON. A ValueError in general is
+# not here: that would hide our own bugs as an outage.
+NO_ANSWER = (OSError, http.client.HTTPException, json.JSONDecodeError)
+
+
+def _currency_named(body: Any) -> str | None:
+    """The field or code in an Airwallex error body that names a currency, if any."""
+    if not isinstance(body, dict):
+        return None
+    for key in ("source", "field", "param", "code"):
+        value = body.get(key)
+        if isinstance(value, str) and "currency" in value.lower():
+            return value
+    return None
 
 
 @dataclass
@@ -168,6 +228,16 @@ class Session:
     order: Any = None
     receipt: dict[str, Any] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
+def _snapshot(s: Session) -> dict[str, Any]:
+    """Every field but the lock. Shallow is enough: requests replace values, never mutate them."""
+    return {f.name: getattr(s, f.name) for f in fields(Session) if f.name != "lock"}
+
+
+def _restore(s: Session, saved: dict[str, Any]) -> None:
+    for name, value in saved.items():
+        setattr(s, name, value)
 
 
 def _read_items(body: dict[str, Any]) -> dict[str, int] | None:
@@ -305,24 +375,17 @@ class AcpApi:
     # ---------------------------------------------------------------- the logic
 
     def _quote(self, s: Session, now: datetime) -> None:
-        """Price the cart now and record it as what the shopper is being shown."""
+        """Price the cart now and record it as what the shopper is being shown.
+
+        Priced before anything is cleared, so an outage (RateLockUnavailable)
+        leaves the session as it was and a retried complete still finds its terms.
+        """
+        terms, problem = self._price(s, now) if s.cart else (None, None)
         s.messages = []
         s.terms = s.approval = None
         s.shopper_signed = s.shopper_assertion = None  # a signature never carries over to new terms
-        if not s.cart:
-            s.status = "not_ready_for_payment"
-            return
-        try:
-            terms = self.merchant.offer(s.cart, s.currency, now)
-        except KeyError as err:
-            s.status = "not_ready_for_payment"
-            s.messages = [{"type": "error", "code": "invalid", "param": "$.items",
-                           "content_type": "plain", "content": f"no product with id {err.args[0]}"}]
-            return
-        except LookupError as err:
-            s.status = "not_ready_for_payment"
-            s.messages = [{"type": "error", "code": "out_of_stock", "param": "$.items",
-                           "content_type": "plain", "content": str(err)}]
+        if terms is None:
+            s.status, s.messages = "not_ready_for_payment", [problem] if problem else []
             return
         ceiling = terms.shopper_total
         named = self._ceiling(s)
@@ -339,6 +402,60 @@ class AcpApi:
             s.messages = [self._over_ceiling_message(s)]
         else:
             s.status = "ready_for_payment"
+
+    def _price(self, s: Session, now: datetime) -> tuple[Terms | None, dict[str, Any] | None]:
+        """Live terms for the cart, or the message that says why there are none.
+
+        Anything that is Airwallex not answering usably raises RateLockUnavailable,
+        so an outage is never reported as the shopper's cart or currency.
+        """
+        try:
+            return self.merchant.offer(s.cart, s.currency, now), None
+        except KeyError as err:
+            missing = err.args[0] if err.args else None
+            if missing not in s.cart:  # a field absent from Airwallex's answer, not a product
+                raise self._no_rate_lock(s, "Airwallex's answer was missing a field", f"KeyError {missing!r}") from None
+            return None, {"type": "error", "code": "invalid", "param": "$.items",
+                          "content_type": "plain", "content": f"no product with id {missing}"}
+        except LookupError as err:
+            # Out of stock and "no rate for this currency" are both LookupErrors.
+            # In the merchant's own currency no rate lock is needed, so if the cart
+            # prices there, the stock is fine and the currency is what failed.
+            if s.currency != self.merchant.currency and self._prices_without_fx(s, now):
+                return None, self._unpriceable(s.currency, "this merchant has no rate for it")
+            return None, {"type": "error", "code": "out_of_stock", "param": "$.items",
+                          "content_type": "plain", "content": str(err)}
+        except AirwallexError as err:
+            # A 400 or 422 is Airwallex saying no to the request, but this path also
+            # carries the login and our own fields (validity_period, request_id).
+            # Only an error that names a currency is about the shopper's currency;
+            # our key, our fields, their limits or their servers never are.
+            named = _currency_named(err.body)
+            code = err.body.get("code") if isinstance(err.body, dict) else None
+            if err.status in CURRENCY_REFUSED and named is not None:
+                why = f"{code} at {named}" if code and code != named else named
+                return None, self._unpriceable(s.currency, f"Airwallex would not lock a rate ({why})")
+            raise self._no_rate_lock(s, f"Airwallex answered HTTP {err.status}",
+                                     f"Airwallex HTTP {err.status} {code or ''}") from None
+        except NO_ANSWER as err:
+            raise self._no_rate_lock(s, f"Airwallex could not be reached: {type(err).__name__}",
+                                     type(err).__name__) from None
+
+    def _no_rate_lock(self, s: Session, detail: str, logged: str) -> RateLockUnavailable:
+        log.warning("acp quote %s: no rate lock, %s", s.id, logged)
+        return RateLockUnavailable(detail)
+
+    def _prices_without_fx(self, s: Session, now: datetime) -> bool:
+        try:
+            self.merchant.offer(s.cart, self.merchant.currency, now)
+        except LookupError:
+            return False
+        return True
+
+    def _unpriceable(self, currency: str, why: str) -> dict[str, Any]:
+        return {"type": "error", "code": "invalid", "param": "$.currency", "content_type": "plain",
+                "content": f"This merchant cannot price {currency} from {self.merchant.currency}: {why}. "
+                           "Choose another currency. Nothing was charged."}
 
     def _ceiling(self, s: Session) -> tuple[Decimal, str] | None:
         """The shopper's ceiling and the currency they named it in, or None if they named none."""
@@ -469,14 +586,21 @@ class AcpApi:
         s = self._session(session_id)
         with s.lock:
             self._open(s)
-            cart = _read_items(body)
-            if cart is not None:
-                s.cart = cart
-            currency = _read_currency(body)
-            if currency is not None:
-                s.currency = currency
-            self._apply_extras(s, body)
-            self._quote(s, self.clock())
+            # A refused or failed update changes nothing: otherwise the cart from a
+            # 400 is what the next quote prices, and the shopper never asked for it.
+            saved = _snapshot(s)
+            try:
+                cart = _read_items(body)
+                if cart is not None:
+                    s.cart = cart
+                currency = _read_currency(body)
+                if currency is not None:
+                    s.currency = currency
+                self._apply_extras(s, body)
+                self._quote(s, self.clock())
+            except Exception:
+                _restore(s, saved)
+                raise
             return 200, self.view(s)
 
     def _open(self, s: Session) -> None:
@@ -489,45 +613,63 @@ class AcpApi:
             if s.status == "completed":
                 return 200, self.view(s)  # completing twice never charges twice
             self._open(s)
-            if isinstance(body.get("buyer"), dict):
-                s.buyer = body["buyer"]
-            payment = body.get("payment_data")
-            if isinstance(payment, dict):
-                s.payment_data = without_card_data(payment)
-            # WARNING so it shows under the host's default log level; presence and key names only.
-            log.warning("acp complete %s: payment_data %s", s.id,
-                        f"present, keys {sorted(map(str, payment))}" if isinstance(payment, dict)
-                        else "absent" if payment is None else f"present but a {type(payment).__name__}")
-            if s.approval is None or s.terms is None:
-                raise AcpError(400, "invalid_state", "the session has nothing ready to pay for")
-            if self.awaiting_shopper(s):
-                s.status = "not_ready_for_payment"
-                s.messages = [{"type": "error", "code": "approval_required", "content_type": "plain",
-                               "content": "The shopper has not approved these exact terms. Nothing was charged."}]
-                return 200, self.view(s)
-            if self.over_ceiling(s) and not self.config.require_shopper_signature:
-                s.status, s.messages = "not_ready_for_payment", [self._over_ceiling_message(s)]
-                return 200, self.view(s)
+            saved = _snapshot(s)
+            try:
+                return self._complete(s, body)
+            except Exception:
+                _restore(s, saved)  # a failed complete leaves the session as it was
+                raise
 
-            now = self.clock()
-            before = s.terms
-            approval = s.approval
-            if s.shopper_assertion is not None and s.shopper_signed == self.challenge(s):
-                approval = replace(approval, shopper_assertion=s.shopper_assertion)  # C13: into the receipt
+    def _complete(self, s: Session, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """complete() under the session lock; anything it raises is undone by the caller."""
+        if isinstance(body.get("buyer"), dict):
+            s.buyer = body["buyer"]
+        payment = body.get("payment_data")
+        if isinstance(payment, dict):
+            s.payment_data = without_card_data(payment)
+        # WARNING so it shows under the host's default log level; presence and key names only.
+        log.warning("acp complete %s: payment_data %s", s.id,
+                    f"present, keys {sorted(map(str, payment))}" if isinstance(payment, dict)
+                    else "absent" if payment is None else f"present but a {type(payment).__name__}")
+        if s.approval is None or s.terms is None:
+            raise AcpError(400, "invalid_state", "the session has nothing ready to pay for")
+        if self.awaiting_shopper(s):
+            s.status = "not_ready_for_payment"
+            s.messages = [{"type": "error", "code": "approval_required", "content_type": "plain",
+                           "content": "The shopper has not approved these exact terms. Nothing was charged."}]
+            return 200, self.view(s)
+        if self.over_ceiling(s) and not self.config.require_shopper_signature:
+            s.status, s.messages = "not_ready_for_payment", [self._over_ceiling_message(s)]
+            return 200, self.view(s)
+
+        now = self.clock()
+        before = s.terms
+        approval = s.approval
+        if s.shopper_assertion is not None and s.shopper_signed == self.challenge(s):
+            approval = replace(approval, shopper_assertion=s.shopper_assertion)  # C13: into the receipt
+        try:
             result = countersign(self.merchant, approval, f"acp:{s.id}", now,
                                  agent=None, signer=self.signer, store=self.store)
-            d = result.decision
-            if d.outcome is Outcome.PROCEED and result.order is not None:
-                s.status, s.order, s.receipt, s.messages = "completed", result.order, result.receipt, []
-            elif d.outcome is Outcome.REASK:
-                self._quote(s, now)  # the new terms the shopper must look at again
-                if s.terms is not None:  # requoted; not a cart that can no longer be priced
-                    s.messages = self._reask_messages(s, d, before) + s.messages
-            else:
-                s.status = "not_ready_for_payment"
-                s.messages = [{"type": "error", "code": "invalid", "content_type": "plain",
-                               "content": f"Refused: {d.reason}. Nothing was charged."}]
-            return 200, self.view(s)
+        except (AirwallexError, *NO_ANSWER) as err:
+            # countersign() rebuilt the offer and may have started the payment: we
+            # cannot say nothing was charged, only that a retry never charges twice.
+            status = f"HTTP {err.status}" if isinstance(err, AirwallexError) else type(err).__name__
+            log.warning("acp complete %s: no answer from the payment service, %s", s.id, status)
+            detail = (f"Airwallex answered {status}" if isinstance(err, AirwallexError)
+                      else f"Airwallex could not be reached: {status}")
+            raise PaymentServiceUnavailable(detail) from None
+        d = result.decision
+        if d.outcome is Outcome.PROCEED and result.order is not None:
+            s.status, s.order, s.receipt, s.messages = "completed", result.order, result.receipt, []
+        elif d.outcome is Outcome.REASK:
+            self._quote(s, now)  # the new terms the shopper must look at again
+            if s.terms is not None:  # requoted; not a cart that can no longer be priced
+                s.messages = self._reask_messages(s, d, before) + s.messages
+        else:
+            s.status = "not_ready_for_payment"
+            s.messages = [{"type": "error", "code": "invalid", "content_type": "plain",
+                           "content": f"Refused: {d.reason}. Nothing was charged."}]
+        return 200, self.view(s)
 
     def cancel(self, session_id: str) -> tuple[int, dict[str, Any]]:
         s = self._session(session_id)
@@ -664,7 +806,7 @@ def router(api: AcpApi) -> APIRouter:
         try:
             status, payload = await run_in_threadpool(action, body)
         except AcpError as err:
-            return JSONResponse(err.body(), status_code=err.status, headers=echo)
+            return JSONResponse(err.body(), status_code=err.status, headers={**echo, **err.headers})
         return JSONResponse(payload, status_code=status, headers=echo)
 
     @r.post(PREFIX)
