@@ -190,6 +190,22 @@ class AirwallexMerchantTest(unittest.TestCase):
         self.assertEqual(self.shop.confirm(r.order.payment_id).status, "pending")
         self.assertNotIn("k1", self.shop.declines)
 
+    def test_cancelling_after_a_decline_closes_the_intent_and_gives_the_stock_back(self):
+        r, _ = self.declined()
+        order = self.shop.cancel_payment("k1")
+        self.assertEqual(order.status, "failed")
+        self.assertEqual(self.api.intents[r.order.payment_id]["status"], "CANCELLED")  # no later card can pay it
+        self.assertEqual(self.api.posts, ["/pa/payment_intents/create", f"/pa/payment_intents/{r.order.payment_id}/cancel"])
+        self.assertEqual(self.shop.catalog[self.sku].stock, self.stock)
+        self.assertIsNone(self.shop.handoff("k1"))
+        self.assertNotIn("k1", self.shop.declines)
+
+    def test_a_cancel_that_loses_the_race_to_another_card_keeps_the_payment(self):
+        r, _ = self.declined()
+        self.api.shopper_pays(r.order.payment_id, r.decision.charge, quote=r.decision.fx_quote_id)
+        self.assertEqual(self.shop.cancel_payment("k1").status, "paid")  # Airwallex refused the cancel
+        self.assertEqual((self.api.refunds, self.shop.catalog[self.sku].stock), ([], self.stock - 1))
+
     def test_payment_attempt_events_name_their_intent(self):
         for name in ("payment_attempt.authorization_failed", "payment_attempt.authentication_failed"):
             event = {"name": name, "data": {"object": {"id": "att_1", "payment_intent_id": "int_9"}}}

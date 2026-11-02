@@ -7,11 +7,11 @@ the shopper pay the same order with another card.
 """
 
 import unittest
-from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from countersign import receipt, tap
+from countersign.airwallex import AirwallexError
 from countersign.airwallex_merchant import AirwallexMerchant
 from countersign.checkout import release
 from countersign.fx import FakeFx
@@ -123,6 +123,35 @@ class DeclinedCardTest(unittest.TestCase):
         self.assertEqual((view["status"], self.codes(view)), ("not_ready_for_payment", ["payment_unavailable"]))
         self.assertNotIn("declined", view["messages"][0]["content"].lower().replace("not a declined card", ""))
         self.assertIn("Nothing was charged", view["messages"][0]["content"])
+
+    def test_the_shopper_can_cancel_after_a_decline(self):
+        sid, order = self.declined()
+        r = self.call("POST", f"{SESSIONS}/{sid}/cancel", {})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()["status"], r.json()["messages"]), ("canceled", []))
+        self.assertNotIn("order", r.json())
+        self.assertEqual(self.merchant.orders[f"acp:{sid}"].status, "failed")
+        self.assertEqual(self.api.intents[order.payment_id]["status"], "CANCELLED")
+        self.assertEqual(self.merchant.catalog[self.sku].stock, self.stock)
+
+    def test_a_cancel_airwallex_cannot_answer_changes_nothing(self):
+        sid, order = self.declined()
+
+        def down(*args, **kwargs):
+            raise AirwallexError(503, "unavailable")
+
+        self.api.post = self.api.get = down
+        r = self.call("POST", f"{SESSIONS}/{sid}/cancel", {})
+        self.assertEqual((r.status_code, r.json()["code"]), (503, "service_unavailable"))
+        self.assertEqual(self.merchant.orders[f"acp:{sid}"].status, "pending")
+        self.assertEqual(self.codes(self.app.state.acp.view(self.app.state.acp.sessions[sid])), ["payment_declined"])
+
+    def test_a_paid_session_still_cannot_be_canceled(self):
+        sid, order = self.declined()
+        decision, _ = self.merchant._decisions[f"acp:{sid}"]
+        self.api.shopper_pays(order.payment_id, decision.charge, quote=decision.fx_quote_id)
+        self.merchant.confirm(order.payment_id)
+        self.assertEqual(self.call("POST", f"{SESSIONS}/{sid}/cancel", {}).status_code, 405)
 
     def test_a_payment_still_open_without_a_decline_is_unchanged(self):
         sid, _ = self.started()

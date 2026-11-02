@@ -565,6 +565,16 @@ class AcpApi:
     def cancel(self, session_id: str) -> tuple[int, dict[str, Any]]:
         s = self._session(session_id)
         with s.lock:
+            if self.payment_failure(s) is not None and hasattr(self.merchant, "cancel_payment"):
+                # After a declined card the payment is still open: close it at Airwallex first (A16).
+                order = self.merchant.cancel_payment(f"acp:{s.id}")
+                if order is not None and order.status == "paid":
+                    return 200, self.view(s)  # another card paid first: the order stands
+                if order is not None and order.status == "pending":
+                    raise AcpError(503, "service_unavailable",
+                                   "Airwallex could not cancel the payment yet. Nothing was charged; try again.")
+                s.status, s.order, s.messages = "canceled", None, []
+                return 200, self.view(s)
             self._open(s)
             s.status, s.messages = "canceled", []
             return 200, self.view(s)

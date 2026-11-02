@@ -30,7 +30,7 @@ import threading
 from dataclasses import replace
 from typing import Any
 
-from .airwallex import Airwallex
+from .airwallex import Airwallex, AirwallexError
 from .decide import Decision, Outcome
 from .fx import AirwallexFx, FxGateway
 from .merchant import FakeMerchant, Order
@@ -154,6 +154,30 @@ class AirwallexMerchant(FakeMerchant):
             })
             log.warning("refunded %s for order %s: %s", intent_id, order.order_number, "; ".join(check.reasons))
             return self._close(key, "refunded", check.reasons)
+
+    def cancel_payment(self, idempotency_key: str) -> Order | None:
+        """Close a pending payment the shopper gave up on, so no later card can pay it.
+
+        Airwallex cancels the intent, then confirm() settles the order from its
+        record: failed, with the stock back. If another card paid first, Airwallex
+        refuses the cancel and the order is paid as usual. If Airwallex cannot be
+        reached, the order stays pending and the caller can try again.
+        """
+        with self._lock:
+            order = self.orders.get(idempotency_key)
+            if order is None or order.status != "pending":
+                return order
+        try:
+            self.client.post(f"/pa/payment_intents/{order.payment_id}/cancel", {
+                "request_id": f"cancel-{idempotency_key}",  # a retried cancel is the same cancel
+                "cancellation_reason": "the shopper cancelled the checkout",
+            })
+        except AirwallexError as err:
+            log.warning("cancel of %s refused: %s", order.payment_id, err)
+        try:
+            return self.confirm(order.payment_id)
+        except AirwallexError:
+            return self.orders.get(idempotency_key)
 
     def _close(self, key: str, status: str, reasons: tuple[str, ...]) -> Order:
         _, terms = self._decisions[key]
