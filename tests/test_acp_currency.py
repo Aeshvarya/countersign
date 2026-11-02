@@ -1,5 +1,6 @@
 """C10: a currency is one we can price, and an Airwallex outage is never a currency problem."""
 
+import http.client
 import json
 import unittest
 import urllib.error
@@ -49,10 +50,11 @@ class AirwallexLikeFx:
         return self.ok.lock(merchant_currency, shopper_currency, now)
 
 
+
 @unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
 class CurrencyTest(unittest.TestCase):
-    def build(self, fx):
-        self.merchant = FakeMerchant(fx)
+    def build(self, fx=None, merchant=None):
+        self.merchant = merchant if merchant is not None else FakeMerchant(fx)
         app = create_app(self.merchant, tap.StaticDirectory({}), authority="testserver", clock=Clock(),
                          signer=receipt.MerchantSigner(Ed25519PrivateKey.generate(), "m-1"),
                          acp=AcpConfig(secret=SECRET))
@@ -74,8 +76,9 @@ class CurrencyTest(unittest.TestCase):
             h["Idempotency-Key"] = key
         return self.client.request(method, path, content=raw if method == "POST" else None, headers=h)
 
-    def create(self, currency="INR", **kw):
-        return self.call("POST", SESSIONS, {"items": [{"id": self.sku, "quantity": 1}], "currency": currency}, **kw)
+    def create(self, currency="INR", key=None, **extra):
+        body = {"items": [{"id": self.sku, "quantity": 1}], "currency": currency, **extra}
+        return self.call("POST", SESSIONS, body, key=key)
 
     def view(self, sid):
         return self.call("GET", f"{SESSIONS}/{sid}").json()
@@ -127,12 +130,35 @@ class CurrencyTest(unittest.TestCase):
         self.assertEqual(self.create("USD").json()["status"], "ready_for_payment")
 
     def test_airwallex_refusing_the_currency_is_a_currency_message(self):
-        fx = AirwallexLikeFx()
-        fx.refuse["XYZ"] = AirwallexError(400, {"code": "validation_error", "message": "shopper_currency"})
-        self.build(fx)
-        r = self.create("XYZ")
+        for status, body in [(400, {"code": "validation_error", "source": "sell_currency"}),
+                             (400, {"code": "validation_error", "source": "buy_currency"}),
+                             (422, {"code": "validation_error", "source": "shopper_currency"}),
+                             (400, {"code": "unsupported_currency", "message": "not offered"})]:
+            with self.subTest(body=body):
+                fx = AirwallexLikeFx()
+                fx.refuse["XYZ"] = AirwallexError(status, body)
+                self.build(fx)
+                r = self.create("XYZ")
+                self.assertEqual(r.status_code, 201, r.text)
+                self.assertIn(body["code"], self.currency_message(r.json()))
+
+    def test_a_400_that_does_not_name_a_currency_is_an_outage(self):
+        # Our own fields, or the login before the call: not the shopper's currency.
+        for status, body in [(400, {"code": "validation_error", "source": "validity_period"}),
+                             (400, {"code": "validation_error", "source": "request_id"}),
+                             (400, {"code": "credentials_invalid", "message": "check x-api-key"}),
+                             (422, {"code": "validation_error", "message": "shopper_currency is fine"}),
+                             (400, "<html>bad request</html>")]:
+            with self.subTest(body=body):
+                fx = AirwallexLikeFx()
+                fx.refuse["INR"] = AirwallexError(status, body)
+                self.build(fx)
+                self.assert_unavailable(self.create("INR"))
+
+    def test_an_unknown_product_is_still_no_product(self):
+        r = self.call("POST", SESSIONS, {"items": [{"id": "NOPE-1", "quantity": 1}], "currency": "INR"})
         self.assertEqual(r.status_code, 201, r.text)
-        self.assertIn("validation_error", self.currency_message(r.json()))
+        self.assertEqual([(m["code"], m["param"]) for m in r.json()["messages"]], [("invalid", "$.items")])
 
     def test_a_shopper_can_move_to_a_currency_we_price(self):
         self.build(TableFx())
@@ -146,7 +172,9 @@ class CurrencyTest(unittest.TestCase):
                AirwallexError(404, "not found"), AirwallexError(429, {"code": "too_many_requests"}),
                AirwallexError(500, "oops"), AirwallexError(503, {"code": "service_unavailable"}),
                urllib.error.URLError("connection refused"), TimeoutError("timed out"),
-               ConnectionResetError("reset")]
+               ConnectionResetError("reset"), http.client.IncompleteRead(b"{\"id\""),
+               json.JSONDecodeError("Expecting value", "<html>", 0),
+               KeyError("id")]  # an answer without the field we read, not a missing product
 
     def assert_unavailable(self, r):
         self.assertEqual(r.status_code, 503, r.text)

@@ -23,9 +23,9 @@ returned. Completing means "these terms"; anything that has changed since is
 asked again, never charged.
 
 A currency we cannot price is an `invalid` message at `$.currency`. Airwallex
-failing to lock a rate (any status but 400 or 422, or no answer at all) is a 503
-`service_unavailable` / `rate_lock_unavailable`, never reported as the
-shopper's currency, and the session stays as it was.
+failing to lock a rate (anything but a 400 or 422 that names a currency, or no
+usable answer at all) is a 503 `service_unavailable` / `rate_lock_unavailable`,
+never reported as the shopper's currency, and the session stays as it was.
 
 With U1 on (COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE), the shopper signs those terms
 with a passkey on the approval page, which calls two routes outside the HMAC
@@ -42,6 +42,7 @@ correction never reaches the core.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import secrets
@@ -70,7 +71,7 @@ log = logging.getLogger("countersign.acp")
 API_VERSION = "2026-04-17"
 SUPPORTED_VERSIONS = (API_VERSION,)
 APPROVAL_TTL = timedelta(minutes=15)
-CURRENCY_REFUSED = (400, 422)  # Airwallex statuses that mean "not this currency"; anything else is an outage
+CURRENCY_REFUSED = (400, 422)  # Airwallex refusing the request; about the currency only if the error names one
 SESSION_TTL = timedelta(hours=1)
 PREFIX = "/acp/checkout_sessions"
 APPROVALS = "/acp/approvals"  # the shopper's approval page (U1); no HMAC
@@ -169,6 +170,24 @@ class RateLockUnavailable(AcpError):
         super().__init__(503, "rate_lock_unavailable",
                          f"No exchange rate could be locked right now ({detail}). Nothing was charged; "
                          "retry with the same Idempotency-Key.")
+
+
+
+# What the Airwallex client lets out when there is no usable answer: no connection,
+# a timeout, a cut-off body, a body that is not JSON. A ValueError in general is
+# not here: that would hide our own bugs as an outage.
+NO_ANSWER = (OSError, http.client.HTTPException, json.JSONDecodeError)
+
+
+def _currency_named(body: Any) -> str | None:
+    """The field or code in an Airwallex error body that names a currency, if any."""
+    if not isinstance(body, dict):
+        return None
+    for key in ("source", "field", "param", "code"):
+        value = body.get(key)
+        if isinstance(value, str) and "currency" in value.lower():
+            return value
+    return None
 
 
 @dataclass
@@ -356,12 +375,19 @@ class AcpApi:
             s.status = "ready_for_payment"
 
     def _price(self, s: Session, now: datetime) -> tuple[Terms | None, dict[str, Any] | None]:
-        """Live terms for the cart, or the message that says why there are none."""
+        """Live terms for the cart, or the message that says why there are none.
+
+        Anything that is Airwallex not answering usably raises RateLockUnavailable,
+        so an outage is never reported as the shopper's cart or currency.
+        """
         try:
             return self.merchant.offer(s.cart, s.currency, now), None
         except KeyError as err:
+            missing = err.args[0] if err.args else None
+            if missing not in s.cart:  # a field absent from Airwallex's answer, not a product
+                raise self._no_rate_lock(s, "Airwallex's answer was missing a field", f"KeyError {missing!r}") from None
             return None, {"type": "error", "code": "invalid", "param": "$.items",
-                          "content_type": "plain", "content": f"no product with id {err.args[0]}"}
+                          "content_type": "plain", "content": f"no product with id {missing}"}
         except LookupError as err:
             # Out of stock and "no rate for this currency" are both LookupErrors.
             # In the merchant's own currency no rate lock is needed, so if the cart
@@ -371,17 +397,24 @@ class AcpApi:
             return None, {"type": "error", "code": "out_of_stock", "param": "$.items",
                           "content_type": "plain", "content": str(err)}
         except AirwallexError as err:
-            # Only a 400 or 422 is Airwallex saying no to the request itself, and a
-            # rate lock request carries nothing from the shopper but the currency.
+            # A 400 or 422 is Airwallex saying no to the request, but this path also
+            # carries the login and our own fields (validity_period, request_id).
+            # Only an error that names a currency is about the shopper's currency;
+            # our key, our fields, their limits or their servers never are.
+            named = _currency_named(err.body)
             code = err.body.get("code") if isinstance(err.body, dict) else None
-            if err.status not in CURRENCY_REFUSED:
-                # Our key, our scope, their limits or their servers: never the shopper's currency.
-                log.warning("acp quote %s: no rate lock, Airwallex HTTP %s %s", s.id, err.status, code or "")
-                raise RateLockUnavailable(f"Airwallex answered HTTP {err.status}") from None
-            return None, self._unpriceable(s.currency, f"Airwallex would not lock a rate ({code or err.status})")
-        except OSError as err:  # no connection, a timeout, a dropped connection
-            log.warning("acp quote %s: no rate lock, %s", s.id, type(err).__name__)
-            raise RateLockUnavailable(f"Airwallex could not be reached: {type(err).__name__}") from None
+            if err.status in CURRENCY_REFUSED and named is not None:
+                why = f"{code} at {named}" if code and code != named else named
+                return None, self._unpriceable(s.currency, f"Airwallex would not lock a rate ({why})")
+            raise self._no_rate_lock(s, f"Airwallex answered HTTP {err.status}",
+                                     f"Airwallex HTTP {err.status} {code or ''}") from None
+        except NO_ANSWER as err:
+            raise self._no_rate_lock(s, f"Airwallex could not be reached: {type(err).__name__}",
+                                     type(err).__name__) from None
+
+    def _no_rate_lock(self, s: Session, detail: str, logged: str) -> RateLockUnavailable:
+        log.warning("acp quote %s: no rate lock, %s", s.id, logged)
+        return RateLockUnavailable(detail)
 
     def _prices_without_fx(self, s: Session, now: datetime) -> bool:
         try:
