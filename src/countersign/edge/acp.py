@@ -41,7 +41,7 @@ import json
 import logging
 import secrets
 import threading
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Mapping
@@ -469,14 +469,22 @@ class AcpApi:
         s = self._session(session_id)
         with s.lock:
             self._open(s)
-            cart = _read_items(body)
-            if cart is not None:
-                s.cart = cart
-            currency = _read_currency(body)
-            if currency is not None:
-                s.currency = currency
-            self._apply_extras(s, body)
-            self._quote(s, self.clock())
+            # A refused update changes nothing: otherwise the cart from a 400 is
+            # what the next quote prices, and the shopper never asked for it.
+            saved = {f.name: getattr(s, f.name) for f in fields(Session) if f.name != "lock"}
+            try:
+                cart = _read_items(body)
+                if cart is not None:
+                    s.cart = cart
+                currency = _read_currency(body)
+                if currency is not None:
+                    s.currency = currency
+                self._apply_extras(s, body)
+                self._quote(s, self.clock())
+            except AcpError:
+                for name, value in saved.items():
+                    setattr(s, name, value)
+                raise
             return 200, self.view(s)
 
     def _open(self, s: Session) -> None:
