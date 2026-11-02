@@ -72,6 +72,39 @@ class TokensFileTest(unittest.TestCase):
         self.assertRegex(tokens.block(), tokens.MARKED)
 
 
+class TypeAndSpaceTokensTest(unittest.TestCase):
+    def test_the_token_file_names_the_type_space_shape_and_motion_scale(self):
+        css = tokens.css()
+        for name in ("--font-display", "--font-sans", "--font-mono", "--step--1", "--step-0", "--step-1",
+                     "--step-2", "--step-3", "--step-4", "--space-1", "--space-8", "--radius-1", "--radius-2",
+                     "--container", "--measure", "--dur", "--ease"):
+            self.assertRegex(css, rf"{name}:\s*[^;]+;", name)
+        self.assertRegex(css, r"--step-0:\s*1rem;")  # body text is 16px or more
+
+    def test_the_type_scale_keeps_its_stated_ratio(self):
+        css = tokens.css()
+        ratio = float(re.search(r"--ratio:\s*([0-9.]+);", css).group(1))
+        steps = {int(n): float(v) for n, v in re.findall(r"--step-(-?\d+):\s*([0-9.]+)rem;", css)}
+        for n, size in steps.items():
+            self.assertAlmostEqual(size, ratio ** n, places=2, msg=f"--step-{n}")
+
+    def test_two_radii_and_a_short_ease_out(self):
+        css = tokens.css()
+        radii = re.findall(r"--radius-\d+:\s*(\d+)px;", css)
+        self.assertEqual(len(radii), 2)
+        self.assertTrue(all(int(r) <= 16 for r in radii), radii)
+        self.assertLess(int(re.search(r"--dur:\s*(\d+)ms;", css).group(1)), 300)
+
+    def test_font_reads_each_stack_from_the_file(self):
+        self.assertTrue(tokens.font("display").endswith("serif"))
+        self.assertTrue(tokens.font("sans").endswith("sans-serif"))
+        self.assertTrue(tokens.font("mono").endswith("monospace"))
+        for role in ("display", "sans", "mono"):
+            self.assertNotIn('"', tokens.font(role))  # the stacks also go into SVG attributes
+        for generic in ("Inter", "Roboto", "Arial"):
+            self.assertNotIn(generic, tokens.font("sans").split(", ")[:3])
+
+
 class CataloguePagesTest(unittest.TestCase):
     def setUp(self):
         self.product = synthetic_catalog()[0]
