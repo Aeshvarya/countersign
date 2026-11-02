@@ -235,6 +235,9 @@ class Session:
     ceiling_minor: int | None = None  # shopper's ceiling, if they set one above the quoted total
     ceiling_currency: str | None = None  # the currency they named it in; minor units mean nothing without it
     buyer: dict[str, Any] | None = None
+    # Where the goods go, ACP's fields only. Stored and returned, never logged; not in the terms hash
+    # (binding it is option (b) in PROGRESS Open questions, a C1 change for both builders).
+    fulfillment_address: dict[str, str] | None = None
     payment_data: dict[str, Any] | None = None  # as sent on complete, card fields removed; never echoed or logged
     status: str = "not_ready_for_payment"  # ACP's enum only, plus "expired" internally
     terms: Terms | None = None
@@ -255,6 +258,28 @@ def _snapshot(s: Session) -> dict[str, Any]:
 def _restore(s: Session, saved: dict[str, Any]) -> None:
     for name, value in saved.items():
         setattr(s, name, value)
+
+
+ADDRESS_FIELDS = ("name", "line_one", "line_two", "city", "state", "country", "postal_code")  # ACP's Address
+MAX_ADDRESS_FIELD = 256
+
+
+def _read_address(value: Any) -> dict[str, str] | None:
+    """ACP's address fields as sent, or None to clear it. Errors name the field, never echo the value."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise AcpError(400, "invalid", "fulfillment_address must be an object", "$.fulfillment_address")
+    out = {}
+    for name in ADDRESS_FIELDS:
+        part = value.get(name)
+        if part is None:
+            continue
+        if not isinstance(part, str) or len(part) > MAX_ADDRESS_FIELD:
+            raise AcpError(400, "invalid", f"fulfillment_address.{name} must be text of at most "
+                                           f"{MAX_ADDRESS_FIELD} characters", f"$.fulfillment_address.{name}")
+        out[name] = part
+    return out or None
 
 
 def _read_items(body: dict[str, Any]) -> dict[str, int] | None:
@@ -352,6 +377,8 @@ class AcpApi:
             out["links"].append({"type": "approval", "url": self.approval_link(s)})
         if s.buyer:
             out["buyer"] = s.buyer
+        if s.fulfillment_address:
+            out["fulfillment_address"] = dict(s.fulfillment_address)
         t = s.terms
         if t is not None:
             rate = t.fx.rate if t.fx else Decimal(1)
@@ -622,6 +649,8 @@ class AcpApi:
     def _apply_extras(self, s: Session, body: dict[str, Any]) -> None:
         if isinstance(body.get("buyer"), dict):
             s.buyer = body["buyer"]
+        if "fulfillment_address" in body:
+            s.fulfillment_address = _read_address(body["fulfillment_address"])
         ceiling = body.get("ceiling")  # ours, not ACP: the shopper's "up to" in minor units
         if ceiling is not None:
             try:
