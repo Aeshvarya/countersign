@@ -65,10 +65,14 @@ class FakeAirwallex:
                                                                "status": "CAPTURE_REQUESTED"})
 
     def card_declined(self, intent_id, code="authorization_failed"):
-        """A card refused in Drop-in: the attempt FAILED and the intent waits for another payment method."""
-        self.intents[intent_id].update(status="REQUIRES_PAYMENT_METHOD", latest_payment_attempt={
-            "id": "att_1", "payment_intent_id": intent_id, "status": "FAILED", "failure_code": code,
-            "failure_details": {"code": code, "message": "Do not honor"}})
+        """A card refused in Drop-in: the attempt FAILED and the intent waits for another payment method.
+
+        code=None is an attempt that FAILED with no failure code at all.
+        """
+        attempt = {"id": "att_1", "payment_intent_id": intent_id, "status": "FAILED"}
+        if code is not None:
+            attempt.update(failure_code=code, failure_details={"code": code, "message": "Do not honor"})
+        self.intents[intent_id].update(status="REQUIRES_PAYMENT_METHOD", latest_payment_attempt=attempt)
 
 
 class AirwallexMerchantTest(unittest.TestCase):
@@ -182,6 +186,11 @@ class AirwallexMerchantTest(unittest.TestCase):
         signed = release(order, self.signer, self.store)
         self.assertTrue(receipts.verify(signed, self.key.public_key(), self.approval).ok)
         self.assertEqual((len(self.shop.orders), self.api.creates, self.api.refunds), (1, 1, []))
+
+    def test_a_failed_attempt_with_no_code_is_kept_as_failed_with_no_reason(self):
+        self.declined(code=None)
+        self.assertIn("k1", self.shop.declines)
+        self.assertIsNone(self.shop.declines["k1"])  # never a made-up code
 
     def test_a_new_attempt_clears_the_decline(self):
         r, _ = self.declined()

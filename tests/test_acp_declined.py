@@ -48,7 +48,8 @@ class DeclinedCardTest(unittest.TestCase):
         self.clock = acp_tests.Clock()
         self.api = FakeAirwallex()
         self.merchant = AirwallexMerchant(self.api, FakeFx("84.10"))
-        self.signer = receipt.MerchantSigner(Ed25519PrivateKey.generate(), "m-1")
+        self.key = Ed25519PrivateKey.generate()
+        self.signer = receipt.MerchantSigner(self.key, "m-1")
         self.app = create_app(self.merchant, tap.StaticDirectory({}), authority="testserver", clock=self.clock,
                               signer=self.signer, acp=self.config)
         self.client = TestClient(self.app)
@@ -121,8 +122,32 @@ class DeclinedCardTest(unittest.TestCase):
         sid, _ = self.declined("provider_unavailable")
         view = self.view(sid)
         self.assertEqual((view["status"], self.codes(view)), ("not_ready_for_payment", ["payment_unavailable"]))
-        self.assertNotIn("declined", view["messages"][0]["content"].lower().replace("not a declined card", ""))
-        self.assertIn("Nothing was charged", view["messages"][0]["content"])
+        content = view["messages"][0]["content"]
+        self.assertIn("provider_unavailable", content)
+        self.assertNotIn("card was declined", content)
+        self.assertIn("Nothing was charged", content)
+
+    # -- review fix 1: never assert a decline, or its absence, without a code that says so
+
+    def test_a_failed_attempt_with_no_code_is_reported_neutrally(self):
+        sid, _ = self.declined(code=None)
+        view = self.view(sid)
+        self.assertEqual((view["status"], self.codes(view)), ("not_ready_for_payment", ["payment_failed"]))
+        content = view["messages"][0]["content"]
+        self.assertIn("did not go through", content)
+        self.assertIn("Airwallex gave no reason", content)
+        self.assertNotIn("declined", content.lower())
+        self.assertIn(f"{PUBLIC}/pay/{sid}", content)
+        self.assertIsNone(view["countersign"]["payment_failure"])
+
+    def test_capture_failed_says_what_airwallex_reported_and_nothing_more(self):
+        sid, _ = self.declined("capture_failed")
+        view = self.view(sid)
+        self.assertEqual(self.codes(view), ["payment_failed"])
+        content = view["messages"][0]["content"]
+        self.assertIn("capture_failed", content)
+        self.assertNotIn("declined", content.lower())
+        self.assertEqual(view["countersign"]["payment_failure"], "capture_failed")
 
     def test_the_shopper_can_cancel_after_a_decline(self):
         sid, order = self.declined()

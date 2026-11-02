@@ -63,15 +63,18 @@ def intent_of(event: dict[str, Any]) -> str | None:
     return intent_id if isinstance(intent_id, str) and intent_id else None
 
 
-def failed_attempt(body: dict[str, Any]) -> str | None:
-    """The failure code of the intent's latest attempt, if that attempt failed and the intent can be paid again."""
+def failed_attempt(body: dict[str, Any]) -> tuple[bool, str | None]:
+    """(failed, code): did the intent's latest attempt fail with the intent payable again, and Airwallex's code.
+
+    The code is None when Airwallex gave none: we never make one up.
+    """
     attempt = body.get("latest_payment_attempt")
     if body.get("status") != REQUIRES_PAYMENT_METHOD or not isinstance(attempt, dict):
-        return None
+        return False, None
     if attempt.get("status") != "FAILED":
-        return None
+        return False, None
     code = attempt.get("failure_code") or (attempt.get("failure_details") or {}).get("code")
-    return str(code) if code else "unknown"
+    return True, (str(code) if code else None)
 
 
 class AirwallexMerchant(FakeMerchant):
@@ -84,7 +87,8 @@ class AirwallexMerchant(FakeMerchant):
         self._handoffs: dict[str, Handoff] = {}
         self._by_intent: dict[str, str] = {}
         self.problems: dict[str, tuple[str, ...]] = {}  # why a payment was refunded, by idempotency key
-        self.declines: dict[str, str] = {}  # the failure code of a pending order's last failed attempt
+        # A pending order whose last attempt failed -> Airwallex's failure code (None if it gave none).
+        self.declines: dict[str, str | None] = {}
         self._lock = threading.Lock()
 
     def pay(self, terms: Terms, decision: Decision, idempotency_key: str, approval_hash: str | None = None) -> Order:
@@ -133,11 +137,11 @@ class AirwallexMerchant(FakeMerchant):
             if intent.status in CANCELLED:
                 return self._close(key, "failed", ("the payment was cancelled",))
             if intent.status != SUCCEEDED:
-                declined = failed_attempt(body)
-                if declined is None:
-                    self.declines.pop(key, None)  # a new attempt is under way, or none has been made
+                failed, code = failed_attempt(body)
+                if failed:
+                    self.declines[key] = code
                 else:
-                    self.declines[key] = declined
+                    self.declines.pop(key, None)  # a new attempt is under way, or none has been made
                 return order  # the shopper is still paying, perhaps with another card
             self.declines.pop(key, None)
             decision, _ = self._decisions[key]
