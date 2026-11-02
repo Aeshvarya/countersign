@@ -15,6 +15,12 @@ with Airwallex conversion quotes. Paying is where it differs from FakeMerchant:
 
 find_order() sees pending orders too, so a retry while the shopper is still
 in Drop-in never starts a second intent.
+
+A declined card (A16) is not the end of the order. Airwallex fails the attempt
+and puts the intent back to REQUIRES_PAYMENT_METHOD, so the same intent can take
+another card in Drop-in: still one intent, at most one charge. confirm() reads
+the latest attempt from Airwallex's record and keeps its failure code in
+`declines` until a later attempt replaces it. Nothing here retries a card.
 """
 
 from __future__ import annotations
@@ -28,22 +34,44 @@ from .airwallex import Airwallex
 from .decide import Decision, Outcome
 from .fx import AirwallexFx, FxGateway
 from .merchant import FakeMerchant, Order
-from .payments import SUCCEEDED, AirwallexPayments, Handoff, check_paid
+from .payments import SUCCEEDED, AirwallexPayments, Handoff, PaymentIntent, check_paid
 from .terms import Terms
 
 log = logging.getLogger("countersign.airwallex_merchant")
 
 # Intent statuses after which no money will move.
 CANCELLED = ("CANCELLED",)
+# After a failed attempt the intent waits for another payment method (Airwallex, payment statuses).
+REQUIRES_PAYMENT_METHOD = "REQUIRES_PAYMENT_METHOD"
 
 
 def intent_of(event: dict[str, Any]) -> str | None:
-    """The payment intent a webhook event is about, or None if it is about something else."""
-    if not str(event.get("name", "")).startswith("payment_intent."):
-        return None
+    """The payment intent a webhook event is about, or None if it is about something else.
+
+    A declined card sends payment_attempt.authorization_failed (3DS:
+    payment_attempt.authentication_failed); the object is the attempt, which
+    names its intent in payment_intent_id.
+    """
+    name = str(event.get("name", ""))
     obj = (event.get("data") or {}).get("object") or {}
-    intent_id = obj.get("id")
+    if name.startswith("payment_intent."):
+        intent_id = obj.get("id")
+    elif name.startswith("payment_attempt."):
+        intent_id = obj.get("payment_intent_id")
+    else:
+        return None
     return intent_id if isinstance(intent_id, str) and intent_id else None
+
+
+def failed_attempt(body: dict[str, Any]) -> str | None:
+    """The failure code of the intent's latest attempt, if that attempt failed and the intent can be paid again."""
+    attempt = body.get("latest_payment_attempt")
+    if body.get("status") != REQUIRES_PAYMENT_METHOD or not isinstance(attempt, dict):
+        return None
+    if attempt.get("status") != "FAILED":
+        return None
+    code = attempt.get("failure_code") or (attempt.get("failure_details") or {}).get("code")
+    return str(code) if code else "unknown"
 
 
 class AirwallexMerchant(FakeMerchant):
@@ -56,6 +84,7 @@ class AirwallexMerchant(FakeMerchant):
         self._handoffs: dict[str, Handoff] = {}
         self._by_intent: dict[str, str] = {}
         self.problems: dict[str, tuple[str, ...]] = {}  # why a payment was refunded, by idempotency key
+        self.declines: dict[str, str] = {}  # the failure code of a pending order's last failed attempt
         self._lock = threading.Lock()
 
     def pay(self, terms: Terms, decision: Decision, idempotency_key: str, approval_hash: str | None = None) -> Order:
@@ -98,11 +127,19 @@ class AirwallexMerchant(FakeMerchant):
             order = self.orders[key]
             if order.status != "pending":
                 return order
-            intent = self.payments.retrieve(intent_id)
+            # The raw record, not payments.retrieve(): the latest attempt says whether a card was declined.
+            body = self.client.get(f"/pa/payment_intents/{intent_id}")
+            intent = PaymentIntent.from_api(body)
             if intent.status in CANCELLED:
                 return self._close(key, "failed", ("the payment was cancelled",))
             if intent.status != SUCCEEDED:
-                return order  # the shopper is still paying
+                declined = failed_attempt(body)
+                if declined is None:
+                    self.declines.pop(key, None)  # a new attempt is under way, or none has been made
+                else:
+                    self.declines[key] = declined
+                return order  # the shopper is still paying, perhaps with another card
+            self.declines.pop(key, None)
             decision, _ = self._decisions[key]
             check = check_paid(intent, decision, order_number=order.order_number,
                                approval_hash=order.approval_hash or "")
@@ -123,5 +160,6 @@ class AirwallexMerchant(FakeMerchant):
         for item in terms.items:
             self.set_stock(item.sku, self.catalog[item.sku].stock + item.quantity)
         self.problems[key] = reasons
+        self.declines.pop(key, None)
         self.orders[key] = replace(self.orders[key], status=status)
         return self.orders[key]
