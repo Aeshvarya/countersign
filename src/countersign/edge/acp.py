@@ -68,6 +68,8 @@ SESSION_TTL = timedelta(hours=1)
 PREFIX = "/acp/checkout_sessions"
 APPROVALS = "/acp/approvals"  # the shopper's approval page (U1); no HMAC
 ASSERTION_FIELDS = ("credential_id", "public_key_spki_der", "authenticator_data", "client_data_json", "signature")
+# Airwallex attempt failure codes that mean the card itself was refused (A16); the rest are outages.
+CARD_DECLINES = ("authorization_failed", "authentication_failed", "fraud_rejected")
 
 
 @dataclass
@@ -245,9 +247,11 @@ class AcpApi:
         cur = s.currency
         # "expired" is ours: on the wire a session past SESSION_TTL is canceled, with the reason.
         expired = s.status == "expired"
+        failure = self.payment_failure(s)
         out: dict[str, Any] = {
             "id": s.id,
-            "status": "canceled" if expired else s.status,
+            # A declined card leaves the order open for another card: not completed until it is paid.
+            "status": "canceled" if expired else "not_ready_for_payment" if failure else s.status,
             "currency": cur.lower(),
             "payment_provider": {"provider": "airwallex", "supported_payment_methods": ["card"]},
             "line_items": [],
@@ -255,7 +259,8 @@ class AcpApi:
             "fulfillment_options": [],
             "messages": list(s.messages) + ([{"type": "error", "code": "expired", "content_type": "plain",
                                                "content": "This checkout session expired. Nothing was charged; "
-                                                          "start a new one."}] if expired else []),
+                                                          "start a new one."}] if expired else [])
+                        + ([self._payment_failure_message(s, failure)] if failure else []),
             "links": [],
         }
         if self.awaiting_shopper(s):
@@ -300,7 +305,35 @@ class AcpApi:
                 if self.config.public_url else None,
             }
             out.setdefault("countersign", {})["receipt"] = s.receipt
+            if failure:
+                out["countersign"]["payment_failure"] = failure  # Airwallex's failure code for the last attempt
         return out
+
+    def payment_failure(self, s: Session) -> str | None:
+        """Airwallex's failure code when the card for this session's open payment was refused (A16), else None.
+
+        Only a merchant that takes cards in Drop-in keeps declines; the order stays
+        pending on the same intent, so the shopper can pay it with another card.
+        """
+        if s.status != "completed" or s.order is None:
+            return None
+        key = f"acp:{s.id}"
+        order = self.merchant.find_order(key)
+        if order is None or order.status != "pending":
+            return None
+        return getattr(self.merchant, "declines", {}).get(key)
+
+    def _payment_failure_message(self, s: Session, code: str) -> dict[str, Any]:
+        where = (f" at {self.config.public_url.rstrip('/')}/pay/{s.id}" if self.config.public_url
+                 else " on the payment page")
+        if code in CARD_DECLINES:
+            return {"type": "error", "code": "payment_declined", "content_type": "plain",
+                    "content": f"The card was declined ({code}). Nothing was charged. The shopper can pay this "
+                               f"order with another card{where}; nothing is retried automatically."}
+        # Not the card: never tell the shopper their card was refused when Airwallex or the network failed.
+        return {"type": "error", "code": "payment_unavailable", "content_type": "plain",
+                "content": f"The payment did not go through: Airwallex reported {code}, not a declined card. "
+                           f"Nothing was charged. The shopper can try again{where}."}
 
     # ---------------------------------------------------------------- the logic
 
