@@ -52,6 +52,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .. import receipt as receipts
+from ..airwallex import AirwallexError
 from ..checkout import ReceiptStore, countersign
 from ..decide import Decision, Outcome
 from ..merchant import MerchantGateway
@@ -64,6 +65,7 @@ log = logging.getLogger("countersign.acp")
 API_VERSION = "2026-04-17"
 SUPPORTED_VERSIONS = (API_VERSION,)
 APPROVAL_TTL = timedelta(minutes=15)
+CURRENCY_REFUSED = (400, 422)  # Airwallex statuses that mean "not this currency"; anything else is an outage
 SESSION_TTL = timedelta(hours=1)
 PREFIX = "/acp/checkout_sessions"
 APPROVALS = "/acp/approvals"  # the shopper's approval page (U1); no HMAC
@@ -312,17 +314,9 @@ class AcpApi:
         if not s.cart:
             s.status = "not_ready_for_payment"
             return
-        try:
-            terms = self.merchant.offer(s.cart, s.currency, now)
-        except KeyError as err:
-            s.status = "not_ready_for_payment"
-            s.messages = [{"type": "error", "code": "invalid", "param": "$.items",
-                           "content_type": "plain", "content": f"no product with id {err.args[0]}"}]
-            return
-        except LookupError as err:
-            s.status = "not_ready_for_payment"
-            s.messages = [{"type": "error", "code": "out_of_stock", "param": "$.items",
-                           "content_type": "plain", "content": str(err)}]
+        terms, problem = self._price(s, now)
+        if terms is None:
+            s.status, s.messages = "not_ready_for_payment", [problem]
             return
         ceiling = terms.shopper_total
         named = self._ceiling(s)
@@ -339,6 +333,41 @@ class AcpApi:
             s.messages = [self._over_ceiling_message(s)]
         else:
             s.status = "ready_for_payment"
+
+    def _price(self, s: Session, now: datetime) -> tuple[Terms | None, dict[str, Any] | None]:
+        """Live terms for the cart, or the message that says why there are none."""
+        try:
+            return self.merchant.offer(s.cart, s.currency, now), None
+        except KeyError as err:
+            return None, {"type": "error", "code": "invalid", "param": "$.items",
+                          "content_type": "plain", "content": f"no product with id {err.args[0]}"}
+        except LookupError as err:
+            # Out of stock and "no rate for this currency" are both LookupErrors.
+            # In the merchant's own currency no rate lock is needed, so if the cart
+            # prices there, the stock is fine and the currency is what failed.
+            if s.currency != self.merchant.currency and self._prices_without_fx(s, now):
+                return None, self._unpriceable(s.currency, "this merchant has no rate for it")
+            return None, {"type": "error", "code": "out_of_stock", "param": "$.items",
+                          "content_type": "plain", "content": str(err)}
+        except AirwallexError as err:
+            # Only a 400 or 422 is Airwallex saying no to the request itself, and a
+            # rate lock request carries nothing from the shopper but the currency.
+            if err.status not in CURRENCY_REFUSED:
+                raise
+            code = err.body.get("code") if isinstance(err.body, dict) else None
+            return None, self._unpriceable(s.currency, f"Airwallex would not lock a rate ({code or err.status})")
+
+    def _prices_without_fx(self, s: Session, now: datetime) -> bool:
+        try:
+            self.merchant.offer(s.cart, self.merchant.currency, now)
+        except LookupError:
+            return False
+        return True
+
+    def _unpriceable(self, currency: str, why: str) -> dict[str, Any]:
+        return {"type": "error", "code": "invalid", "param": "$.currency", "content_type": "plain",
+                "content": f"This merchant cannot price {currency} from {self.merchant.currency}: {why}. "
+                           "Choose another currency. Nothing was charged."}
 
     def _ceiling(self, s: Session) -> tuple[Decimal, str] | None:
         """The shopper's ceiling and the currency they named it in, or None if they named none."""

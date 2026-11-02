@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from countersign import receipt, tap
+from countersign.airwallex import AirwallexError
 from countersign.fx import FakeFx
 from countersign.merchant import FakeMerchant
 
@@ -15,6 +16,7 @@ try:
 
     from countersign.edge import create_app, hmac_auth
     from countersign.edge.acp import AcpConfig
+    from countersign.web.host import TableFx
 except ImportError:  # the server extra is not installed
     TestClient = None
 
@@ -28,6 +30,22 @@ class Clock:
 
     def __call__(self):
         return self.now
+
+
+class AirwallexLikeFx:
+    """Locks a rate, or raises what the Airwallex client raises: per currency, or for every call."""
+
+    def __init__(self):
+        self.ok = FakeFx("84.10")
+        self.refuse: dict[str, Exception] = {}
+        self.down: Exception | None = None
+
+    def lock(self, merchant_currency, shopper_currency, now):
+        if self.down is not None:
+            raise self.down
+        if shopper_currency in self.refuse:
+            raise self.refuse[shopper_currency]
+        return self.ok.lock(merchant_currency, shopper_currency, now)
 
 
 @unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
@@ -80,6 +98,46 @@ class CurrencyTest(unittest.TestCase):
         self.assertEqual(r.status_code, 400, r.text)
         after = self.call("POST", f"{SESSIONS}/{before['id']}", {}).json()
         self.assertEqual(after["line_items"], before["line_items"])
+
+    # -- a currency is one we can price
+
+    def currency_message(self, view):
+        self.assertEqual(view["status"], "not_ready_for_payment")
+        self.assertEqual([m.get("param") for m in view["messages"]], ["$.currency"], view["messages"])
+        msg = view["messages"][0]
+        self.assertEqual((msg["type"], msg["code"]), ("error", "invalid"))
+        self.assertEqual(view["line_items"], [])
+        return msg["content"]
+
+    def test_a_currency_the_house_has_no_rate_for_is_not_out_of_stock(self):
+        self.build(TableFx())
+        r = self.create("XYZ")
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertIn("XYZ", self.currency_message(r.json()))
+
+    def test_out_of_stock_is_still_out_of_stock(self):
+        self.build(TableFx())
+        self.merchant.set_stock(self.sku, 0)
+        view = self.create("INR").json()
+        self.assertEqual([m["code"] for m in view["messages"]], ["out_of_stock"])
+
+    def test_the_merchant_currency_needs_no_rate(self):
+        self.build(TableFx())
+        self.assertEqual(self.create("USD").json()["status"], "ready_for_payment")
+
+    def test_airwallex_refusing_the_currency_is_a_currency_message(self):
+        fx = AirwallexLikeFx()
+        fx.refuse["XYZ"] = AirwallexError(400, {"code": "validation_error", "message": "shopper_currency"})
+        self.build(fx)
+        r = self.create("XYZ")
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertIn("validation_error", self.currency_message(r.json()))
+
+    def test_a_shopper_can_move_to_a_currency_we_price(self):
+        self.build(TableFx())
+        sid = self.create("XYZ").json()["id"]
+        view = self.call("POST", f"{SESSIONS}/{sid}", {"currency": "INR"}).json()
+        self.assertEqual((view["status"], view["messages"]), ("ready_for_payment", []))
 
 
 if __name__ == "__main__":
