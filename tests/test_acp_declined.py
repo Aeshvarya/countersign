@@ -180,7 +180,11 @@ class DeclinedCardTest(unittest.TestCase):
 
         self.api.post = self.api.get = down
         r = self.call("POST", f"{SESSIONS}/{sid}/cancel", {})
-        self.assertEqual((r.status_code, r.json()["code"]), (503, "service_unavailable"))
+        body = r.json()
+        self.assertEqual((r.status_code, body["type"], body["code"]),
+                         (503, "service_unavailable", "payment_service_unavailable"))
+        self.assertEqual(r.headers.get("retry-after"), "5")
+        self.assertNotIn("charged", body["message"])  # we cannot know; the cancel may have reached Airwallex
         self.assertEqual(self.merchant.orders[f"acp:{sid}"].status, "pending")
         self.assertEqual(self.codes(self.app.state.acp.view(self.app.state.acp.sessions[sid])), ["payment_declined"])
 

@@ -198,6 +198,17 @@ class PaymentServiceUnavailable(AcpError):
                          "never charges twice.")
 
 
+class CancelUnavailable(AcpError):
+    """Airwallex did not answer a cancel. The session here is unchanged; Airwallex may have heard it, so say only that."""
+
+    type = "service_unavailable"
+    headers = MappingProxyType({"Retry-After": "5"})
+
+    def __init__(self) -> None:
+        super().__init__(503, "payment_service_unavailable",
+                         "Airwallex could not be reached to cancel the payment; nothing changed here. Try again.")
+
+
 # What the Airwallex client lets out when there is no usable answer: no connection,
 # a timeout, a cut-off body, a body that is not JSON. A ValueError in general is
 # not here: that would hide our own bugs as an outage.
@@ -737,8 +748,7 @@ class AcpApi:
         """Cancel a card order still open in Drop-in, declined or not (A16). Airwallex's record decides the answer."""
         order = self.merchant.cancel_payment(f"acp:{s.id}")
         if order is None or order.status == "pending":
-            raise AcpError(503, "service_unavailable",
-                           "Airwallex could not be reached to cancel the payment; nothing changed here. Try again.")
+            raise CancelUnavailable()
         if order.status == "paid":
             # A card paid before the cancel landed, so the order stands. Sign its held receipt the way the
             # webhook and the shopper page do (checkout.release; safe to repeat), so this answer carries it.
