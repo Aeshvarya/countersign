@@ -116,7 +116,18 @@ class DeclinedCardTest(unittest.TestCase):
         view = self.view(sid)
         self.assertEqual((view["status"], view["messages"]), ("completed", []))
         self.assertNotIn("payment_failure", view["countersign"])
+        self.assertEqual(view["countersign"]["receipt"], signed)
         self.assertEqual((len(self.merchant.orders), self.api.creates, self.api.refunds), (1, 1, []))
+
+    def test_a_receipt_signed_after_the_card_pays_reaches_the_session(self):
+        # Airwallex's hosted MCP sees only this session: the receipt the webhook signs must show up in it.
+        sid, order = self.started()
+        self.assertIsNone(self.view(sid)["countersign"]["receipt"])  # paying in Drop-in: nothing signed yet
+        decision, _ = self.merchant._decisions[f"acp:{sid}"]
+        self.api.shopper_pays(order.payment_id, decision.charge, quote=decision.fx_quote_id)
+        signed = release(self.merchant.confirm(order.payment_id), self.signer, self.app.state.acp.store)
+        self.assertEqual(self.view(sid)["countersign"]["receipt"], signed)
+        self.assertTrue(receipt.verify(signed, self.key.public_key()).ok)
 
     def test_an_outage_is_never_reported_as_a_declined_card(self):
         sid, _ = self.declined("provider_unavailable")

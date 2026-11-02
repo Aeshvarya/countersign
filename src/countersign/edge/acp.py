@@ -416,7 +416,10 @@ class AcpApi:
                 "permalink_url": f"{self.config.public_url.rstrip('/')}/pay/{s.id}"
                 if self.config.public_url else None,
             }
-            out.setdefault("countersign", {})["receipt"] = s.receipt
+            # A card order's receipt is signed later, when Airwallex confirms the payment (webhook or the
+            # shopper page), into the store under this session's merchant key; the platform sees it here.
+            late = self.store.get(f"acp:{s.id}") if s.receipt is None and self.store is not None else None
+            out.setdefault("countersign", {})["receipt"] = s.receipt or late
             if failed:
                 out["countersign"]["payment_failure"] = code  # Airwallex's code for the last attempt; None if none
         return out
