@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from countersign import receipt, tap
 from countersign.airwallex import AirwallexError
+from countersign.airwallex_merchant import AirwallexMerchant
 from countersign.fx import FakeFx
 from countersign.merchant import FakeMerchant
 
@@ -17,7 +18,7 @@ try:
     from fastapi.testclient import TestClient
 
     from countersign.edge import create_app, hmac_auth
-    from countersign.edge.acp import AcpConfig
+    from countersign.edge.acp import AcpConfig, AcpError, PaymentServiceUnavailable, RateLockUnavailable
     from countersign.web.host import TableFx
 except ImportError:  # the server extra is not installed
     TestClient = None
@@ -49,6 +50,48 @@ class AirwallexLikeFx:
             raise self.refuse[shopper_currency]
         return self.ok.lock(merchant_currency, shopper_currency, now)
 
+
+class FlakyMerchant(FakeMerchant):
+    """The first pay() fails with no answer: before it charges, or after."""
+
+    def __init__(self, fail):
+        super().__init__(FakeFx("84.10"))
+        self.fail, self.attempts = fail, 0
+
+    def pay(self, *args, **kwargs):
+        self.attempts += 1
+        if self.attempts == 1 and self.fail == "before":
+            raise TimeoutError("no answer")
+        order = super().pay(*args, **kwargs)
+        if self.attempts == 1 and self.fail == "after":
+            raise TimeoutError("charged, but the answer was lost")
+        return order
+
+
+class FlakyAirwallex:
+    """Payment intents deduplicated by request_id, as Airwallex documents; the first create gets no answer."""
+
+    def __init__(self, fail):
+        self.fail, self.intents, self.creates = fail, {}, 0
+
+    def post(self, path, body=None, extra_headers=None):
+        assert path == "/pa/payment_intents/create", path
+        self.creates += 1
+        if self.creates == 1 and self.fail == "before":
+            raise TimeoutError("no answer")
+        intent = next((i for i in self.intents.values() if i["request_id"] == body["request_id"]), None)
+        if intent is None:
+            intent = {"id": f"int_{len(self.intents) + 1}", "request_id": body["request_id"],
+                      "amount": body["amount"], "currency": body["currency"], "status": "REQUIRES_PAYMENT_METHOD",
+                      "merchant_order_id": body["merchant_order_id"], "metadata": body["metadata"],
+                      "client_secret": f"cs_{len(self.intents) + 1}"}
+            self.intents[intent["id"]] = intent
+        if self.creates == 1 and self.fail == "after":
+            raise TimeoutError("created, but the answer was lost")
+        return intent
+
+    def get(self, path, params=None):
+        return dict(self.intents[path.rsplit("/", 1)[1]])
 
 
 @unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
@@ -234,6 +277,48 @@ class CurrencyTest(unittest.TestCase):
         after = self.view(before["id"])
         self.assertEqual((after["status"], after["currency"], after["totals"]),
                          ("ready_for_payment", "inr", before["totals"]))
+
+    # -- an outage inside complete
+
+    def test_error_headers_are_shared_and_read_only(self):
+        for cls in (AcpError, RateLockUnavailable, PaymentServiceUnavailable):
+            with self.subTest(cls=cls.__name__), self.assertRaises(TypeError):
+                cls.headers["Retry-After"] = "0"
+
+    def assert_payment_unavailable(self, r):
+        self.assertEqual(r.status_code, 503, r.text)
+        body = r.json()
+        self.assertEqual((body["type"], body["code"]), ("service_unavailable", "payment_service_unavailable"))
+        self.assertNotIn("nothing was charged", body["message"].lower())  # we cannot know whether pay ran
+        self.assertIn("Retry-After", r.headers)
+
+    def test_a_complete_retried_after_no_answer_charges_once(self):
+        for fail in ("before", "after"):
+            for name in ("FakeMerchant", "AirwallexMerchant"):
+                with self.subTest(merchant=name, fails=fail):
+                    api = FlakyAirwallex(fail) if name == "AirwallexMerchant" else None
+                    merchant = AirwallexMerchant(api, FakeFx("84.10")) if api else FlakyMerchant(fail)
+                    self.build(merchant=merchant)
+                    sid = self.create("INR").json()["id"]
+                    self.assert_payment_unavailable(self.complete(sid))
+                    self.assertEqual(self.view(sid)["status"], "ready_for_payment")
+                    retried = self.complete(sid)  # the same key: a 5xx was never stored
+                    self.assertEqual((retried.status_code, retried.json()["status"]), (200, "completed"), retried.text)
+                    self.assertNotIn("Idempotent-Replayed", retried.headers)
+                    self.assertEqual(self.complete(sid, key="complete-2").json()["status"], "completed")
+                    self.assertEqual(len(merchant.orders), 1)
+                    if api:
+                        self.assertEqual((len(api.intents), api.creates), (1, 2))  # one intent, one charge
+
+    def test_a_failed_complete_leaves_the_session_as_it_was(self):
+        merchant = FlakyMerchant("before")
+        self.build(merchant=merchant)
+        sid = self.create("INR", buyer={"email": "first@example.com"}).json()["id"]
+        r = self.complete(sid, body={"buyer": {"email": "second@example.com"},
+                                     "payment_data": {"token": "tok_1", "provider": "airwallex"}})
+        self.assert_payment_unavailable(r)
+        s = self.app.state.acp.sessions[sid]
+        self.assertEqual((s.buyer, s.payment_data), ({"email": "first@example.com"}, None))
 
 
 if __name__ == "__main__":

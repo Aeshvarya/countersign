@@ -25,8 +25,9 @@ asked again, never charged.
 A currency we cannot price is an `invalid` message at `$.currency`. Airwallex
 failing to lock a rate (anything but a 400 or 422 that names a currency, or no
 usable answer at all) is a 503 `service_unavailable` / `rate_lock_unavailable`,
-never reported as the shopper's currency. A failed create, update or complete
-leaves the session as it was.
+never reported as the shopper's currency. The same failure inside complete is
+`payment_service_unavailable`, which never claims nothing was charged. A failed
+create, update or complete leaves the session as it was.
 
 With U1 on (COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE), the shopper signs those terms
 with a passkey on the approval page, which calls two routes outside the HMAC
@@ -51,6 +52,7 @@ import threading
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
@@ -147,7 +149,7 @@ def from_minor(value: Any, currency: str) -> Decimal:
 
 class AcpError(Exception):
     type = "invalid_request"
-    headers: Mapping[str, str] = {}
+    headers: Mapping[str, str] = MappingProxyType({})  # read only: shared by every instance
 
     def __init__(self, status: int, code: str, message: str, param: str | None = None, **extra: Any):
         super().__init__(message)
@@ -165,13 +167,29 @@ class RateLockUnavailable(AcpError):
     """Airwallex failed, not the request: a 503 to retry. A 5xx is never stored, so the retry runs again."""
 
     type = "service_unavailable"
-    headers = {"Retry-After": "5"}
+    headers = MappingProxyType({"Retry-After": "5"})
 
     def __init__(self, detail: str):
         super().__init__(503, "rate_lock_unavailable",
                          f"No exchange rate could be locked right now ({detail}). Nothing was charged; "
                          "retry with the same Idempotency-Key.")
 
+
+class PaymentServiceUnavailable(AcpError):
+    """Airwallex failed while complete was rebuilding the offer or paying.
+
+    Unlike a quote, we cannot know whether the payment started, so the message
+    never says nothing was charged. What holds either way: the merchant key is
+    acp:<session id>, so completing this session again never charges twice.
+    """
+
+    type = "service_unavailable"
+    headers = MappingProxyType({"Retry-After": "5"})
+
+    def __init__(self, detail: str):
+        super().__init__(503, "payment_service_unavailable",
+                         f"The payment service did not answer ({detail}). Completing this session again "
+                         "never charges twice.")
 
 
 # What the Airwallex client lets out when there is no usable answer: no connection,
@@ -629,8 +647,17 @@ class AcpApi:
         approval = s.approval
         if s.shopper_assertion is not None and s.shopper_signed == self.challenge(s):
             approval = replace(approval, shopper_assertion=s.shopper_assertion)  # C13: into the receipt
-        result = countersign(self.merchant, approval, f"acp:{s.id}", now,
-                             agent=None, signer=self.signer, store=self.store)
+        try:
+            result = countersign(self.merchant, approval, f"acp:{s.id}", now,
+                                 agent=None, signer=self.signer, store=self.store)
+        except (AirwallexError, *NO_ANSWER) as err:
+            # countersign() rebuilt the offer and may have started the payment: we
+            # cannot say nothing was charged, only that a retry never charges twice.
+            status = f"HTTP {err.status}" if isinstance(err, AirwallexError) else type(err).__name__
+            log.warning("acp complete %s: no answer from the payment service, %s", s.id, status)
+            detail = (f"Airwallex answered {status}" if isinstance(err, AirwallexError)
+                      else f"Airwallex could not be reached: {status}")
+            raise PaymentServiceUnavailable(detail) from None
         d = result.decision
         if d.outcome is Outcome.PROCEED and result.order is not None:
             s.status, s.order, s.receipt, s.messages = "completed", result.order, result.receipt, []
