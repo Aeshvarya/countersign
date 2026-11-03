@@ -145,10 +145,17 @@ ul.items li .qty { color: var(--ink-3); white-space: nowrap; }
 .row { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) 0; color: var(--ink-2); }
 .row b { color: var(--ink); text-align: right; }
 .total { margin: var(--space-4) 0 var(--space-1); display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); }
-.total .label { font-weight: 600; }
+.total .label { font-weight: 600; white-space: nowrap; }
 .total .amount { font-size: clamp(var(--step-3), 7vw, var(--step-4)); font-weight: 700; }
 .ceiling { margin: 0 0 var(--space-4); padding: 10px var(--space-3); border-radius: var(--radius-1); background: var(--soft); color: var(--ink-2); font-weight: 500; }
 .ceiling b { color: var(--ink); }
+/* asked again: the old price struck through, the change in gold with its icon and a word */
+.amounts { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; justify-content: flex-end; }
+.was { color: var(--ink-3); font-size: var(--step-1); font-weight: 600; text-decoration-thickness: 2px; }
+.delta { margin: 0 0 var(--space-3); display: flex; justify-content: flex-end; }
+.delta span { padding: 3px 10px; border-radius: var(--radius-1); background: var(--ask-bg); color: var(--ask); font-weight: 700; }
+.reasked .amount { animation: reask 600ms var(--ease); }
+@keyframes reask { from { color: var(--ask); } }
 .valid { color: var(--ink-3); font-weight: 500; font-size: var(--step--1); margin: 0 0 18px; }
 .valid.late { color: var(--ask); }
 .btn { display: block; width: 100%; border: 0; border-radius: var(--radius-1); padding: var(--space-4) 20px; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-ink); min-height: 54px; font-size: var(--step-0); text-align: center; text-decoration: none; }
@@ -212,7 +219,8 @@ input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); 
       <ul class="items" id="items"></ul>
       <div class="row"><span>Delivery</span><b id="delivery"></b></div>
       <div class="row" id="rate-row"><span>Merchant price</span><b id="merchant-total"></b></div>
-      <div class="total"><span class="label">You pay</span><span class="amount" id="total"></span></div>
+      <div class="total"><span class="label">You pay</span><span class="amounts"><s class="was" id="was" hidden></s><span class="amount" id="total"></span></span></div>
+      <p class="delta" id="delta" hidden></p>
       <p class="ceiling" id="ceiling"></p>
     </div>
 

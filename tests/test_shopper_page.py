@@ -144,6 +144,21 @@ class ShopperStagesTest(Base):
         self.assertEqual((st["stage"], st["signed"]), ("approve", False))
         self.assertEqual(st["terms"]["items"][0]["quantity"], 2)
 
+    def test_a_price_rise_after_the_yes_shows_the_shopper_what_moved(self):
+        s = self.session()
+        self.assertIsNone(self.state(s["id"])["changed"])
+        self.sign(s["id"])
+        sku = self.house.merchant.search("kettle")[0].sku
+        before = self.state(s["id"])["terms"]["total"]
+        self.house.merchant.set_price(sku, self.house.merchant.catalog[sku].price * Decimal("1.12"))
+        self.post(f"{SESSIONS}/{s['id']}/complete", {})
+        st = self.state(s["id"])
+        self.assertEqual((st["stage"], st["signed"]), ("approve", False))
+        self.assertEqual(st["changed"]["previous_total"], before)
+        self.assertGreater(st["terms"]["total"], before)
+        self.assertIn("Nothing was charged", st["changed"]["reasons"][0])
+        self.assertIsNone(self.house.merchant.find_order(f"acp:{s['id']}"))
+
     def test_a_canceled_checkout_is_closed_and_nothing_is_charged(self):
         s = self.session()
         self.post(f"{SESSIONS}/{s['id']}/cancel", {})

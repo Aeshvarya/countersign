@@ -98,6 +98,7 @@ class Shopper:
             "signed": signed,
             "approval_required": api.config.require_shopper_signature,
             "messages": [m.get("content") for m in view["messages"] if m.get("content")],
+            "changed": changed_since_shown(view["messages"]),
             "terms": terms,
             "order": None if order is None else {
                 "order_number": order.order_number, "status": order.status,
@@ -153,6 +154,21 @@ class Shopper:
         elif order is not None:
             release(order, self.house.signer, self.house.store)
         return 200, self.state(session_id)
+
+
+def changed_since_shown(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Why the shopper is asked again, from the session's own re-ask messages (C10), or None.
+
+    previous_total is set when the total moved: the page shows the old price
+    struck through beside the new one, in the same minor units as the terms.
+    """
+    reasons = [m["content"] for m in messages
+               if m.get("resolution") == "requires_buyer_review" and isinstance(m.get("content"), str)]
+    if not reasons:
+        return None
+    moved = next((m for m in messages if m.get("code") == "price_change"), None)
+    previous = moved.get("previous_amount") if moved else None
+    return {"previous_total": previous if isinstance(previous, int) else None, "reasons": reasons}
 
 
 def router(house: Any, shopper: Shopper | None = None) -> APIRouter:

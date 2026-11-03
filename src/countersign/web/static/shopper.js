@@ -167,6 +167,7 @@ function renderTerms(t) {
     setText("merchant-total", money(t.merchant_total, t.merchant_currency) + rate);
   }
   setText("total", money(t.total, t.currency));
+  renderChange(t);
   const ceiling = $("ceiling");
   ceiling.replaceChildren();
   if (t.ceiling !== null && Number(t.ceiling) > Number(t.total)) {
@@ -184,6 +185,22 @@ function renderTerms(t) {
     setText("expires", t.expires_at || "");
   }
   tick();
+}
+
+// Asked again after the shopper's yes: what they approved, struck through, and what it is now.
+function renderChange(t) {
+  const moved = state.stage === "approve" && state.changed && state.changed.previous_total !== null
+    && Number(state.changed.previous_total) !== Number(t.total) ? state.changed : null;
+  $("terms").classList.toggle("reasked", Boolean(moved));
+  $("was").hidden = $("delta").hidden = !moved;
+  if (!moved) return;
+  const before = Number(moved.previous_total), now = Number(t.total);
+  setText("was", money(before, t.currency));
+  const diff = now - before, pct = before ? (diff / before) * 100 : 0;
+  const chip = document.createElement("span");
+  chip.textContent = "↺ " + (diff > 0 ? "+" : "−") + money(Math.abs(diff), t.currency)
+    + " · " + (diff > 0 ? "+" : "−") + Math.abs(pct).toFixed(1) + "%";
+  $("delta").replaceChildren(chip);
 }
 
 function tick() {
@@ -265,8 +282,18 @@ function render() {
 }
 
 function renderApprove() {
-  setText("title", "Approve this purchase");
-  setText("sub", "Your agent asked to buy this for you. Check it, then approve on this device.");
+  const changed = state.changed;
+  if (changed) {
+    const moved = changed.previous_total !== null;
+    setText("title", moved ? "The price changed" : "The terms changed");
+    setText("sub", "Nothing was charged. " + (moved
+      ? "The total is no longer what you approved, so your agent has to ask you again."
+      : changed.reasons.join(" ") + " Your agent has to ask you again."));
+  } else {
+    setText("title", "Approve this purchase");
+    setText("sub", "Your agent asked to buy this for you. Check it, then approve on this device.");
+  }
+  if (state.terms) setText("approve", "Approve " + money(state.terms.total, state.terms.currency) + " with passkey");
   only("approve-step");
   const cred = loadCred(location.hostname);
   $("reset").hidden = !cred;
