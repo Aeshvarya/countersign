@@ -89,6 +89,10 @@ class AirwallexMerchant(FakeMerchant):
         self.problems: dict[str, tuple[str, ...]] = {}  # why a payment was refunded, by idempotency key
         # A pending order whose last attempt failed -> Airwallex's failure code (None if it gave none).
         self.declines: dict[str, str | None] = {}
+        # One order number per idempotency key, handed out once and never reused. It goes into the
+        # intent as merchant_order_id, so a retried start must send the same one: Airwallex returns
+        # the first intent for the request_id, and check_paid compares the two.
+        self._numbers: dict[str, str] = {}
         self._lock = threading.Lock()
 
     def pay(self, terms: Terms, decision: Decision, idempotency_key: str, approval_hash: str | None = None) -> Order:
@@ -98,7 +102,7 @@ class AirwallexMerchant(FakeMerchant):
             existing = self.orders.get(idempotency_key)
             if existing is not None:
                 return existing
-            order_number = f"ORD-{len(self.orders) + 1001}"
+            order_number = self._numbers.setdefault(idempotency_key, f"ORD-{len(self._numbers) + 1001}")
             handoff = self.payments.start(decision, merchant_total=terms.merchant_total,
                                           merchant_currency=terms.merchant_currency, order_number=order_number,
                                           approval_hash=approval_hash or "", idempotency_key=idempotency_key)
