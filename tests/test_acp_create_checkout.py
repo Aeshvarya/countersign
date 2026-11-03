@@ -1,5 +1,6 @@
 """C10 amended (W1): Airwallex's create_checkout, from the examples in its guide of 2026-11-03."""
 
+import base64
 import copy
 import json
 import unittest
@@ -14,10 +15,12 @@ from countersign.merchant import FakeMerchant
 from countersign.terms import money, terms_hash
 
 try:
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from countersign.edge import create_app, hmac_auth
     from countersign.edge.acp import QUOTE_TTL, AcpConfig, to_minor
+    from countersign.web.host import Host, house_from_env
 except ImportError:  # the server extra is not installed
     TestClient = None
 
@@ -98,9 +101,9 @@ class CreateCheckoutTest(unittest.TestCase):
         self.client = TestClient(self.app)
         self.sku, self.other = list(self.merchant.catalog)[:2]
 
-    def post(self, body, *, secret=SECRET, sign=True, raw=None):
+    def post(self, body, *, secret=SECRET, sign=True, raw=None, headers=None):
         raw = json.dumps(body).encode() if raw is None else raw
-        headers = {"content-type": "application/json"}
+        headers = {"content-type": "application/json", **(headers or {})}
         if sign:
             headers.update(hmac_auth.sign(raw, secret))
         return self.client.post(CHECKOUT, content=raw, headers=headers)
@@ -145,6 +148,10 @@ class CreateCheckoutTest(unittest.TestCase):
 
     def test_no_idempotency_key_and_no_tap_signature_needed(self):
         self.assertEqual(self.post(self.guide_request(self.sku)).status_code, 200)
+
+    def test_an_api_version_header_is_not_ours_to_check_here(self):
+        r = self.post(self.guide_request(self.sku), headers={"API-Version": "2099-01-01"})
+        self.assertEqual(r.status_code, 200, r.text)
 
     # -- the guide's examples
 
@@ -400,6 +407,24 @@ class CreateCheckoutTest(unittest.TestCase):
     def test_no_permalink_without_a_public_url(self):
         self.build(self.fx, public_url=None)
         self.assertNotIn("permalink_url", self.checkout((self.sku, 1)))
+
+
+@unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
+class HostedTest(unittest.TestCase):
+    def test_the_public_host_serves_create_checkout_outside_tap(self):
+        house = house_from_env({"COUNTERSIGN_PUBLIC_URL": "https://countersign-demo.onrender.com",
+                                "COUNTERSIGN_MERCHANT_SIGNING_KEY": base64.b64encode(bytes(range(32))).decode(),
+                                "COUNTERSIGN_ACP_HMAC_SECRET": "s" * 32})
+        client = TestClient(Host(FastAPI(), house), base_url="https://countersign-demo.onrender.com")
+        sku = next(iter(house.merchant.catalog))
+        raw = json.dumps({"line_items": [{"id": "li_1", "item_id": sku, "requested_quantity": 1}],
+                          "currency": "USD"}).encode()
+        unsigned = client.post(CHECKOUT, content=raw, headers={"content-type": "application/json"})
+        self.assertEqual(unsigned.status_code, 401)
+        r = client.post(CHECKOUT, content=raw,
+                        headers={"content-type": "application/json", **hmac_auth.sign(raw, b"s" * 32)})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["permalink_url"], f"https://countersign-demo.onrender.com/p/{sku}")
 
 
 if __name__ == "__main__":

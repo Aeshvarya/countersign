@@ -1036,7 +1036,8 @@ def router(api: AcpApi) -> APIRouter:
     r = APIRouter()
     cfg = api.config
 
-    async def handle(request: Request, action: Callable[[Any], tuple[int, dict[str, Any]]], *, post: bool):
+    async def handle(request: Request, action: Callable[[Any], tuple[int, dict[str, Any]]], *, post: bool,
+                     versioned: bool = True):
         raw = await request.body()
         reason = hmac_auth.verify(dict(request.headers), raw, cfg.secret, scheme=cfg.scheme)
         if reason is not None:
@@ -1045,7 +1046,7 @@ def router(api: AcpApi) -> APIRouter:
             return JSONResponse({"type": "invalid_request", "code": "unauthorized", "message": reason}, status_code=401)
 
         echo = {"Request-Id": request.headers["request-id"]} if "request-id" in request.headers else {}
-        version = request.headers.get("api-version")
+        version = request.headers.get("api-version") if versioned else None  # ACP's header, not Airwallex's
         if version is not None and version not in SUPPORTED_VERSIONS:
             return JSONResponse({"type": "invalid_request", "code": "unsupported_api_version",
                                  "message": f"API-Version {version} is not supported",
@@ -1095,8 +1096,9 @@ def router(api: AcpApi) -> APIRouter:
 
     @r.post(CREATE_CHECKOUT)
     async def create_checkout(request: Request):
-        # Airwallex sends no Idempotency-Key here; a repeat is simply a fresh quote under a new id.
-        return await handle(request, api.create_checkout, post=False)
+        # Airwallex's own contract, not ACP's: no Idempotency-Key (a repeat is a fresh quote under a
+        # new id) and no API-Version to check.
+        return await handle(request, api.create_checkout, post=False, versioned=False)
 
     @r.post(PREFIX)
     async def create_session(request: Request):
