@@ -37,6 +37,27 @@ GUIDE_REQUEST = {
 }
 GUIDE_RESPONSE_KEYS = {"id", "line_items", "fulfillment", "totals", "permalink_url"}
 TOTAL_TYPES = {"subtotal", "tax", "fee", "total"}
+OPTION_KEYS = {"id", "title", "cost", "carrier", "description", "earliest_delivery_at", "latest_delivery_at"}
+METHOD_TYPES = ("SHIPPING", "PICKUP", "DIGITAL", "LOCAL_DELIVERY")
+
+
+def airwallex_rejects(response):
+    """The codes Airwallex fails a checkout with when a response breaks its fulfillment rules (guide, 11-03)."""
+    methods = response.get("fulfillment", {}).get("methods", [])
+    types = [m["type"] for m in methods]
+    cart = {line["id"] for line in response["line_items"]}
+    ids = ([m["id"] for m in methods] + [d["id"] for m in methods for d in m.get("destinations", [])]
+           + [o["id"] for m in methods for o in m.get("options", [])])
+    codes = []
+    if any(t not in METHOD_TYPES for t in types):
+        codes.append("unsupported_fulfillment_method_type")
+    if len(types) != len(set(types)):
+        codes.append("multiple_fulfillment_methods_per_type")
+    if any(not cart <= set(m["line_item_ids"]) for m in methods):
+        codes.append("fulfillment_does_not_cover_cart")
+    if len(ids) != len(set(ids)):
+        codes.append("duplicate_fulfillment_id")
+    return codes
 
 
 class Clock:
@@ -243,6 +264,93 @@ class CreateCheckoutTest(unittest.TestCase):
         self.assertIn("body keys", text)
         for value in ("jane@example.com", "123 Market Street", "94103", "cus_hkpdxxxxxxxx"):
             self.assertNotIn(value, text)
+
+    # -- fulfillment: one SHIPPING method, standard and express, never in the total
+
+    def express(self, currency):
+        rate = Decimal(1) if currency == self.merchant.currency else self.fx.rate
+        return to_minor(money(Decimal("9.99") * rate, currency), currency)
+
+    def test_one_shipping_method_with_standard_and_express(self):
+        out = self.checkout((self.sku, 1), (self.other, 2), shipping_address=GUIDE_REQUEST["shipping_address"])
+        [method] = out["fulfillment"]["methods"]
+        self.assertEqual((method["id"], method["type"]), ("shipping", "SHIPPING"))
+        self.assertEqual(method["line_item_ids"], ["li_1", "li_2"])
+        self.assertEqual(method["destinations"], [{"id": "shipping_address",
+                                                   "address": GUIDE_REQUEST["shipping_address"]}])
+        self.assertEqual([(o["id"], o["cost"]) for o in method["options"]],
+                         [("standard", 0), ("express", self.express("INR"))])
+        self.assertEqual(self.express("INR"), 84016)  # 9.99 USD at 84.10, rounded once
+        for option in method["options"]:
+            self.assertLessEqual(set(option), OPTION_KEYS)
+            self.assertIs(type(option["cost"]), int)
+            self.assertIn("business days", option["title"])
+
+    def test_without_an_address_there_is_no_destination(self):
+        [method] = self.checkout((self.sku, 1))["fulfillment"]["methods"]
+        self.assertEqual(method["destinations"], [])
+
+    def test_the_total_never_includes_fulfillment(self):
+        out = self.checkout((self.sku, 1))
+        self.assertNotIn("fulfillment", {t["type"] for t in out["totals"]})
+        self.assertEqual(self.totals(out)["total"], self.price({self.sku: 1}, "INR"))
+
+    def test_the_quote_keeps_what_each_option_costs(self):
+        for currency in ("INR", "USD"):
+            with self.subTest(currency=currency):
+                q = self.api.quote_for(self.checkout((self.sku, 1), currency=currency)["id"])
+                self.assertEqual(q.options, {"standard": 0, "express": self.express(currency)})
+        self.assertEqual(self.express("USD"), 999)
+
+    def test_nothing_available_means_nothing_to_ship(self):
+        self.merchant.set_stock(self.sku, 0)
+        out = self.checkout((self.sku, 1))
+        self.assertNotIn("fulfillment", out)
+        self.assertEqual(self.api.quote_for(out["id"]).options, {})
+
+    def test_no_answer_breaks_airwallex_fulfillment_rules(self):
+        self.merchant.set_stock(self.other, 1)
+        scenarios = {
+            "one line": [(self.sku, 1)],
+            "two lines": [(self.sku, 1), (self.other, 1)],
+            "one sku twice": [(self.sku, 1), (self.sku, 2)],
+            "short stock": [(self.other, 3), (self.sku, 1)],
+            "an unknown item": [("sku_shirt", 1), (self.sku, 1)],
+        }
+        for name, lines in scenarios.items():
+            for extra in ({}, {"shipping_address": GUIDE_REQUEST["shipping_address"]}):
+                for currency in ("INR", "USD"):
+                    with self.subTest(name, address=bool(extra), currency=currency):
+                        out = self.checkout(*lines, currency=currency, **extra)
+                        self.assertIn("fulfillment", out)
+                        self.assertEqual(airwallex_rejects(out), [])
+
+    def test_the_rule_check_catches_each_failure(self):
+        good = self.checkout((self.sku, 1), (self.other, 1), shipping_address=GUIDE_REQUEST["shipping_address"])
+        self.assertEqual(airwallex_rejects(good), [])
+
+        def broken(change):
+            out = copy.deepcopy(good)
+            change(out["fulfillment"]["methods"])
+            return airwallex_rejects(out)
+
+        def second_shipping(methods):
+            methods.append({**copy.deepcopy(methods[0]), "id": "ship2", "destinations": [],
+                            "options": [{"id": "slow", "title": "Slow", "cost": 0}]})
+
+        def unknown_type(methods):
+            methods[0]["type"] = "COURIER"
+
+        def misses_a_line(methods):
+            methods[0]["line_item_ids"].pop()
+
+        def option_reuses_an_id(methods):
+            methods[0]["options"][1]["id"] = methods[0]["destinations"][0]["id"]
+
+        self.assertEqual(broken(second_shipping), ["multiple_fulfillment_methods_per_type"])
+        self.assertEqual(broken(unknown_type), ["unsupported_fulfillment_method_type"])
+        self.assertEqual(broken(misses_a_line), ["fulfillment_does_not_cover_cart"])
+        self.assertEqual(broken(option_reuses_an_id), ["duplicate_fulfillment_id"])
 
     # -- refusals
 

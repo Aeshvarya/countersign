@@ -39,8 +39,9 @@ signature, so terms that changed are always signed again.
 
 Airwallex's create_checkout (guide of 2026-11-03, airwallexdev.com/agentic-commerce)
 is one signed POST that only prices: POST /acp/create_checkout takes the cart
-and a currency and answers line items with what is available, the totals in
-minor units and a permalink. Every call is a fresh quote under a new checkout
+and a currency and answers line items with what is available, one SHIPPING
+method (standard and express), the totals in minor units without shipping, and
+a permalink. Every call is a fresh quote under a new checkout
 id, priced from the live catalogue with a fresh rate lock, and kept as a
 QuoteRecord: Airwallex's MCP creates and charges the payment intent itself, so
 the payment webhook (C9) finds the quote an intent belongs to with quote_for().
@@ -86,6 +87,13 @@ SESSION_TTL = timedelta(hours=1)
 PREFIX = "/acp/checkout_sessions"
 CREATE_CHECKOUT = "/acp/create_checkout"  # the URL registered as apis.create_checkout at onboarding
 QUOTE_TTL = timedelta(hours=1)  # a create_checkout quote holds as long as its rate lock, and at most this
+# create_checkout's fulfillment: one SHIPPING method offering the catalogue's two delivery promises
+# (merchant.py). Costs are in the merchant's currency and reach the checkout currency through the
+# quote's own rate lock, rounded like any amount. Airwallex adds the chosen cost to our total.
+SHIPPING_METHOD_ID = "shipping"
+SHIPPING_DESTINATION_ID = "shipping_address"
+SHIPPING_OPTIONS = (("standard", "Standard shipping (5-7 business days)", Decimal("0")),
+                    ("express", "Express shipping (2 business days)", Decimal("9.99")))
 APPROVALS = "/acp/approvals"  # the shopper's approval page (U1); no HMAC
 ASSERTION_FIELDS = ("credential_id", "public_key_spki_der", "authenticator_data", "client_data_json", "signature")
 # A16: Airwallex's payment attempt failure_code is one of authentication_failed, capture_failed,
@@ -870,12 +878,20 @@ class AcpApi:
             approval = Approval.grant(terms, terms.shopper_total, f"acp:{email}" if email else "acp:platform",
                                       now, expires)
         total = _amount(terms.shopper_total, currency) if terms is not None else 0
-        out: dict[str, Any] = {
-            "id": checkout_id,
-            "line_items": lines,
-            "totals": [{"type": "subtotal", "amount": total, "display_text": "Subtotal"},
-                       {"type": "total", "amount": total, "display_text": "Total"}],
-        }
+        out: dict[str, Any] = {"id": checkout_id, "line_items": lines}
+        options: dict[str, int] = {}
+        if terms is not None:  # nothing to ship, and no rate to price shipping with, when nothing is available
+            rate = terms.fx.rate if terms.fx else Decimal(1)
+            options = {oid: _amount(cost * rate, currency) for oid, _, cost in SHIPPING_OPTIONS}
+            out["fulfillment"] = {"methods": [{
+                "id": SHIPPING_METHOD_ID,
+                "type": "SHIPPING",
+                "line_item_ids": [line["id"] for line in lines],  # every line of the cart, as the rules ask
+                "destinations": [{"id": SHIPPING_DESTINATION_ID, "address": dict(address)}] if address else [],
+                "options": [{"id": oid, "title": title, "cost": options[oid]} for oid, title, _ in SHIPPING_OPTIONS],
+            }]}
+        out["totals"] = [{"type": "subtotal", "amount": total, "display_text": "Subtotal"},
+                         {"type": "total", "amount": total, "display_text": "Total"}]
         link = self._permalink(lines)
         if link is not None:
             out["permalink_url"] = link
@@ -883,7 +899,7 @@ class AcpApi:
             checkout_id=checkout_id, created=now, expires_at=expires, currency=currency,
             line_items=tuple(dict(line) for line in lines), terms=terms,
             terms_hash=approval.hash if approval else None, approval=approval, total_minor=total,
-            options={}, customer=customer, shipping_address=address))
+            options=options, customer=customer, shipping_address=address))
         return 200, out
 
     def quote_for(self, checkout_id: str) -> QuoteRecord | None:
