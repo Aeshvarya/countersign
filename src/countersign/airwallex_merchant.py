@@ -30,7 +30,7 @@ import threading
 from dataclasses import replace
 from typing import Any
 
-from .airwallex import Airwallex, AirwallexError
+from .airwallex import UNREACHABLE, Airwallex, AirwallexError
 from .decide import Decision, Outcome
 from .fx import AirwallexFx, FxGateway
 from .merchant import FakeMerchant, Order
@@ -176,11 +176,11 @@ class AirwallexMerchant(FakeMerchant):
                 "request_id": f"cancel-{idempotency_key}",  # a retried cancel is the same cancel
                 "cancellation_reason": "the shopper cancelled the checkout",
             })
-        except AirwallexError as err:
-            log.warning("cancel of %s refused: %s", order.payment_id, err)
+        except (AirwallexError, *UNREACHABLE) as err:
+            log.warning("cancel of %s refused or unanswered: %s", order.payment_id, err)
         try:
             return self.confirm(order.payment_id)
-        except AirwallexError:
+        except (AirwallexError, *UNREACHABLE):
             return self.orders.get(idempotency_key)
 
     def _close(self, key: str, status: str, reasons: tuple[str, ...]) -> Order:

@@ -3,6 +3,7 @@
 import base64
 import json
 import unittest
+import urllib.error
 from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
@@ -177,6 +178,16 @@ class WebhookTest(unittest.TestCase):
         self.assertEqual((out["status"], out["receipt"]), ("paid", True))
         self.assertTrue(receipt.verify(self.house.store.get("k1"), self.house.signer.key.public_key(),
                                        self.approval).ok)
+
+    def test_an_event_while_airwallex_does_not_answer_asks_for_a_retry(self):
+        def timed_out(path, params=None):
+            raise urllib.error.URLError("connection reset")
+
+        self.api.get = timed_out
+        r = self.event(self.result.order.payment_id)
+        self.assertEqual(r.status_code, 503)  # Airwallex retries the event; nothing is settled yet
+        self.assertEqual(self.house.merchant.orders["k1"].status, "pending")
+        self.assertIsNone(self.house.store.get("k1"))
 
     def test_a_forged_event_is_refused(self):
         r = self.event(self.result.order.payment_id, secret="x" * 32)

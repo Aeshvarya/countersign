@@ -1,13 +1,18 @@
 """V5′: AirwallexMerchant over a fake Airwallex, end to end through the countersign (C9)."""
 
+import contextlib
+import io
+import json
 import unittest
+import unittest.mock
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from countersign import receipt as receipts
-from countersign.airwallex import AirwallexError
+from countersign.airwallex import UNREACHABLE, Airwallex, AirwallexError, _Token
 from countersign.airwallex_merchant import AirwallexMerchant, intent_of
 from countersign.checkout import MemoryReceiptStore, countersign, release
 from countersign.decide import Outcome
@@ -221,11 +226,66 @@ class AirwallexMerchantTest(unittest.TestCase):
         self.assertEqual(self.shop.cancel_payment("k1").status, "paid")  # Airwallex refused the cancel
         self.assertEqual((self.api.refunds, self.shop.catalog[self.sku].stock), ([], self.stock - 1))
 
+    def test_a_cancel_airwallex_never_answers_leaves_the_order_open(self):
+        r = self.checkout()
+
+        def timed_out(*args, **kwargs):
+            raise TimeoutError("timed out")
+
+        self.api.post = self.api.get = timed_out
+        self.assertEqual(self.shop.cancel_payment("k1").status, "pending")  # the caller can try again
+        self.assertEqual(self.shop.catalog[self.sku].stock, self.stock - 1)
+
     def test_payment_attempt_events_name_their_intent(self):
         for name in ("payment_attempt.authorization_failed", "payment_attempt.authentication_failed"):
             event = {"name": name, "data": {"object": {"id": "att_1", "payment_intent_id": "int_9"}}}
             self.assertEqual(intent_of(event), "int_9")
         self.assertIsNone(intent_of({"name": "payment_attempt.authorization_failed", "data": {"object": {"id": "att_1"}}}))
+
+
+class ClientRetryTest(unittest.TestCase):
+    """The HTTP client: a GET that gets no answer is tried once more; a POST never is."""
+
+    def setUp(self):
+        self.client = Airwallex("id", "key")
+        self.client._token = _Token("tok", float("inf"))
+        self.calls = []
+
+    def urlopen(self, *answers):
+        answers = list(answers)
+
+        def fake(req, timeout=None):
+            self.calls.append(req.get_method())
+            answer = answers.pop(0)
+            if isinstance(answer, BaseException):
+                raise answer
+            return contextlib.nullcontext(io.BytesIO(json.dumps(answer).encode()))
+
+        return unittest.mock.patch("urllib.request.urlopen", fake), unittest.mock.patch("time.sleep")
+
+    def test_a_get_without_an_answer_is_tried_once_more(self):
+        opener, sleep = self.urlopen(TimeoutError("timed out"), {"id": "int_1"})
+        with opener, sleep:
+            self.assertEqual(self.client.get("/pa/payment_intents/int_1"), {"id": "int_1"})
+        self.assertEqual(self.calls, ["GET", "GET"])
+
+    def test_a_get_that_fails_twice_raises_what_happened(self):
+        opener, sleep = self.urlopen(urllib.error.URLError("refused"), TimeoutError("timed out"))
+        with opener, sleep, self.assertRaises(UNREACHABLE):
+            self.client.get("/pa/payment_intents/int_1")
+
+    def test_a_post_without_an_answer_is_not_sent_again(self):
+        opener, sleep = self.urlopen(TimeoutError("timed out"), {"id": "int_1"})
+        with opener, sleep, self.assertRaises(TimeoutError):
+            self.client.post("/pa/payment_intents/create", {"request_id": "r1"})
+        self.assertEqual(self.calls, ["POST"])
+
+    def test_an_http_error_is_an_answer_not_an_outage(self):
+        err = urllib.error.HTTPError("u", 400, "Bad", {}, io.BytesIO(b'{"code": "invalid_argument"}'))
+        opener, sleep = self.urlopen(err)
+        with opener, sleep, self.assertRaises(AirwallexError) as caught:
+            self.client.get("/pa/payment_intents/int_1")
+        self.assertEqual((caught.exception.status, self.calls), (400, ["GET"]))
 
 
 if __name__ == "__main__":
