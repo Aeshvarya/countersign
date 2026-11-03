@@ -68,6 +68,30 @@ class ReceiptTest(unittest.TestCase):
         self.assertFalse(check.ok)
         self.assertIn("above the approved ceiling", check.findings[-1])
 
+    def test_a_signed_receipt_cannot_state_a_higher_ceiling_than_the_shoppers_copy(self):
+        # The right hash beside a ceiling the shopper never named, signed by the merchant.
+        body = copy.deepcopy(self.pay().receipt["body"])
+        body["approval"]["ceiling"] = "9999999.00"
+        body["charged"]["amount"] = format(self.approval.ceiling + 500, "f")
+        forged = receipt.sign(body, self.signer)
+        self.assertTrue(receipt.verify(forged, self.merchant_key.public_key()).ok)  # alone, it reads as fine
+        check = receipt.verify(forged, self.merchant_key.public_key(), self.approval)
+        self.assertFalse(check.ok)
+        self.assertIn("the shopper's copy says", check.findings[-1])
+        self.assertNotIn("matches the shopper's own copy of the approval", check.findings)
+
+    def test_a_receipt_of_the_wrong_shape_is_refused_not_an_error(self):
+        good = self.pay().receipt
+        for bad in ({**good, "signature": 12345}, {**good, "signature": ["x"]}, {"body": good["body"]}, {}):
+            self.assertFalse(receipt.verify(bad, self.merchant_key.public_key()).ok)
+        body = copy.deepcopy(good["body"])
+        body["charged"]["amount"] = "lots"
+        check = receipt.verify(receipt.sign(body, self.signer), self.merchant_key.public_key())
+        self.assertFalse(check.ok)
+        self.assertIn("missing fields or has fields of the wrong kind", check.findings[-1])
+        del body["charged"]
+        self.assertFalse(receipt.verify(receipt.sign(body, self.signer), self.merchant_key.public_key()).ok)
+
     def test_no_receipt_without_a_signing_key(self):
         self.assertIsNone(countersign(self.shop, self.approval, "k9", NOW).receipt)
 
