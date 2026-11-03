@@ -145,6 +145,7 @@ header { display: flex; justify-content: space-between; align-items: center; gap
 ol.feed { list-style: none; margin: 0; padding: 0; max-height: 72vh; overflow-y: auto; }
 ol.feed li { display: grid; grid-template-columns: 4px 1fr; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
 ol.feed li:first-child { border-top: 0; }
+ol.feed li.empty { display: block; }  /* no colour bar, so not the two-column grid: the text took the 4px column */
 ol.feed li .bar { border-radius: var(--radius-1); background: var(--info); }
 ol.feed li.go .bar { background: var(--go); } ol.feed li.ask .bar { background: var(--ask); } ol.feed li.no .bar { background: var(--no); }
 ol.feed li { position: relative; isolation: isolate; }
