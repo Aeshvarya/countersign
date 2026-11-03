@@ -234,6 +234,17 @@ class ShopperCardTest(Base):
         self.assertEqual(self.state(sid)["stage"], "pay")
 
 
+    def test_airwallex_timing_out_also_leaves_it_to_the_webhook(self):
+        sid, _, _ = self.completed()
+
+        def timed_out(path, params=None):
+            raise TimeoutError("timed out")
+
+        self.api.get = timed_out
+        r = self.client.post(f"/api/checkout/{sid}/confirm")
+        self.assertEqual((r.status_code, r.json()["code"]), (503, "airwallex_unreachable"))
+        self.assertEqual(self.state(sid)["stage"], "pay")
+
 @unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
 class PagesTest(unittest.TestCase):
     def setUp(self):

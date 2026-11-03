@@ -34,7 +34,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from ..airwallex import AirwallexError
+from ..airwallex import UNREACHABLE, AirwallexError
 from ..checkout import release
 from ..edge.acp import AcpError, to_minor
 from ..terms import money, utc
@@ -145,7 +145,7 @@ class Shopper:
                 self._last_confirm[key] = now
             try:
                 order = merchant.confirm(order.payment_id)
-            except AirwallexError:
+            except (AirwallexError, *UNREACHABLE):
                 return 503, {"type": "service_unavailable", "code": "airwallex_unreachable",
                              "message": "Airwallex could not be reached; the payment webhook will settle it"}
             receipt = release(order, self.house.signer, self.house.store)  # signs the held receipt once paid

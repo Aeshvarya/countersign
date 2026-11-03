@@ -50,7 +50,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import receipt as receipts
 from .. import tap
-from ..airwallex import Airwallex, AirwallexError
+from ..airwallex import UNREACHABLE, Airwallex, AirwallexError
 from ..airwallex_merchant import AirwallexMerchant, intent_of
 from ..checkout import MemoryReceiptStore, release
 from ..edge import acp as acp_api
@@ -220,7 +220,7 @@ def webhook_app(house: House) -> FastAPI:
             return {"ignored": True}
         try:
             order = await run_in_threadpool(house.merchant.confirm, intent_id)
-        except AirwallexError as err:
+        except (AirwallexError, *UNREACHABLE) as err:
             log.warning("webhook for %s not settled yet: %s", intent_id, err)
             return JSONResponse({"error": "Airwallex could not be reached; retry"}, status_code=503)
         if order is None:

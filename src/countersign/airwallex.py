@@ -12,11 +12,17 @@ from __future__ import annotations
 import json
 import os
 import time
+import http.client
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
+
+
+# No usable answer from Airwallex at all: no connection, a timeout, a cut-off body, a body that
+# is not JSON. Callers that answer "Airwallex could not be reached" catch these beside AirwallexError.
+UNREACHABLE = (OSError, http.client.HTTPException, json.JSONDecodeError)
 
 
 class AirwallexError(Exception):
@@ -67,7 +73,7 @@ class Airwallex:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     raw = resp.read()
                     return json.loads(raw) if raw else {}
-            except urllib.error.HTTPError as err:
+            except urllib.error.HTTPError as err:  # an answer: before UNREACHABLE, since HTTPError is an OSError
                 raw = err.read().decode(errors="replace")
                 try:
                     parsed: dict | str = json.loads(raw)
@@ -77,6 +83,13 @@ class Airwallex:
                     time.sleep(0.5 * 2**attempt)
                     continue
                 raise AirwallexError(err.code, parsed) from None
+            except UNREACHABLE:
+                # A GET changes nothing, so one more try is free. A POST is not retried here: whether
+                # it reached Airwallex is unknown, and its caller's request_id decides what a retry means.
+                if method == "GET" and attempt == 0:
+                    time.sleep(0.5)
+                    continue
+                raise
         raise AssertionError("unreachable")
 
     def token(self) -> str:
