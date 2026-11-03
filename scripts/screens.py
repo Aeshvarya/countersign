@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
                 def shot(name: str) -> None:
                     if name in wanted:
                         path = out / f"{name}-{size}-{theme}.png"
-                        page.wait_for_timeout(400)  # let state changes and the feed's arrival settle
+                        page.wait_for_timeout(400)  # let state changes and the feed's new rows settle
                         page.screenshot(path=str(path), full_page=True)
                         saved.append(path)
 
