@@ -143,6 +143,9 @@ textarea:focus, input:focus { outline: none; border-color: var(--accent); }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: var(--space-4); align-items: center; }
 .btn { border: 0; border-radius: var(--radius-1); padding: 14px 20px; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-ink); min-height: 50px; }
 .file { color: var(--ink-2); font-weight: 500; font-size: var(--step--1); }
+.file::file-selector-button { font: inherit; font-weight: 600; color: var(--ink); background: transparent; cursor: pointer;
+                             border: 2px solid var(--line); border-radius: var(--radius-1); padding: 6px var(--space-3); margin-right: var(--space-3); }
+.file::file-selector-button:hover { background: var(--soft); }
 .verdict { margin: 20px 0 0; padding: 14px var(--space-4); border-radius: var(--radius-1); font-weight: 600; font-size: var(--step-1); }
 .verdict:empty { display: none; }
 .verdict.ok { background: var(--go-bg); color: var(--go); }
