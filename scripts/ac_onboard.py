@@ -21,7 +21,11 @@ Host check: an unsigned POST to create_checkout must be refused by the ACP door
 (401, code "unauthorized"). A TAP refusal ({"refused": ...}) means the host runs
 the edge without COUNTERSIGN_ACP_HMAC_SECRET, so the /acp routes are not
 mounted; a 404 means the host does not serve the edge at all. Either way
-Airwallex's first call would fail, so --onboard sends nothing.
+Airwallex's first call would fail, so --onboard sends nothing. Then the OAuth
+server: no discovery document yet is a warning (onboarding stores the URLs
+either way); one that disagrees with what onboarding registers (issuer, jwks_uri,
+an endpoint missing, no PKCE S256) or a JWKS with no keys fails the check,
+because every Claude sign-in would then fail.
 
 The body follows Airwallex's guide of 2026-11-03: the PSP key pair; apis with
 create_checkout ({base}/acp/create_checkout), the HMAC secret and the merchant
@@ -64,6 +68,8 @@ ONBOARD_PATH = "/pa/agentic_commerce/onboard"
 UPDATE_PATH = "/pa/agentic_commerce/config/update"
 NOT_ONBOARDED = "MERCHANT_CONFIG_NOT_FOUND"
 JWKS_PATH = "/.well-known/jwks.json"
+DISCOVERY_PATH = "/.well-known/openid-configuration"
+OIDC_ENDPOINTS = ("authorization_endpoint", "token_endpoint", "registration_endpoint")
 OAUTH_SCOPES = ["openid", "email"]  # advertised to Claude; ACP does not enforce them
 SLOW_SECONDS = 10.0  # a free Render instance waking from sleep takes longer than this
 
@@ -235,7 +241,42 @@ def check_host(base_url: str, fetch: Fetch, *, sku: str | None = None) -> tuple[
     else:
         ok = False
         lines.append(f"GET /p/{sku} -> {status}: catalogue links would not resolve")
-    return ok, lines
+
+    oauth_ok, oauth_lines = check_oauth(base_url, fetch)
+    return ok and oauth_ok, lines + oauth_lines
+
+
+def oauth_problems(doc: Mapping, base_url: str) -> list[str]:
+    """How a discovery document disagrees with what onboarding registers and Claude needs (guide, 11-03)."""
+    issuer, jwks = oauth_base(base_url), oauth_base(base_url) + JWKS_PATH
+    problems = []
+    if doc.get("issuer") != issuer:
+        problems.append(f"issuer is {doc.get('issuer')!r}, onboarding registers {issuer!r}")
+    if doc.get("jwks_uri") != jwks:
+        problems.append(f"jwks_uri is {doc.get('jwks_uri')!r}, onboarding registers {jwks!r}")
+    missing = [name for name in OIDC_ENDPOINTS if not doc.get(name)]
+    if missing:
+        problems.append("no " + ", ".join(missing))
+    if "S256" not in (doc.get("code_challenge_methods_supported") or []):
+        problems.append("code_challenge_methods_supported lacks S256 (Claude uses PKCE)")
+    return problems
+
+
+def check_oauth(base_url: str, fetch: Fetch) -> tuple[bool, list[str]]:
+    """The merchant OAuth server (C14) as Claude will find it. Not served yet is a warning, not a failure."""
+    status, doc, _ = fetch("GET", oauth_base(base_url) + DISCOVERY_PATH, None)
+    if status != 200 or not isinstance(doc, dict):
+        return True, [f"GET {DISCOVERY_PATH} -> {status}: warning, the OAuth server is not served yet; "
+                      "onboarding can go ahead, but Claude cannot sign a shopper in until it is"]
+    problems = oauth_problems(doc, base_url)
+    if problems:
+        return False, [f"GET {DISCOVERY_PATH} -> 200, but " + "; ".join(problems)]
+    status, keys, _ = fetch("GET", oauth_base(base_url) + JWKS_PATH, None)
+    if status != 200 or not isinstance(keys, dict) or not keys.get("keys"):
+        return False, [f"GET {DISCOVERY_PATH} -> 200, but GET {JWKS_PATH} -> {status} with no keys: "
+                       "every access token would be rejected"]
+    return True, [f"GET {DISCOVERY_PATH} -> 200: issuer, endpoints, PKCE S256 and a JWKS with "
+                  f"{len(keys['keys'])} key(s), as onboarding registers"]
 
 
 def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = None,

@@ -62,13 +62,24 @@ class FakeClient:
         return CONFIG
 
 
-def host(acp_status=401, acp_body=None, page_status=200, seconds=0.3):
+DISCOVERY = {"issuer": BASE, "authorization_endpoint": BASE + "/oauth/authorize",
+             "token_endpoint": BASE + "/oauth/token", "registration_endpoint": BASE + "/oauth/register",
+             "jwks_uri": BASE + "/.well-known/jwks.json", "code_challenge_methods_supported": ["S256"]}
+JWKS = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "k1", "x": "x", "y": "y"}]}
+
+
+def host(acp_status=401, acp_body=None, page_status=200, seconds=0.3, discovery=None, jwks=None):
+    """A fake host. With no discovery document the OAuth server answers 404, as before C14 is live."""
     calls = []
 
     def fetch(method, url, body):
         calls.append((method, url))
         if url.endswith("/acp/create_checkout"):
             return acp_status, {"type": "invalid_request", "code": "unauthorized"} if acp_body is None else acp_body, seconds
+        if url.endswith("/.well-known/openid-configuration"):
+            return (404, None, 0.1) if discovery is None else (200, discovery, 0.1)
+        if url.endswith("/.well-known/jwks.json"):
+            return (404, None, 0.1) if jwks is None else (200, jwks, 0.1)
         return page_status, None, 0.1
     fetch.calls = calls
     return fetch
@@ -161,6 +172,42 @@ class HostCheckTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("does not serve the edge's /acp routes", text)
         self.assertIn("catalogue links would not resolve", text)
+
+    def test_no_oauth_server_yet_is_a_warning_only(self):
+        code, text = run(["--check-host"])
+        self.assertEqual(code, 0, text)
+        self.assertIn("warning, the OAuth server is not served yet", text)
+
+    def test_an_oauth_server_as_registered_passes(self):
+        code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks=JWKS))
+        self.assertEqual(code, 0, text)
+        self.assertIn("a JWKS with 1 key(s), as onboarding registers", text)
+
+    def test_an_oauth_server_that_disagrees_fails(self):
+        cases = {
+            "issuer is 'https://shop.example/'": {"issuer": BASE + "/"},  # one slash breaks Claude's check
+            "jwks_uri is": {"jwks_uri": BASE + "/jwks"},
+            "no registration_endpoint": {"registration_endpoint": None},
+            "lacks S256": {"code_challenge_methods_supported": ["plain"]},
+        }
+        for said, change in cases.items():
+            with self.subTest(said=said):
+                code, text = run(["--check-host"], fetch=host(discovery={**DISCOVERY, **change}, jwks=JWKS))
+                self.assertEqual(code, 1, text)
+                self.assertIn(said, text)
+
+    def test_a_jwks_with_no_keys_fails(self):
+        for jwks in (None, {"keys": []}):
+            with self.subTest(jwks=jwks):
+                code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks=jwks))
+                self.assertEqual(code, 1, text)
+                self.assertIn("every access token would be rejected", text)
+
+    def test_an_oauth_mismatch_stops_the_onboard(self):
+        client = FakeClient()
+        code, text = run(["--onboard"], client=client, fetch=host(discovery={**DISCOVERY, "issuer": "x"}, jwks=JWKS))
+        self.assertEqual((code, client.posts), (1, []))
+        self.assertIn("nothing sent", text)
 
     def test_a_slow_answer_is_flagged(self):
         _, text = run(["--check-host"], fetch=host(seconds=31))
