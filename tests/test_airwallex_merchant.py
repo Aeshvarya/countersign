@@ -226,6 +226,29 @@ class AirwallexMerchantTest(unittest.TestCase):
         self.assertEqual(self.shop.cancel_payment("k1").status, "paid")  # Airwallex refused the cancel
         self.assertEqual((self.api.refunds, self.shop.catalog[self.sku].stock), ([], self.stock - 1))
 
+    def test_a_retried_start_keeps_its_order_number_when_another_order_came_between(self):
+        # The first create reaches Airwallex but its answer is lost; another shopper's order lands; the retry
+        # gets Airwallex's first intent back by request_id. It must carry the same order number, or
+        # check_paid refunds a good payment.
+        create = self.api.post
+
+        def lost_answer(path, body=None, extra_headers=None):
+            create(path, body, extra_headers)
+            raise TimeoutError("the answer never came")
+
+        self.api.post = lost_answer
+        with self.assertRaises(TimeoutError):
+            self.checkout("k1")
+        self.api.post = create
+        other = self.checkout("k2")
+        first = self.checkout("k1")
+        self.assertNotEqual(first.order.order_number, other.order.order_number)
+        intent = self.api.intents[first.order.payment_id]
+        self.assertEqual(intent["merchant_order_id"], first.order.order_number)
+        self.api.shopper_pays(first.order.payment_id, first.decision.charge, quote=first.decision.fx_quote_id)
+        self.assertEqual(self.shop.confirm(first.order.payment_id).status, "paid")
+        self.assertEqual(self.api.refunds, [])
+
     def test_a_cancel_airwallex_never_answers_leaves_the_order_open(self):
         r = self.checkout()
 
