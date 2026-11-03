@@ -92,6 +92,33 @@ class ReceiptTest(unittest.TestCase):
         del body["charged"]
         self.assertFalse(receipt.verify(receipt.sign(body, self.signer), self.merchant_key.public_key()).ok)
 
+    def test_a_charge_that_raises_afterwards_still_gets_its_receipt_on_the_retry(self):
+        # The money moved, then something after it failed: the retry must not find a paid order without a receipt.
+        paid_then_failed = FakeMerchant.pay
+
+        def pay(*args, **kwargs):
+            paid_then_failed(self.shop, *args, **kwargs)
+            raise RuntimeError("the connection dropped after the charge")
+
+        self.shop.pay = pay
+        with self.assertRaises(RuntimeError):
+            self.pay()
+        del self.shop.pay
+        again = self.pay()
+        self.assertEqual(again.order.status, "paid")
+        self.assertEqual(len(self.shop.orders), 1)
+        check = receipt.verify(again.receipt, self.merchant_key.public_key(), self.approval)
+        self.assertTrue(check.ok, check.findings)
+
+    def test_a_pay_that_fails_before_charging_keeps_no_receipt(self):
+        def pay(*args, **kwargs):
+            raise RuntimeError("no connection")
+
+        self.shop.pay = pay
+        with self.assertRaises(RuntimeError):
+            self.pay()
+        self.assertIsNone(self.store.get("k1"))
+
     def test_no_receipt_without_a_signing_key(self):
         self.assertIsNone(countersign(self.shop, self.approval, "k9", NOW).receipt)
 
