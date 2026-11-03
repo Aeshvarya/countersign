@@ -1,4 +1,4 @@
-"""Screenshot every screen, as a judge would see it, so a UI change is reviewed as pictures.
+"""Screenshot every screen, as a first-time viewer sees it, so a UI change is reviewed as pictures.
 
     pip install playwright        (once; it drives the Chrome already on this machine)
     python scripts/screens.py                 every screen, desktop and phone, light and dark
