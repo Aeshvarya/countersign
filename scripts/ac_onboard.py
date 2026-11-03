@@ -21,9 +21,15 @@ the edge without COUNTERSIGN_ACP_HMAC_SECRET, so the /acp routes are not
 mounted; a 404 means the host does not serve the edge at all. Either way
 Airwallex's first call would fail, so --onboard sends nothing.
 
+The body follows Airwallex's guide of 2026-11-03: the PSP key pair; apis with
+create_checkout ({base}/acp/create_checkout), the HMAC secret and the merchant
+OAuth server (apis.oauth.acp: the issuer is the host itself, its JWKS at
+/.well-known/jwks.json, scopes openid and email); and whitelisted_image_domains,
+the host's scheme and name with no path, where the catalogue's images live.
+
 Onboarding is one-shot: Airwallex ignores the payload of a second POST /onboard,
-and changes go through PUT /config, which replaces a whole section (the PSP key
-pair, or the URL and secret together). This script does not send PUT.
+and changes go through POST /config/update, which replaces a whole section (the
+PSP key pair, or create_checkout, secret and OAuth together).
 
 Exits 0 when the thing asked for is true or done, 1 when something is not ready
 yet, 2 when Airwallex refused the call. Prints status codes, Airwallex's code
@@ -41,15 +47,18 @@ import time
 import urllib.error
 import urllib.request
 from typing import Callable, Mapping, TextIO
+from urllib.parse import urlsplit
 
 from countersign import catalog_gmc
 from countersign.airwallex import Airwallex, AirwallexError
-from countersign.edge.acp import PREFIX, AcpConfig
+from countersign.edge.acp import CREATE_CHECKOUT, AcpConfig
 
 CONFIG_PATH = "/pa/agentic_commerce/config"
 OTHER_CONFIG_PATH = "/agentic-commerce/config"  # seen by another Kit 10 team; probed, never written to
 ONBOARD_PATH = "/pa/agentic_commerce/onboard"
 NOT_ONBOARDED = "MERCHANT_CONFIG_NOT_FOUND"
+JWKS_PATH = "/.well-known/jwks.json"
+OAUTH_SCOPES = ["openid", "email"]  # advertised to Claude; ACP does not enforce them
 SLOW_SECONDS = 10.0  # a free Render instance waking from sleep takes longer than this
 
 # fetch(method, url, body) -> (status, parsed JSON body or None, seconds taken)
@@ -109,6 +118,7 @@ def summary(config: Mapping) -> list[str]:
         f"managed payment: {psp.get('managed_payment')}",
         f"create_checkout: {apis.get('create_checkout')}",
         f"secret key configured: {apis.get('secret_key_configured')}",
+        f"image domains: {', '.join(config.get('whitelisted_image_domains') or []) or 'none'}",
     ]
     for name, path in sorted((config.get("mcp_endpoints") or {}).items()):
         lines.append(f"mcp {name}: {path}")
@@ -136,7 +146,13 @@ def onboard_body(env: Mapping[str, str], base_url: str) -> tuple[dict, str]:
         raise ValueError("no PSP key: set AIRWALLEX_CLIENT_ID and AIRWALLEX_API_KEY")
     body = {
         "psp_config": {"api_key_data": {"client_id": client_id, "api_key": api_key}},
-        "apis": {"create_checkout": create_checkout_url(base_url), "secret_key": acp.secret.decode()},
+        "apis": {
+            "create_checkout": create_checkout_url(base_url),
+            "secret_key": acp.secret.decode(),
+            "oauth": {"acp": {"oauth_base": oauth_base(base_url), "oauth_jwks": oauth_base(base_url) + JWKS_PATH,
+                              "scopes": list(OAUTH_SCOPES)}},
+        },
+        "whitelisted_image_domains": [image_domain(base_url)],
     }
     return body, which
 
@@ -150,7 +166,18 @@ def redacted(body: dict) -> dict:
 
 
 def create_checkout_url(base_url: str) -> str:
-    return base_url.rstrip("/") + PREFIX
+    return base_url.rstrip("/") + CREATE_CHECKOUT
+
+
+def oauth_base(base_url: str) -> str:
+    """The OAuth issuer: our own host (C14). Its discovery document's issuer must equal this exactly."""
+    return base_url.rstrip("/")
+
+
+def image_domain(base_url: str) -> str:
+    """Scheme plus the full host the catalogue's /img links use, no path (Airwallex's rule)."""
+    parts = urlsplit(base_url)
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 def _urllib_fetch(method: str, url: str, body: bytes | None) -> tuple[int, object, float]:
@@ -174,14 +201,14 @@ def check_host(base_url: str, fetch: Fetch, *, sku: str | None = None) -> tuple[
     status, body, seconds = fetch("POST", create_checkout_url(base_url), b"{}")
     timing = f"{seconds:.1f} s" + (", slow: a cold start may time out Airwallex's call" if seconds > SLOW_SECONDS else "")
     if status == 401 and isinstance(body, dict) and body.get("code") == "unauthorized":
-        lines.append(f"POST {PREFIX} unsigned -> 401 from the ACP door ({timing})")
+        lines.append(f"POST {CREATE_CHECKOUT} unsigned -> 401 from the ACP door ({timing})")
     elif isinstance(body, dict) and "refused" in body:
         ok = False
-        lines.append(f"POST {PREFIX} unsigned -> {status} from the TAP door: the host has no "
+        lines.append(f"POST {CREATE_CHECKOUT} unsigned -> {status} from the TAP door: the host has no "
                      f"COUNTERSIGN_ACP_HMAC_SECRET, so /acp is not mounted ({timing})")
     else:
         ok = False
-        lines.append(f"POST {PREFIX} unsigned -> {status}: the host does not serve the edge's /acp routes ({timing})")
+        lines.append(f"POST {CREATE_CHECKOUT} unsigned -> {status}: the host does not serve the edge's /acp routes ({timing})")
 
     sku = sku or catalog_gmc.catalog(base_url)[0]["id"]
     status, _, seconds = fetch("GET", f"{base_url.rstrip('/')}/p/{sku}", None)
@@ -256,7 +283,8 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
             print("already onboarded with this create_checkout: nothing sent", file=out)
             return 0
         print(f"create_checkout differs from {create_checkout_url(base)}. A second POST /onboard is ignored; "
-              "change it with PUT /config, sending the URL and the secret together", file=out)
+              "change it with POST /config/update, sending create_checkout, the secret and OAuth together",
+              file=out)
         return 1
 
     print("onboarding API is live; this account is not onboarded yet", file=out)

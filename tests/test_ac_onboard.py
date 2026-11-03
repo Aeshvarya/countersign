@@ -23,7 +23,8 @@ SIGNED_UPLOAD_URL = "https://upload.example/slot?sig=never-printed"
 CONFIG = {
     "merchant_id": "mer_1", "status": "ACTIVE",
     "psp_config": {"psp_name": "airwallex", "client_id": "cid", "api_key_configured": True, "managed_payment": True},
-    "apis": {"create_checkout": BASE + "/acp/checkout_sessions", "secret_key_configured": True},
+    "apis": {"create_checkout": BASE + "/acp/create_checkout", "secret_key_configured": True},
+    "whitelisted_image_domains": [BASE],
     "mcp_endpoints": {"acp": "/pa/ai/mer_1/acp/mcp", "ucp": "/pa/ai/mer_1/ucp/mcp"},
     "product_upload": {"url": SIGNED_UPLOAD_URL, "method": "PUT", "headers": {"x-sig": "never-printed"},
                        "expires_at": "2026-11-02T10:00:00Z"},
@@ -66,7 +67,7 @@ def host(acp_status=401, acp_body=None, page_status=200, seconds=0.3):
 
     def fetch(method, url, body):
         calls.append((method, url))
-        if url.endswith("/acp/checkout_sessions"):
+        if url.endswith("/acp/create_checkout"):
             return acp_status, {"type": "invalid_request", "code": "unauthorized"} if acp_body is None else acp_body, seconds
         return page_status, None, 0.1
     fetch.calls = calls
@@ -132,6 +133,7 @@ class ProbeTest(unittest.TestCase):
         self.assertIn("merchant_id: mer_1", text)
         self.assertIn("mcp acp: /pa/ai/mer_1/acp/mcp", text)
         self.assertIn("product upload slot expires: 2026-11-02T10:00:00Z", text)
+        self.assertIn(f"image domains: {BASE}", text)
         self.assertNotIn("never-printed", text)
 
     def test_without_keys_nothing_is_called(self):
@@ -145,7 +147,8 @@ class HostCheckTest(unittest.TestCase):
         fetch = host()
         code, text = run(["--check-host"], fetch=fetch)
         self.assertEqual(code, 0, text)
-        self.assertIn("401 from the ACP door", text)
+        self.assertIn("POST /acp/create_checkout unsigned -> 401 from the ACP door", text)
+        self.assertEqual(fetch.calls[0], ("POST", BASE + "/acp/create_checkout"))
         self.assertEqual(fetch.calls[1], ("GET", BASE + "/p/AUD-018-0"))
 
     def test_a_tap_refusal_means_acp_is_not_mounted(self):
@@ -173,8 +176,9 @@ class OnboardTest(unittest.TestCase):
         code, text = run(["--onboard", "--dry-run"], fetch=lambda *a: self.fail("no host call expected"))
         self.assertEqual(code, 0)
         body = json.loads(text.split("\n", 1)[1])
-        self.assertEqual(body["apis"]["create_checkout"], BASE + "/acp/checkout_sessions")
+        self.assertEqual(body["apis"]["create_checkout"], BASE + "/acp/create_checkout")
         self.assertEqual(body["apis"]["secret_key"], "<set, 64 chars>")
+        self.assertEqual(body["apis"]["oauth"]["acp"]["oauth_jwks"], BASE + "/.well-known/jwks.json")
         self.assertNotIn(SECRET, text)
         self.assertNotIn(API_KEY, text)
 
@@ -184,11 +188,24 @@ class OnboardTest(unittest.TestCase):
         self.assertEqual(code, 0, text)
         (path, body), = client.posts
         self.assertEqual(path, "/pa/agentic_commerce/onboard")
-        self.assertEqual(body, {"psp_config": {"api_key_data": {"client_id": "cid", "api_key": API_KEY}},
-                                "apis": {"create_checkout": BASE + "/acp/checkout_sessions", "secret_key": SECRET}})
+        self.assertEqual(body, {
+            "psp_config": {"api_key_data": {"client_id": "cid", "api_key": API_KEY}},
+            "apis": {"create_checkout": BASE + "/acp/create_checkout", "secret_key": SECRET,
+                     "oauth": {"acp": {"oauth_base": BASE, "oauth_jwks": BASE + "/.well-known/jwks.json",
+                                       "scopes": ["openid", "email"]}}},
+            "whitelisted_image_domains": [BASE]})
         self.assertIn("PSP key: the login key", text)
         self.assertNotIn(SECRET, text)
         self.assertNotIn(API_KEY, text)
+
+    def test_the_image_domain_is_scheme_and_host_only(self):
+        for base in ("https://shop.example", "https://shop.example/", "https://shop.example:8443/shop"):
+            with self.subTest(base=base):
+                body, _ = ac_onboard.onboard_body(ENV, base)
+                self.assertEqual(body["whitelisted_image_domains"],
+                                 ["https://shop.example:8443" if "8443" in base else "https://shop.example"])
+        body, _ = ac_onboard.onboard_body(ENV, BASE + "/")
+        self.assertEqual(body["apis"]["oauth"]["acp"]["oauth_base"], BASE)  # the issuer, no trailing slash
 
     def test_a_separate_psp_key_is_used_when_set(self):
         client = FakeClient()
@@ -220,11 +237,17 @@ class OnboardTest(unittest.TestCase):
         self.assertEqual((code, client.posts), (0, []))
         self.assertIn("already onboarded with this create_checkout", text)
 
-    def test_a_different_url_points_to_put_config(self):
+    def test_a_different_url_points_to_config_update(self):
         client = FakeClient(config=CONFIG)
         code, text = run(["--onboard", "--base-url", "https://other.example"], client=client)
         self.assertEqual((code, client.posts), (1, []))
-        self.assertIn("PUT /config", text)
+        self.assertIn("POST /config/update", text)
+
+    def test_the_old_sessions_url_counts_as_different(self):
+        old = {**CONFIG, "apis": {"create_checkout": BASE + "/acp/checkout_sessions", "secret_key_configured": True}}
+        code, text = run(["--onboard"], client=FakeClient(config=old))
+        self.assertEqual(code, 1)
+        self.assertIn("create_checkout differs", text)
 
     def test_a_scope_problem_stops_the_onboard(self):
         client = FakeClient(get_error=NO_ROUTE, other=SCOPE)
