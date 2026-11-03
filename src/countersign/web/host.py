@@ -74,8 +74,11 @@ def authority_of(public_url: str | None) -> str:
     if not public_url:
         return DEFAULT_AUTHORITY
     parsed = urlparse(public_url)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise ValueError("COUNTERSIGN_PUBLIC_URL must be an https URL")
+    # Plain http only for this machine, where browsers allow passkeys without TLS: a local rehearsal
+    # or scripts/screens.py. Anywhere else the passkey origin and the TAP authority need https.
+    local = parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1")
+    if not (parsed.scheme == "https" or local) or not parsed.hostname:
+        raise ValueError("COUNTERSIGN_PUBLIC_URL must be an https URL (or http://localhost)")
     return parsed.netloc
 
 

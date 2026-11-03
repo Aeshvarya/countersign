@@ -113,6 +113,7 @@ class HostTest(unittest.TestCase):
     def test_bad_configuration_stops_the_service(self):
         with self.assertRaises(ValueError):
             authority_of("http://plain.example")
+        self.assertEqual(authority_of("http://localhost:8765"), "localhost:8765")  # passkeys work there
         with self.assertRaises(ValueError):
             signing_key_from({"COUNTERSIGN_MERCHANT_SIGNING_KEY": base64.b64encode(b"short").decode()})
         with self.assertRaises(ValueError):
