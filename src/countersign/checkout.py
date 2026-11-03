@@ -111,17 +111,30 @@ def countersign(
     if decision.outcome is not Outcome.PROCEED:
         return Result(decision)
 
-    order = merchant.pay(live, decision, idempotency_key, approval_hash=approval.hash)
-    signed = None
-    if signer is not None:
+    def keep_receipt(order: Order) -> dict[str, Any] | None:
+        if signer is None:
+            return None
         body = receipts.build(approval=approval, live=live, decision=decision, order=order, agent=agent, decided_at=now)
         if order.status == "paid":
             signed = receipts.sign(body, signer)
             if store is not None:
                 store.put(idempotency_key, signed)
-        elif store is not None and hasattr(store, "hold"):
+            return signed
+        if store is not None and hasattr(store, "hold"):
             store.hold(idempotency_key, body)
-    return Result(decision, order, signed)
+        return None
+
+    try:
+        order = merchant.pay(live, decision, idempotency_key, approval_hash=approval.hash)
+    except Exception:
+        # The merchant may have recorded the charge before failing. A retry then finds that order
+        # and returns its receipt from the store, so keep the receipt for it now; the error still
+        # goes to the caller.
+        charged = merchant.find_order(idempotency_key)
+        if charged is not None and charged.approval_hash in (None, approval.hash):
+            keep_receipt(charged)
+        raise
+    return Result(decision, order, keep_receipt(order))
 
 
 def release(order: Order, signer: receipts.MerchantSigner, store: ReceiptStore) -> dict[str, Any] | None:
