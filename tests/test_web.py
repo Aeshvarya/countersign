@@ -37,6 +37,12 @@ class WebFlowTest(unittest.TestCase):
         out = self.client.post("/api/receipts/verify", json={"receipt": receipt, "approval": approval, "merchant_key": state["merchant_key"]}).json()
         self.assertTrue(out["ok"])
 
+    def test_a_receipt_with_a_number_for_a_signature_is_refused_not_a_500(self):
+        key = "A" * 43 + "="
+        out = self.client.post("/api/receipts/verify", json={"receipt": {"body": {}, "signature": 7}, "merchant_key": key})
+        self.assertEqual(out.status_code, 200)
+        self.assertFalse(out.json()["ok"])
+
     def test_a_ceiling_below_the_shown_price_is_rejected(self):
         sid = self.client.post("/api/sessions", json={"request": "Buy me a kettle", "currency": "EUR", "model": "scripted"}).json()["id"]
         self.wait(sid, "awaiting_approval")

@@ -111,10 +111,17 @@ def verify(receipt: dict[str, Any], merchant_key: Ed25519PublicKey, approval: Ap
     try:
         merchant_key.verify(base64.b64decode(receipt["signature"]), _canonical(receipt["body"]))
         findings.append("signed by the merchant's key")
-    except (InvalidSignature, KeyError, ValueError):
+    except (InvalidSignature, KeyError, ValueError, TypeError):
+        # TypeError: a receipt is anyone's JSON, and its signature may be a number or a list.
         return Check(False, ("the merchant's signature does not match this receipt",))
+    try:
+        return _check_body(receipt["body"], findings, approval)
+    except (KeyError, TypeError, ArithmeticError):
+        # Signed, but not shaped like a receipt this version writes.
+        return Check(False, (*findings, "this receipt is missing fields or has fields of the wrong kind"))
 
-    body = receipt["body"]
+
+def _check_body(body: dict[str, Any], findings: list[str], approval: Approval | None) -> Check:
     charged, approved = body["charged"], body["approval"]
     if charged["currency"] != approved["currency"]:
         return Check(False, (*findings, "charged in a different currency than approved"))
@@ -143,5 +150,15 @@ def verify(receipt: dict[str, Any], merchant_key: Ed25519PublicKey, approval: Ap
             return Check(False, (*findings, "the shopper's copy of the approval does not match its own hash"))
         if approval.hash != approved["hash"]:
             return Check(False, (*findings, "this receipt is for a different approval than the shopper's copy"))
+        # The hash covers the ceiling, but the receipt states the ceiling and currency on their own,
+        # and the checks above read those. Hold them to the shopper's copy, or a merchant could sign
+        # the right hash beside a higher ceiling and pass.
+        stated = (approved["ceiling"], approved["currency"], approved["expires_at"])
+        copy = (_d(approval.ceiling), approval.terms.shopper_currency, utc(approval.expires_at).isoformat())
+        if stated != copy:
+            return Check(False, (*findings, f"the receipt states the approval as {stated[0]} {stated[1]}, "
+                                            f"the shopper's copy says {copy[0]} {copy[1]}"))
+        if Decimal(charged["amount"]) > approval.ceiling:
+            return Check(False, (*findings, f"charged {charged['amount']} above the shopper's ceiling {copy[0]}"))
         findings.append("matches the shopper's own copy of the approval")
     return Check(True, tuple(findings))
