@@ -37,9 +37,16 @@ GET /acp/approvals/{id} (what to sign, and the challenge) and POST
 link is the capability: a session id is 96 random bits. Every requote clears the
 signature, so terms that changed are always signed again.
 
-Airwallex has not published its exact create_checkout contract. Every guess
-about it lives in this file (and the HMAC scheme in configuration), so a
-correction never reaches the core.
+Airwallex's create_checkout (guide of 2026-11-03, airwallexdev.com/agentic-commerce)
+is one signed POST that only prices: POST /acp/create_checkout takes the cart
+and a currency and answers line items with what is available, the totals in
+minor units and a permalink. Every call is a fresh quote under a new checkout
+id, priced from the live catalogue with a fresh rate lock, and kept as a
+QuoteRecord: Airwallex's MCP creates and charges the payment intent itself, so
+the payment webhook (C9) finds the quote an intent belongs to with quote_for().
+The checkout_sessions routes stay as they are for our own MCP. Every reading of
+Airwallex's wire lives in this file (and the HMAC scheme in configuration), so
+a correction never reaches the core.
 """
 
 from __future__ import annotations
@@ -54,7 +61,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import quote as url_quote, urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -77,6 +84,8 @@ APPROVAL_TTL = timedelta(minutes=15)
 CURRENCY_REFUSED = (400, 422)  # Airwallex refusing the request; about the currency only if the error names one
 SESSION_TTL = timedelta(hours=1)
 PREFIX = "/acp/checkout_sessions"
+CREATE_CHECKOUT = "/acp/create_checkout"  # the URL registered as apis.create_checkout at onboarding
+QUOTE_TTL = timedelta(hours=1)  # a create_checkout quote holds as long as its rate lock, and at most this
 APPROVALS = "/acp/approvals"  # the shopper's approval page (U1); no HMAC
 ASSERTION_FIELDS = ("credential_id", "public_key_spki_der", "authenticator_data", "client_data_json", "signature")
 # A16: Airwallex's payment attempt failure_code is one of authentication_failed, capture_failed,
@@ -260,26 +269,83 @@ def _restore(s: Session, saved: dict[str, Any]) -> None:
         setattr(s, name, value)
 
 
+@dataclass(frozen=True)
+class QuoteRecord:
+    """What one create_checkout call quoted, so the payment webhook can check an intent against it (C9, W3).
+
+    total_minor is the items only, in minor units of `currency`. Fulfillment is
+    never in it: Airwallex adds the selected option's cost (`options`) on top.
+    terms, terms_hash and approval are None when nothing in the cart was
+    available; the approval's ceiling is the items total.
+    """
+
+    checkout_id: str
+    created: datetime
+    expires_at: datetime  # the quote's rate lock expiry, or created + QUOTE_TTL if sooner or none
+    currency: str
+    line_items: tuple[dict[str, Any], ...]  # as answered: id, item_id, requested_quantity, available_quantity
+    terms: Terms | None
+    terms_hash: str | None
+    approval: Approval | None
+    total_minor: int
+    options: dict[str, int]  # fulfillment option id -> cost in minor units of `currency`
+    customer: dict[str, str] | None
+    shipping_address: dict[str, str] | None
+
+
 ADDRESS_FIELDS = ("name", "line_one", "line_two", "city", "state", "country", "postal_code")  # ACP's Address
 MAX_ADDRESS_FIELD = 256
+# Airwallex's create_checkout body (guide of 2026-11-03)
+CUSTOMER_FIELDS = ("id", "email", "first_name", "last_name", "phone_number")
+SHIPPING_ADDRESS_FIELDS = ("street", "city", "state", "postcode", "country_code")
 
 
-def _read_address(value: Any) -> dict[str, str] | None:
-    """ACP's address fields as sent, or None to clear it. Errors name the field, never echo the value."""
+def _read_text_fields(value: Any, name: str, allowed: tuple[str, ...]) -> dict[str, str] | None:
+    """The allowed text fields of an optional object, as sent, or None. Errors name the field, never echo the value."""
     if value is None:
         return None
     if not isinstance(value, dict):
-        raise AcpError(400, "invalid", "fulfillment_address must be an object", "$.fulfillment_address")
+        raise AcpError(400, "invalid", f"{name} must be an object", f"$.{name}")
     out = {}
-    for name in ADDRESS_FIELDS:
-        part = value.get(name)
+    for key in allowed:
+        part = value.get(key)
         if part is None:
             continue
         if not isinstance(part, str) or len(part) > MAX_ADDRESS_FIELD:
-            raise AcpError(400, "invalid", f"fulfillment_address.{name} must be text of at most "
-                                           f"{MAX_ADDRESS_FIELD} characters", f"$.fulfillment_address.{name}")
-        out[name] = part
+            raise AcpError(400, "invalid", f"{name}.{key} must be text of at most "
+                                           f"{MAX_ADDRESS_FIELD} characters", f"$.{name}.{key}")
+        out[key] = part
     return out or None
+
+
+def _read_address(value: Any) -> dict[str, str] | None:
+    """ACP's address fields as sent, or None to clear it."""
+    return _read_text_fields(value, "fulfillment_address", ADDRESS_FIELDS)
+
+
+def _read_line_items(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """create_checkout's line_items as sent: Airwallex's line id, our variant id (the SKU), the quantity asked for."""
+    items = body.get("line_items")
+    if not isinstance(items, list) or not items:
+        raise AcpError(400, "invalid", "line_items must be a non-empty list", "$.line_items")
+    lines: list[dict[str, Any]] = []
+    for i, item in enumerate(items):
+        where = f"$.line_items[{i}]"
+        if not isinstance(item, dict):
+            raise AcpError(400, "invalid", "each line item must be an object", where)
+        for name in ("id", "item_id"):
+            value = item.get(name)
+            if not isinstance(value, str) or not value or len(value) > MAX_ADDRESS_FIELD:
+                raise AcpError(400, "invalid", f"{name} must be text of 1 to {MAX_ADDRESS_FIELD} characters",
+                               f"{where}.{name}")
+        if any(line["id"] == item["id"] for line in lines):
+            raise AcpError(400, "invalid", "line item ids must be unique", f"{where}.id")
+        qty = item.get("requested_quantity")
+        if isinstance(qty, bool) or not isinstance(qty, int) or qty < 1:
+            raise AcpError(400, "invalid", "requested_quantity must be a positive integer",
+                           f"{where}.requested_quantity")
+        lines.append({"id": item["id"], "item_id": item["item_id"], "requested_quantity": qty})
+    return lines
 
 
 def _read_items(body: dict[str, Any]) -> dict[str, int] | None:
@@ -350,6 +416,7 @@ class AcpApi:
         self.sessions: dict[str, Session] = {}
         self.idempotency = IdempotencyStore()
         self.passkeys: dict[str, bytes] = {}  # credential id -> public key; the first valid use binds it
+        self.quotes: dict[str, list[QuoteRecord]] = {}  # create_checkout: checkout id -> its quotes, newest last
 
     # ---------------------------------------------------------------- the shape
 
@@ -768,6 +835,89 @@ class AcpApi:
                            "content": f"Refused: {d.reason}. Nothing was charged."}]
         return 200, self.view(s)
 
+    # ---------------------------------------------------------------- create_checkout (Airwallex's MCP)
+
+    def create_checkout(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """Price the cart now, keep the quote, and answer Airwallex's create_checkout.
+
+        Called when the shopper starts or updates checkout. Nothing here charges:
+        Airwallex's MCP creates the payment intent from this answer. A line we
+        cannot fill is answered with what is available (0 for an unknown or sold
+        out item), never an error, and the rest is priced with a fresh rate lock.
+        """
+        now = self.clock()
+        lines = _read_line_items(body)
+        currency = _read_currency(body)
+        if currency is None:
+            raise AcpError(400, "invalid", "currency is required", "$.currency")
+        customer = _read_text_fields(body.get("customer"), "customer", CUSTOMER_FIELDS)
+        address = _read_text_fields(body.get("shipping_address"), "shipping_address", SHIPPING_ADDRESS_FIELDS)
+        checkout_id = f"chk_{secrets.token_hex(12)}"
+        # Key names only: whether Airwallex sends more than its guide shows (an id on an update?) is
+        # what the first live calls tell us. Values can hold the shopper's details, so never those.
+        log.warning("acp create_checkout %s: %d lines in %s, body keys %s", checkout_id, len(lines), currency,
+                    sorted(map(str, body)))
+        lines, cart = self._available(lines)
+        terms, problem = self._price(cart, currency, checkout_id, now) if cart else (None, None)
+        if problem is not None:  # a currency we cannot price, or stock that moved while pricing (retry)
+            raise AcpError(409 if problem["code"] == "out_of_stock" else 400, problem["code"], problem["content"],
+                           problem.get("param"))
+        expires, approval = now + QUOTE_TTL, None
+        if terms is not None:
+            if terms.fx is not None:
+                expires = min(expires, utc(terms.fx.expires_at))
+            email = (customer or {}).get("email")
+            approval = Approval.grant(terms, terms.shopper_total, f"acp:{email}" if email else "acp:platform",
+                                      now, expires)
+        total = _amount(terms.shopper_total, currency) if terms is not None else 0
+        out: dict[str, Any] = {
+            "id": checkout_id,
+            "line_items": lines,
+            "totals": [{"type": "subtotal", "amount": total, "display_text": "Subtotal"},
+                       {"type": "total", "amount": total, "display_text": "Total"}],
+        }
+        link = self._permalink(lines)
+        if link is not None:
+            out["permalink_url"] = link
+        self.quotes.setdefault(checkout_id, []).append(QuoteRecord(
+            checkout_id=checkout_id, created=now, expires_at=expires, currency=currency,
+            line_items=tuple(dict(line) for line in lines), terms=terms,
+            terms_hash=approval.hash if approval else None, approval=approval, total_minor=total,
+            options={}, customer=customer, shipping_address=address))
+        return 200, out
+
+    def quote_for(self, checkout_id: str) -> QuoteRecord | None:
+        """The newest quote kept under this checkout id, or None."""
+        found = self.quotes.get(checkout_id)
+        return found[-1] if found else None
+
+    def _available(self, lines: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        """Each line with its available_quantity, and the cart of what is available.
+
+        Two lines for one SKU share its stock, in the order they were sent.
+        """
+        left: dict[str, int] = {}
+        cart: dict[str, int] = {}
+        out = []
+        for line in lines:
+            sku = line["item_id"]
+            if sku not in left:
+                product = self.merchant.catalog.get(sku)  # both merchants keep the live catalogue here
+                left[sku] = max(product.stock, 0) if product is not None else 0
+            n = min(line["requested_quantity"], left[sku])
+            left[sku] -= n
+            if n:
+                cart[sku] = cart.get(sku, 0) + n
+            out.append({**line, "available_quantity": n})
+        return out, cart
+
+    def _permalink(self, lines: list[dict[str, Any]]) -> str | None:
+        """The first known product's page, until the shopper page has a checkout view for this path."""
+        sku = next((line["item_id"] for line in lines if line["item_id"] in self.merchant.catalog), None)
+        if sku is None or not self.config.public_url:
+            return None
+        return f"{self.config.public_url.rstrip('/')}/p/{url_quote(sku, safe='')}"
+
     def cancel(self, session_id: str) -> tuple[int, dict[str, Any]]:
         s = self._session(session_id)
         with s.lock:
@@ -927,6 +1077,11 @@ def router(api: AcpApi) -> APIRouter:
             return JSONResponse(err.body(), status_code=err.status, headers={**echo, **err.headers})
         return JSONResponse(payload, status_code=status, headers=echo)
 
+    @r.post(CREATE_CHECKOUT)
+    async def create_checkout(request: Request):
+        # Airwallex sends no Idempotency-Key here; a repeat is simply a fresh quote under a new id.
+        return await handle(request, api.create_checkout, post=False)
+
     @r.post(PREFIX)
     async def create_session(request: Request):
         return await handle(request, api.create, post=True)
@@ -988,4 +1143,4 @@ def observe(request: Request, raw: bytes) -> None:
 
 def is_acp(path: str) -> bool:
     """The checkout API (HMAC in its routes) and the approval page's calls (passkey): outside TAP."""
-    return any(path == p or path.startswith(p + "/") for p in (PREFIX, APPROVALS))
+    return path == CREATE_CHECKOUT or any(path == p or path.startswith(p + "/") for p in (PREFIX, APPROVALS))
