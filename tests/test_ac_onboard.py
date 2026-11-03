@@ -241,7 +241,7 @@ class OnboardTest(unittest.TestCase):
         client = FakeClient(config=CONFIG)
         code, text = run(["--onboard", "--base-url", "https://other.example"], client=client)
         self.assertEqual((code, client.posts), (1, []))
-        self.assertIn("POST /config/update", text)
+        self.assertIn("--update", text)
 
     def test_the_old_sessions_url_counts_as_different(self):
         old = {**CONFIG, "apis": {"create_checkout": BASE + "/acp/checkout_sessions", "secret_key_configured": True}}
@@ -259,6 +259,57 @@ class OnboardTest(unittest.TestCase):
         code, text = run(["--onboard"], client=client)
         self.assertEqual(code, 2)
         self.assertIn("HTTP 400 INVALID_REQUEST bad url", text)
+
+
+class UpdateTest(unittest.TestCase):
+    """POST /config/update replaces the whole apis section, so it always carries all three parts."""
+
+    APIS = {"create_checkout": BASE + "/acp/create_checkout", "secret_key": SECRET,
+            "oauth": {"acp": {"oauth_base": BASE, "oauth_jwks": BASE + "/.well-known/jwks.json",
+                              "scopes": ["openid", "email"]}}}
+
+    def test_a_dry_run_hides_the_secret_and_calls_nothing(self):
+        code, text = run(["--update", "--dry-run"], fetch=lambda *a: self.fail("no host call expected"))
+        self.assertEqual(code, 0)
+        self.assertIn("/pa/agentic_commerce/config/update", text)
+        body = json.loads(text.split("\n", 1)[1])
+        self.assertEqual(body, {"apis": {**self.APIS, "secret_key": "<set, 64 chars>"},
+                                "whitelisted_image_domains": [BASE]})
+        self.assertNotIn(SECRET, text)
+
+    def test_an_onboarded_account_gets_the_whole_apis_section_and_never_the_psp_keys(self):
+        client = FakeClient(config=CONFIG)
+        code, text = run(["--update"], client=client)
+        self.assertEqual(code, 0, text)
+        (path, body), = client.posts
+        self.assertEqual(path, "/pa/agentic_commerce/config/update")
+        self.assertEqual(body, {"apis": self.APIS, "whitelisted_image_domains": [BASE]})
+        self.assertIn("updated (apis and image domains; the PSP keys unchanged)", text)
+        self.assertNotIn(SECRET, text)
+        self.assertNotIn(API_KEY, text)
+
+    def test_an_account_not_onboarded_is_not_updated(self):
+        client = FakeClient()
+        code, text = run(["--update"], client=client)
+        self.assertEqual((code, client.posts), (1, []))
+        self.assertIn("onboard first", text)
+
+    def test_a_host_that_is_not_ready_stops_the_update(self):
+        client = FakeClient(config=CONFIG)
+        code, text = run(["--update"], client=client, fetch=host(acp_status=404, acp_body={}))
+        self.assertEqual((code, client.posts), (1, []))
+        self.assertIn("nothing sent", text)
+
+    def test_an_update_refusal_exits_two(self):
+        client = FakeClient(config=CONFIG, post_error=AirwallexError(400, {"code": "INVALID_REQUEST",
+                                                                           "message": "oauth_jwks missing"}))
+        code, text = run(["--update"], client=client)
+        self.assertEqual(code, 2)
+        self.assertIn("refused the update: HTTP 400 INVALID_REQUEST oauth_jwks missing", text)
+
+    def test_onboard_and_update_together_are_refused(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            run(["--onboard", "--update", "--dry-run"])
 
 
 try:

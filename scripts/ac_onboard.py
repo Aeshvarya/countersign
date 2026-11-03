@@ -5,6 +5,8 @@
     PYTHONPATH=src python scripts/ac_onboard.py --check-host         # is /acp served?
     PYTHONPATH=src python scripts/ac_onboard.py --onboard --dry-run  # the body, secrets hidden
     PYTHONPATH=src python scripts/ac_onboard.py --onboard            # POST /onboard, once
+    PYTHONPATH=src python scripts/ac_onboard.py --update --dry-run   # the config/update body, secret hidden
+    PYTHONPATH=src python scripts/ac_onboard.py --update             # POST /config/update: apis + image domains
 
 Probe, read-only: log in, then GET both config paths. The documented one is
 /api/v1/pa/agentic_commerce/config; another Kit 10 team saw 401 "Admin
@@ -29,7 +31,10 @@ the host's scheme and name with no path, where the catalogue's images live.
 
 Onboarding is one-shot: Airwallex ignores the payload of a second POST /onboard,
 and changes go through POST /config/update, which replaces a whole section (the
-PSP key pair, or create_checkout, secret and OAuth together).
+PSP key pair, or create_checkout, secret and OAuth together). --update sends the
+apis section whole, with the image domains, and never the PSP keys (an omitted
+section stays as it is). The secret it sends replaces the stored one, so it must
+be the one the host runs with.
 
 Exits 0 when the thing asked for is true or done, 1 when something is not ready
 yet, 2 when Airwallex refused the call. Prints status codes, Airwallex's code
@@ -56,6 +61,7 @@ from countersign.edge.acp import CREATE_CHECKOUT, AcpConfig
 CONFIG_PATH = "/pa/agentic_commerce/config"
 OTHER_CONFIG_PATH = "/agentic-commerce/config"  # seen by another Kit 10 team; probed, never written to
 ONBOARD_PATH = "/pa/agentic_commerce/onboard"
+UPDATE_PATH = "/pa/agentic_commerce/config/update"
 NOT_ONBOARDED = "MERCHANT_CONFIG_NOT_FOUND"
 JWKS_PATH = "/.well-known/jwks.json"
 OAUTH_SCOPES = ["openid", "email"]  # advertised to Claude; ACP does not enforce them
@@ -136,31 +142,43 @@ def psp_keys(env: Mapping[str, str]) -> tuple[str, str, str]:
     return env.get("AIRWALLEX_CLIENT_ID", ""), env.get("AIRWALLEX_API_KEY", ""), "the login key"
 
 
-def onboard_body(env: Mapping[str, str], base_url: str) -> tuple[dict, str]:
-    """The first POST /onboard body: both sections, all four values. ValueError if one is missing."""
+def apis_section(env: Mapping[str, str], base_url: str) -> dict:
+    """The whole apis section: Airwallex replaces it as one, so it always carries all three parts."""
     acp = AcpConfig.from_env(env)  # the same 32-byte rule the edge applies at start-up
     if acp is None:
         raise ValueError("COUNTERSIGN_ACP_HMAC_SECRET is not set")
+    return {
+        "create_checkout": create_checkout_url(base_url),
+        "secret_key": acp.secret.decode(),
+        "oauth": {"acp": {"oauth_base": oauth_base(base_url), "oauth_jwks": oauth_base(base_url) + JWKS_PATH,
+                          "scopes": list(OAUTH_SCOPES)}},
+    }
+
+
+def onboard_body(env: Mapping[str, str], base_url: str) -> tuple[dict, str]:
+    """The first POST /onboard body: both sections and the image domains. ValueError if a value is missing."""
+    apis = apis_section(env, base_url)
     client_id, api_key, which = psp_keys(env)
     if not (client_id and api_key):
         raise ValueError("no PSP key: set AIRWALLEX_CLIENT_ID and AIRWALLEX_API_KEY")
     body = {
         "psp_config": {"api_key_data": {"client_id": client_id, "api_key": api_key}},
-        "apis": {
-            "create_checkout": create_checkout_url(base_url),
-            "secret_key": acp.secret.decode(),
-            "oauth": {"acp": {"oauth_base": oauth_base(base_url), "oauth_jwks": oauth_base(base_url) + JWKS_PATH,
-                              "scopes": list(OAUTH_SCOPES)}},
-        },
+        "apis": apis,
         "whitelisted_image_domains": [image_domain(base_url)],
     }
     return body, which
 
 
+def update_body(env: Mapping[str, str], base_url: str) -> dict:
+    """POST /config/update: the apis section whole and the image domains; the PSP section is left out, so kept."""
+    return {"apis": apis_section(env, base_url), "whitelisted_image_domains": [image_domain(base_url)]}
+
+
 def redacted(body: dict) -> dict:
     hidden = json.loads(json.dumps(body))
-    data = hidden["psp_config"]["api_key_data"]
-    data["api_key"] = f"<set, {len(data['api_key'])} chars>"
+    if "psp_config" in hidden:
+        data = hidden["psp_config"]["api_key_data"]
+        data["api_key"] = f"<set, {len(data['api_key'])} chars>"
     hidden["apis"]["secret_key"] = f"<set, {len(hidden['apis']['secret_key'])} chars>"
     return hidden
 
@@ -229,12 +247,16 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
                         help="the public https host that serves the edge (/acp, /p, /img)")
     parser.add_argument("--check-host", action="store_true", help="check the host only, call no Airwallex API")
     parser.add_argument("--onboard", action="store_true", help="POST /onboard once, after the probe and host check")
-    parser.add_argument("--skip-host-check", action="store_true", help="onboard even if the host check fails")
-    parser.add_argument("--dry-run", action="store_true", help="with --onboard: print the body, secrets hidden")
+    parser.add_argument("--update", action="store_true",
+                        help="POST /config/update once onboarded: create_checkout, secret, OAuth and image domains")
+    parser.add_argument("--skip-host-check", action="store_true", help="send even if the host check fails")
+    parser.add_argument("--dry-run", action="store_true", help="with --onboard or --update: print the body, secrets hidden")
     args = parser.parse_args(argv)
 
     base = (args.base_url or "").rstrip("/")
-    if (args.check_host or args.onboard) and not base.startswith("https://"):
+    if args.onboard and args.update:
+        parser.error("--onboard or --update, not both")
+    if (args.check_host or args.onboard or args.update) and not base.startswith("https://"):
         parser.error("needs --base-url (or COUNTERSIGN_PUBLIC_URL) as an https URL")
 
     if args.onboard:
@@ -244,6 +266,15 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
             parser.error(str(err))
         if args.dry_run:
             print(f"POST /api/v1{ONBOARD_PATH} (PSP key: {which}), nothing sent:", file=out)
+            print(json.dumps(redacted(body), indent=2), file=out)
+            return 0
+    if args.update:
+        try:
+            body = update_body(env, base)
+        except ValueError as err:
+            parser.error(str(err))
+        if args.dry_run:
+            print(f"POST /api/v1{UPDATE_PATH}, nothing sent:", file=out)
             print(json.dumps(redacted(body), indent=2), file=out)
             return 0
 
@@ -276,6 +307,8 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
     if state == "onboarded":
         print("onboarded:", file=out)
         print("\n".join(summary(config)), file=out)
+        if args.update:
+            return _update(client, body, base, fetch, args.skip_host_check, out)
         if not args.onboard:
             return 0
         current = (config.get("apis") or {}).get("create_checkout")
@@ -283,11 +316,14 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
             print("already onboarded with this create_checkout: nothing sent", file=out)
             return 0
         print(f"create_checkout differs from {create_checkout_url(base)}. A second POST /onboard is ignored; "
-              "change it with POST /config/update, sending create_checkout, the secret and OAuth together",
+              "change it with --update, which sends create_checkout, the secret and OAuth together",
               file=out)
         return 1
 
     print("onboarding API is live; this account is not onboarded yet", file=out)
+    if args.update:
+        print("nothing to update: onboard first (--onboard)", file=out)
+        return 1
     if not args.onboard:
         return 1
     if not args.skip_host_check:
@@ -302,6 +338,24 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
         print(f"Airwallex refused the onboarding: {_refusal(err)}", file=out)
         return 2
     print(f"onboarded (PSP key: {which}):", file=out)
+    print("\n".join(summary(reply)), file=out)
+    return 0
+
+
+def _update(client: Airwallex, body: dict, base: str, fetch: Fetch, skip_host_check: bool, out: TextIO) -> int:
+    """POST /config/update for an onboarded account, after the host check."""
+    if not skip_host_check:
+        ok, lines = check_host(base, fetch)
+        print("\n".join(lines), file=out)
+        if not ok:
+            print("host not ready: nothing sent (Airwallex's next call would fail)", file=out)
+            return 1
+    try:
+        reply = client.post(UPDATE_PATH, body)
+    except AirwallexError as err:
+        print(f"Airwallex refused the update: {_refusal(err)}", file=out)
+        return 2
+    print("updated (apis and image domains; the PSP keys unchanged):", file=out)
     print("\n".join(summary(reply)), file=out)
     return 0
 
