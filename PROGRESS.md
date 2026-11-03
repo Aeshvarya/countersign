@@ -138,6 +138,7 @@ uv venv && uv pip install -e '.[dev]'
 Newest first.
 
 ### 2026-11-03
+- **Webhook** (Aeshvarya): the sandbox's `countersign` webhook (payment intents, the two attempt failures, refunds, disputes) points at `/webhooks/airwallex`; its secret is on the host. A signed test event is accepted (200, ignored: not our payment), a forged one refused (401).
 - **A12** (Aeshvarya): sandbox registered in Singapore with a scoped key (payment acceptance, disputes, files, FX conversion, simulations); keys on the host. `smoke.py` 19/19 with **real Airwallex rate locks**: a $89.99 item quoted at ₹8,823.38 (`cvq_…`), so INR is a convertible shopper currency here. Card payments wait on Turner.
 - **A7 live** (Aeshvarya): https://countersign-demo.onrender.com from the Blueprint; `smoke.py` 19/19 pass; keep-warm on.
 - **Receipts** (Aeshvarya, `4966d57`): with the shopper's copy, the receipt's stated ceiling, currency and expiry must equal the copy's, so a signed receipt claiming a higher ceiling no longer passes; a numeric signature or a malformed body is a failed check, not a 500 (both from Varunika's 11-01 probe).
