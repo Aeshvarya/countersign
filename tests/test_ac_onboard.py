@@ -23,7 +23,8 @@ SIGNED_UPLOAD_URL = "https://upload.example/slot?sig=never-printed"
 CONFIG = {
     "merchant_id": "mer_1", "status": "ACTIVE",
     "psp_config": {"psp_name": "airwallex", "client_id": "cid", "api_key_configured": True, "managed_payment": True},
-    "apis": {"create_checkout": BASE + "/acp/checkout_sessions", "secret_key_configured": True},
+    "apis": {"create_checkout": BASE + "/acp/create_checkout", "secret_key_configured": True},
+    "whitelisted_image_domains": [BASE],
     "mcp_endpoints": {"acp": "/pa/ai/mer_1/acp/mcp", "ucp": "/pa/ai/mer_1/ucp/mcp"},
     "product_upload": {"url": SIGNED_UPLOAD_URL, "method": "PUT", "headers": {"x-sig": "never-printed"},
                        "expires_at": "2026-11-02T10:00:00Z"},
@@ -61,13 +62,24 @@ class FakeClient:
         return CONFIG
 
 
-def host(acp_status=401, acp_body=None, page_status=200, seconds=0.3):
+DISCOVERY = {"issuer": BASE, "authorization_endpoint": BASE + "/oauth/authorize",
+             "token_endpoint": BASE + "/oauth/token", "registration_endpoint": BASE + "/oauth/register",
+             "jwks_uri": BASE + "/.well-known/jwks.json", "code_challenge_methods_supported": ["S256"]}
+JWKS = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "k1", "x": "x", "y": "y"}]}
+
+
+def host(acp_status=401, acp_body=None, page_status=200, seconds=0.3, discovery=None, jwks=None):
+    """A fake host. With no discovery document the OAuth server answers 404, as before C14 is live."""
     calls = []
 
     def fetch(method, url, body):
         calls.append((method, url))
-        if url.endswith("/acp/checkout_sessions"):
+        if url.endswith("/acp/create_checkout"):
             return acp_status, {"type": "invalid_request", "code": "unauthorized"} if acp_body is None else acp_body, seconds
+        if url.endswith("/.well-known/openid-configuration"):
+            return (404, None, 0.1) if discovery is None else (200, discovery, 0.1)
+        if url.endswith("/.well-known/jwks.json"):
+            return (404, None, 0.1) if jwks is None else (200, jwks, 0.1)
         return page_status, None, 0.1
     fetch.calls = calls
     return fetch
@@ -132,6 +144,7 @@ class ProbeTest(unittest.TestCase):
         self.assertIn("merchant_id: mer_1", text)
         self.assertIn("mcp acp: /pa/ai/mer_1/acp/mcp", text)
         self.assertIn("product upload slot expires: 2026-11-02T10:00:00Z", text)
+        self.assertIn(f"image domains: {BASE}", text)
         self.assertNotIn("never-printed", text)
 
     def test_without_keys_nothing_is_called(self):
@@ -145,7 +158,8 @@ class HostCheckTest(unittest.TestCase):
         fetch = host()
         code, text = run(["--check-host"], fetch=fetch)
         self.assertEqual(code, 0, text)
-        self.assertIn("401 from the ACP door", text)
+        self.assertIn("POST /acp/create_checkout unsigned -> 401 from the ACP door", text)
+        self.assertEqual(fetch.calls[0], ("POST", BASE + "/acp/create_checkout"))
         self.assertEqual(fetch.calls[1], ("GET", BASE + "/p/AUD-018-0"))
 
     def test_a_tap_refusal_means_acp_is_not_mounted(self):
@@ -158,6 +172,42 @@ class HostCheckTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("does not serve the edge's /acp routes", text)
         self.assertIn("catalogue links would not resolve", text)
+
+    def test_no_oauth_server_yet_is_a_warning_only(self):
+        code, text = run(["--check-host"])
+        self.assertEqual(code, 0, text)
+        self.assertIn("warning, the OAuth server is not served yet", text)
+
+    def test_an_oauth_server_as_registered_passes(self):
+        code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks=JWKS))
+        self.assertEqual(code, 0, text)
+        self.assertIn("a JWKS with 1 key(s), as onboarding registers", text)
+
+    def test_an_oauth_server_that_disagrees_fails(self):
+        cases = {
+            "issuer is 'https://shop.example/'": {"issuer": BASE + "/"},  # one slash breaks Claude's check
+            "jwks_uri is": {"jwks_uri": BASE + "/jwks"},
+            "no registration_endpoint": {"registration_endpoint": None},
+            "lacks S256": {"code_challenge_methods_supported": ["plain"]},
+        }
+        for said, change in cases.items():
+            with self.subTest(said=said):
+                code, text = run(["--check-host"], fetch=host(discovery={**DISCOVERY, **change}, jwks=JWKS))
+                self.assertEqual(code, 1, text)
+                self.assertIn(said, text)
+
+    def test_a_jwks_with_no_keys_fails(self):
+        for jwks in (None, {"keys": []}):
+            with self.subTest(jwks=jwks):
+                code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks=jwks))
+                self.assertEqual(code, 1, text)
+                self.assertIn("every access token would be rejected", text)
+
+    def test_an_oauth_mismatch_stops_the_onboard(self):
+        client = FakeClient()
+        code, text = run(["--onboard"], client=client, fetch=host(discovery={**DISCOVERY, "issuer": "x"}, jwks=JWKS))
+        self.assertEqual((code, client.posts), (1, []))
+        self.assertIn("nothing sent", text)
 
     def test_a_slow_answer_is_flagged(self):
         _, text = run(["--check-host"], fetch=host(seconds=31))
@@ -173,8 +223,9 @@ class OnboardTest(unittest.TestCase):
         code, text = run(["--onboard", "--dry-run"], fetch=lambda *a: self.fail("no host call expected"))
         self.assertEqual(code, 0)
         body = json.loads(text.split("\n", 1)[1])
-        self.assertEqual(body["apis"]["create_checkout"], BASE + "/acp/checkout_sessions")
+        self.assertEqual(body["apis"]["create_checkout"], BASE + "/acp/create_checkout")
         self.assertEqual(body["apis"]["secret_key"], "<set, 64 chars>")
+        self.assertEqual(body["apis"]["oauth"]["acp"]["oauth_jwks"], BASE + "/.well-known/jwks.json")
         self.assertNotIn(SECRET, text)
         self.assertNotIn(API_KEY, text)
 
@@ -184,11 +235,24 @@ class OnboardTest(unittest.TestCase):
         self.assertEqual(code, 0, text)
         (path, body), = client.posts
         self.assertEqual(path, "/pa/agentic_commerce/onboard")
-        self.assertEqual(body, {"psp_config": {"api_key_data": {"client_id": "cid", "api_key": API_KEY}},
-                                "apis": {"create_checkout": BASE + "/acp/checkout_sessions", "secret_key": SECRET}})
+        self.assertEqual(body, {
+            "psp_config": {"api_key_data": {"client_id": "cid", "api_key": API_KEY}},
+            "apis": {"create_checkout": BASE + "/acp/create_checkout", "secret_key": SECRET,
+                     "oauth": {"acp": {"oauth_base": BASE, "oauth_jwks": BASE + "/.well-known/jwks.json",
+                                       "scopes": ["openid", "email"]}}},
+            "whitelisted_image_domains": [BASE]})
         self.assertIn("PSP key: the login key", text)
         self.assertNotIn(SECRET, text)
         self.assertNotIn(API_KEY, text)
+
+    def test_the_image_domain_is_scheme_and_host_only(self):
+        for base in ("https://shop.example", "https://shop.example/", "https://shop.example:8443/shop"):
+            with self.subTest(base=base):
+                body, _ = ac_onboard.onboard_body(ENV, base)
+                self.assertEqual(body["whitelisted_image_domains"],
+                                 ["https://shop.example:8443" if "8443" in base else "https://shop.example"])
+        body, _ = ac_onboard.onboard_body(ENV, BASE + "/")
+        self.assertEqual(body["apis"]["oauth"]["acp"]["oauth_base"], BASE)  # the issuer, no trailing slash
 
     def test_a_separate_psp_key_is_used_when_set(self):
         client = FakeClient()
@@ -220,11 +284,17 @@ class OnboardTest(unittest.TestCase):
         self.assertEqual((code, client.posts), (0, []))
         self.assertIn("already onboarded with this create_checkout", text)
 
-    def test_a_different_url_points_to_put_config(self):
+    def test_a_different_url_points_to_config_update(self):
         client = FakeClient(config=CONFIG)
         code, text = run(["--onboard", "--base-url", "https://other.example"], client=client)
         self.assertEqual((code, client.posts), (1, []))
-        self.assertIn("PUT /config", text)
+        self.assertIn("--update", text)
+
+    def test_the_old_sessions_url_counts_as_different(self):
+        old = {**CONFIG, "apis": {"create_checkout": BASE + "/acp/checkout_sessions", "secret_key_configured": True}}
+        code, text = run(["--onboard"], client=FakeClient(config=old))
+        self.assertEqual(code, 1)
+        self.assertIn("create_checkout differs", text)
 
     def test_a_scope_problem_stops_the_onboard(self):
         client = FakeClient(get_error=NO_ROUTE, other=SCOPE)
@@ -236,6 +306,57 @@ class OnboardTest(unittest.TestCase):
         code, text = run(["--onboard"], client=client)
         self.assertEqual(code, 2)
         self.assertIn("HTTP 400 INVALID_REQUEST bad url", text)
+
+
+class UpdateTest(unittest.TestCase):
+    """POST /config/update replaces the whole apis section, so it always carries all three parts."""
+
+    APIS = {"create_checkout": BASE + "/acp/create_checkout", "secret_key": SECRET,
+            "oauth": {"acp": {"oauth_base": BASE, "oauth_jwks": BASE + "/.well-known/jwks.json",
+                              "scopes": ["openid", "email"]}}}
+
+    def test_a_dry_run_hides_the_secret_and_calls_nothing(self):
+        code, text = run(["--update", "--dry-run"], fetch=lambda *a: self.fail("no host call expected"))
+        self.assertEqual(code, 0)
+        self.assertIn("/pa/agentic_commerce/config/update", text)
+        body = json.loads(text.split("\n", 1)[1])
+        self.assertEqual(body, {"apis": {**self.APIS, "secret_key": "<set, 64 chars>"},
+                                "whitelisted_image_domains": [BASE]})
+        self.assertNotIn(SECRET, text)
+
+    def test_an_onboarded_account_gets_the_whole_apis_section_and_never_the_psp_keys(self):
+        client = FakeClient(config=CONFIG)
+        code, text = run(["--update"], client=client)
+        self.assertEqual(code, 0, text)
+        (path, body), = client.posts
+        self.assertEqual(path, "/pa/agentic_commerce/config/update")
+        self.assertEqual(body, {"apis": self.APIS, "whitelisted_image_domains": [BASE]})
+        self.assertIn("updated (apis and image domains; the PSP keys unchanged)", text)
+        self.assertNotIn(SECRET, text)
+        self.assertNotIn(API_KEY, text)
+
+    def test_an_account_not_onboarded_is_not_updated(self):
+        client = FakeClient()
+        code, text = run(["--update"], client=client)
+        self.assertEqual((code, client.posts), (1, []))
+        self.assertIn("onboard first", text)
+
+    def test_a_host_that_is_not_ready_stops_the_update(self):
+        client = FakeClient(config=CONFIG)
+        code, text = run(["--update"], client=client, fetch=host(acp_status=404, acp_body={}))
+        self.assertEqual((code, client.posts), (1, []))
+        self.assertIn("nothing sent", text)
+
+    def test_an_update_refusal_exits_two(self):
+        client = FakeClient(config=CONFIG, post_error=AirwallexError(400, {"code": "INVALID_REQUEST",
+                                                                           "message": "oauth_jwks missing"}))
+        code, text = run(["--update"], client=client)
+        self.assertEqual(code, 2)
+        self.assertIn("refused the update: HTTP 400 INVALID_REQUEST oauth_jwks missing", text)
+
+    def test_onboard_and_update_together_are_refused(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            run(["--onboard", "--update", "--dry-run"])
 
 
 try:
