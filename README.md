@@ -12,9 +12,9 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 |---|---|
 | Catalogue for Airwallex's merchant MCP, in Google Merchant Center format (C11) | done offline; live upload waits on sandbox keys and Kit 10 onboarding |
 | Public product pages and images the catalogue links to | done |
-| Airwallex's `create_checkout` (C10 amended, guide of 2026-11-03), `/acp/create_checkout` | done offline: every call prices the cart from the live catalogue with a fresh rate lock and keeps the quote for the payment webhook; a line we cannot fill comes back with `available_quantity` 0, never an error; one SHIPPING method, standard free and express 9.99 USD at the quote's rate; the total never includes shipping; onboarding registers the new URL once W4 lands |
+| Airwallex's `create_checkout` (C10 amended, guide of 2026-11-03), `/acp/create_checkout` | done offline: every call prices the cart from the live catalogue with a fresh rate lock and keeps the quote for the payment webhook; a line we cannot fill comes back with `available_quantity` 0, never an error; one SHIPPING method, standard free and express 9.99 USD at the quote's rate; the total never includes shipping; `scripts/ac_onboard.py` registers it with our OAuth server and image domain |
 | Our ACP checkout sessions (`/acp/checkout_sessions`, C10), on ACP 2026-04-17, for our own MCP | done offline; the shopper's ceiling holds: a re-quote above it waits for a new ceiling or, with U1, the shopper's passkey on the new terms, and a currency change waits for a ceiling in the new currency; a currency it cannot price is refused with the reason, and an Airwallex outage is a 503 to retry, never reported as the shopper's currency; the shipping address is kept and returned (not yet in the receipt); a card order's receipt shows in the session once Airwallex confirms the payment; onboarding script ready; live run waits on sandbox keys, a public host and Kit 10 onboarding |
-| Claude as the shopper's agent (A13) | done on our fallback MCP: `docs/RUNBOOK.md` (clean profile, the add commands, a purchase prompt and each exception, rehearsed five times); `scripts/mcp_token.py` puts Airwallex's MCP token in the shell; Airwallex's MCP waits on Kit 10 onboarding |
+| Claude as the shopper's agent (A13) | done on our fallback MCP: `docs/RUNBOOK.md` (clean profile, the add commands, a purchase prompt and each exception, rehearsed five times); Airwallex's MCP in Claude Desktop through `mcp-remote` written up, not rehearsed: it waits on Kit 10 onboarding and our OAuth server (C14) |
 | Real card payments through Airwallex (C9) | done offline: the shopper pays in Drop-in on `/pay/<id>`, paid only from Airwallex's own record; a refused card leaves the order open for another card and says what Airwallex reported, and cancel closes the payment; first live run waits on sandbox keys |
 | Shopper passkey approval (U1, C13) | done: verifier, edge routes, the shopper page (`/approve/<id>`), and the signature in the receipt (C13), attached only on `/acp` after it checks, never taken from an agent on the TAP door. It proves a passkey for this site signed the exact terms, not whose passkey it is (Decisions 2026-10-31) |
 | Receipts anyone can check (C8) | done: the shopper page and `/verify` check the merchant's signature in the browser, no server asked |
@@ -42,13 +42,14 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/upload_catalog.py --dry-run             # build and check the 100 catalogue rows, call nothing
 .venv/bin/python scripts/upload_catalog.py --base-url https://<public host>   # upsert them to Airwallex
 .venv/bin/python scripts/ac_onboard.py                          # is Kit 10 onboarding on this account, are we onboarded
-.venv/bin/python scripts/ac_onboard.py --check-host --base-url https://<public host>   # does the host serve /acp and /p
+.venv/bin/python scripts/ac_onboard.py --check-host --base-url https://<public host>   # does the host serve /acp/create_checkout, /p and the OAuth server
 .venv/bin/python scripts/ac_onboard.py --onboard --base-url https://<public host>      # onboard once (add --dry-run to see the body, secrets hidden)
+.venv/bin/python scripts/ac_onboard.py --update --base-url https://<public host>       # change create_checkout, secret and OAuth together (config/update)
 .venv/bin/python scripts/smoke.py --base-url https://<public host>       # every door of the deployed host (more with each secret in .env)
 .venv/bin/python scripts/smoke.py --base-url https://<public host> --buy # one purchase end to end: you approve and pay, it checks the receipt
 .venv/bin/python scripts/change_event.py --base-url https://<public host> --sku <sku> --percent 12   # the price moves on cue (also --price, --stock, --delivery)
 .venv/bin/python scripts/change_event.py --base-url https://<public host> --reset                    # every moved product back as uploaded
-eval "$(.venv/bin/python scripts/mcp_token.py)"                          # Airwallex's merchant MCP token into the shell, never on screen (docs/RUNBOOK.md)
+eval "$(.venv/bin/python scripts/mcp_token.py)"                          # an Airwallex login token into the shell, never on screen (not used on the Claude Desktop path)
 .venv/bin/python scripts/contrast.py                                     # WCAG AA contrast of every colour pair, light and dark (--strict exits 1)
 .venv/bin/python scripts/audit.py                                        # before the repo goes public: credentials, .env, card numbers, links
 ```
@@ -106,14 +107,14 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `scripts/payment_spike.py` | real rate lock + real payment on the Airwallex sandbox, in one command |
 | `scripts/tap_interop.py` | interop check against Visa's TAP reference code |
 | `scripts/upload_catalog.py` | upload the catalogue to Airwallex (dry run without keys) |
-| `scripts/ac_onboard.py` | onboarding probe, host check, and the one-time Kit 10 onboarding |
+| `scripts/ac_onboard.py` | onboarding probe, host check (with our OAuth server), the one-time Kit 10 onboarding and `--update` |
 | `scripts/smoke.py` | checks every door of the deployed host; `--buy` runs one purchase end to end |
 | `scripts/contrast.py` | V8 WCAG AA contrast of every colour pair the pages use, light and dark |
 | `scripts/change_event.py` | V6 from a terminal: price, stock, delivery or reset on the running host, through its lever routes |
-| `scripts/mcp_token.py` | A13 the bearer token for Airwallex's merchant MCP, straight into the shell |
+| `scripts/mcp_token.py` | an Airwallex login token, straight into the shell; not used on the Claude Desktop path |
 | `scripts/audit.py` | the audit before the repo goes public (A10), also run in CI |
 | `docs/VIDEO_RUN.md` | the video, shot by shot: what is on screen and what to type (A9) |
-| `docs/RUNBOOK.md` | A13 what to type to Claude and what should come back: connecting the MCP, the purchase, each exception |
+| `docs/RUNBOOK.md` | A13 what to type to Claude and what should come back: Claude Desktop on Airwallex's MCP, our fallback MCP, the purchase, each exception |
 | `PROGRESS.md`, `WORKPLAN.md` | where the work stands, who does what |
 
 ## Licence
