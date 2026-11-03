@@ -116,7 +116,7 @@ _Updated 2026-11-03_
 
 - **Work split:** proposed in WORKPLAN.md. Varunika confirms or counters by Mon 2026-10-12.
 - **Application fields** for the 10-23 close: copy them from the HackerEarth Submissions tab into this section.
-- **Is INR a convertible shopper currency** on our sandbox? A2 answers it.
+- ~~**Is INR a convertible shopper currency**~~ Answered 2026-11-03: yes, the live host locked an INR rate on our Singapore sandbox. A2 answers it.
 - **Does Airwallex round the shopper amount half-up?** A2 compares their payment intent amount with `computed_shopper_total()`. Their MCP docs (read 2026-10-19) say half to even, on the cart total; A2's live run confirms it.
 - **Live Visa TAP key directory or VIC sandbox for teams?** V3 asks.
 - ~~**Does our TAP check count as Visa tooling?**~~ Answered 2026-10-30 by Terry: a TAP header interceptor in our service counts. He asked whether we build one; nobody has replied yet (yes: the edge verifies TAP on every request).
@@ -138,6 +138,7 @@ uv venv && uv pip install -e '.[dev]'
 Newest first.
 
 ### 2026-11-03
+- **A12** (Aeshvarya): sandbox registered in Singapore with a scoped key (payment acceptance, disputes, files, FX conversion, simulations); keys on the host. `smoke.py` 19/19 with **real Airwallex rate locks**: a $89.99 item quoted at ₹8,823.38 (`cvq_…`), so INR is a convertible shopper currency here. Card payments wait on Turner.
 - **A7 live** (Aeshvarya): https://countersign-demo.onrender.com from the Blueprint; `smoke.py` 19/19 pass; keep-warm on.
 - **Receipts** (Aeshvarya, `4966d57`): with the shopper's copy, the receipt's stated ceiling, currency and expiry must equal the copy's, so a signed receipt claiming a higher ceiling no longer passes; a numeric signature or a malformed body is a failed check, not a 500 (both from Varunika's 11-01 probe).
 - **Card paths before the first live run** (Aeshvarya, `02935c5`, `516341e`, `832b845`): an Airwallex timeout is a 503 to retry on the webhook, the page's payment check and cancel; a charge whose `pay()` raised still gets its receipt; a retried start keeps its order number, so a good payment is never refunded (Open questions 1 to 3 of 11-02).
