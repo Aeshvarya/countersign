@@ -469,7 +469,7 @@ class AcpApi:
         Priced before anything is cleared, so an outage (RateLockUnavailable)
         leaves the session as it was and a retried complete still finds its terms.
         """
-        terms, problem = self._price(s, now) if s.cart else (None, None)
+        terms, problem = self._price(s.cart, s.currency, s.id, now) if s.cart else (None, None)
         s.messages = []
         s.terms = s.approval = None
         s.shopper_signed = s.shopper_assertion = None  # a signature never carries over to new terms
@@ -492,26 +492,27 @@ class AcpApi:
         else:
             s.status = "ready_for_payment"
 
-    def _price(self, s: Session, now: datetime) -> tuple[Terms | None, dict[str, Any] | None]:
-        """Live terms for the cart, or the message that says why there are none.
+    def _price(self, cart: dict[str, int], currency: str, ref: str,
+               now: datetime) -> tuple[Terms | None, dict[str, Any] | None]:
+        """Live terms for the cart, or the message that says why there are none. `ref` names the call in logs.
 
         Anything that is Airwallex not answering usably raises RateLockUnavailable,
         so an outage is never reported as the shopper's cart or currency.
         """
         try:
-            return self.merchant.offer(s.cart, s.currency, now), None
+            return self.merchant.offer(cart, currency, now), None
         except KeyError as err:
             missing = err.args[0] if err.args else None
-            if missing not in s.cart:  # a field absent from Airwallex's answer, not a product
-                raise self._no_rate_lock(s, "Airwallex's answer was missing a field", f"KeyError {missing!r}") from None
+            if missing not in cart:  # a field absent from Airwallex's answer, not a product
+                raise self._no_rate_lock(ref, "Airwallex's answer was missing a field", f"KeyError {missing!r}") from None
             return None, {"type": "error", "code": "invalid", "param": "$.items",
                           "content_type": "plain", "content": f"no product with id {missing}"}
         except LookupError as err:
             # Out of stock and "no rate for this currency" are both LookupErrors.
             # In the merchant's own currency no rate lock is needed, so if the cart
             # prices there, the stock is fine and the currency is what failed.
-            if s.currency != self.merchant.currency and self._prices_without_fx(s, now):
-                return None, self._unpriceable(s.currency, "this merchant has no rate for it")
+            if currency != self.merchant.currency and self._prices_without_fx(cart, now):
+                return None, self._unpriceable(currency, "this merchant has no rate for it")
             return None, {"type": "error", "code": "out_of_stock", "param": "$.items",
                           "content_type": "plain", "content": str(err)}
         except AirwallexError as err:
@@ -523,20 +524,20 @@ class AcpApi:
             code = err.body.get("code") if isinstance(err.body, dict) else None
             if err.status in CURRENCY_REFUSED and named is not None:
                 why = f"{code} at {named}" if code and code != named else named
-                return None, self._unpriceable(s.currency, f"Airwallex would not lock a rate ({why})")
-            raise self._no_rate_lock(s, f"Airwallex answered HTTP {err.status}",
+                return None, self._unpriceable(currency, f"Airwallex would not lock a rate ({why})")
+            raise self._no_rate_lock(ref, f"Airwallex answered HTTP {err.status}",
                                      f"Airwallex HTTP {err.status} {code or ''}") from None
         except NO_ANSWER as err:
-            raise self._no_rate_lock(s, f"Airwallex could not be reached: {type(err).__name__}",
+            raise self._no_rate_lock(ref, f"Airwallex could not be reached: {type(err).__name__}",
                                      type(err).__name__) from None
 
-    def _no_rate_lock(self, s: Session, detail: str, logged: str) -> RateLockUnavailable:
-        log.warning("acp quote %s: no rate lock, %s", s.id, logged)
+    def _no_rate_lock(self, ref: str, detail: str, logged: str) -> RateLockUnavailable:
+        log.warning("acp quote %s: no rate lock, %s", ref, logged)
         return RateLockUnavailable(detail)
 
-    def _prices_without_fx(self, s: Session, now: datetime) -> bool:
+    def _prices_without_fx(self, cart: dict[str, int], now: datetime) -> bool:
         try:
-            self.merchant.offer(s.cart, self.merchant.currency, now)
+            self.merchant.offer(cart, self.merchant.currency, now)
         except LookupError:
             return False
         return True
