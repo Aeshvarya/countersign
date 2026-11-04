@@ -161,7 +161,7 @@ class WebPagesTest(unittest.TestCase):
 
     def pages(self):
         found = sorted(apply_tokens.PAGES_DIR.glob("*.html"))
-        self.assertEqual([p.name for p in found], ["console.html", "index.html", "shopper.html", "verify.html"])
+        self.assertEqual([p.name for p in found], ["console.html", "index.html", "shopper.html", "signin.html", "verify.html"])
         return found
 
     def test_each_page_carries_the_current_tokens(self):
