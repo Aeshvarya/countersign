@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Sign in with a passkey</title>
+<style>
+/* tokens:begin, copied from src/countersign/edge/static/tokens.css by scripts/apply_tokens.py: change colours there */
+:root {
+  --bg: #f5f6fb;          /* page background */
+  --panel: #ffffff;       /* cards, panels */
+  --ink: #101a37;         /* body text */
+  --ink-2: #485271;       /* secondary text */
+  --ink-3: #6b748e;       /* hints, labels */
+  --line: #8890a9;        /* borders, rules */
+  --soft: #e7ebf6;        /* quiet fills */
+  --go: #117976;          /* PROCEED: charged */
+  --go-bg: #e4f6f5;
+  --ask: #906510;         /* REASK: asked again */
+  --ask-bg: #fbf2df;
+  --no: #bf1f75;          /* REFUSE: refused */
+  --no-bg: #f9e2ee;
+  --info: #485271;        /* neutral notes */
+  --info-bg: #e7ebf6;
+  --accent: #315cde;      /* links, primary buttons */
+  --accent-ink: #ffffff;  /* text on accent */
+  --on-status: #ffffff;   /* text on an ask or no button */
+  --cat-1: #4c6ed5;       /* product images, one per category */
+  --cat-2: #cf3487;
+  --cat-3: #17817e;
+  --cat-4: #986c16;
+  --cat-5: #7666c5;
+  --cat-ink: #ffffff;     /* initials on a product image */
+
+  /* type: three stacks, unquoted so they also go into SVG attributes */
+  --font-display: Charter, Bitstream Charter, Sitka Text, Cambria, Iowan Old Style, Georgia, serif;
+  --font-sans: Avenir Next, Avenir, Seravek, Segoe UI, Ubuntu, Noto Sans, Helvetica Neue, sans-serif;
+  --font-mono: ui-monospace, SF Mono, Menlo, Cascadia Mono, Consolas, monospace;
+  /* a modular scale, ratio 1.2: each step is the one below times the ratio */
+  --ratio: 1.2;
+  --step--1: 0.833rem;    /* labels, captions, table heads */
+  --step-0: 1rem;         /* body */
+  --step-1: 1.2rem;
+  --step-2: 1.44rem;      /* prices, section heads */
+  --step-3: 1.728rem;
+  --step-4: 2.074rem;     /* page heads */
+  --step-5: 2.488rem;
+  --measure: 68ch;        /* longest line of running text */
+
+  /* space: one 4px unit; tight inside a group, wide between groups */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --container: 1040px;    /* widest a page gets; wider screens grow the margins */
+
+  /* shape: two radii, one per nesting level, and edges drawn with a line, never a shadow */
+  --radius-1: 8px;        /* controls, tags, inner pieces */
+  --radius-2: 14px;       /* panels */
+
+  /* motion: short and decelerating, transform and opacity only */
+  --dur: 180ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0d1d;
+    --panel: #11162a;
+    --ink: #f3f4fa;
+    --ink-2: #9aa4c2;
+    --ink-3: #78829e;
+    --line: #5c6685;
+    --soft: #1c2136;
+    --go: #18a8a3;
+    --go-bg: #0f3332;
+    --ask: #c3860a;
+    --ask-bg: #33270f;
+    --no: #ef3a9a;
+    --no-bg: #330f22;
+    --info: #9aa4c2;
+    --info-bg: #1c2136;
+    --accent: #7193f8;
+    --accent-ink: #0a0d1d;
+    --on-status: #0a0d1d;
+    --cat-1: #4c6ed5;
+    --cat-2: #cf3487;
+    --cat-3: #17817e;
+    --cat-4: #986c16;
+    --cat-5: #7666c5;
+    --cat-ink: #ffffff;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0d1d;
+  --panel: #11162a;
+  --ink: #f3f4fa;
+  --ink-2: #9aa4c2;
+  --ink-3: #78829e;
+  --line: #5c6685;
+  --soft: #1c2136;
+  --go: #18a8a3;
+  --go-bg: #0f3332;
+  --ask: #c3860a;
+  --ask-bg: #33270f;
+  --no: #ef3a9a;
+  --no-bg: #330f22;
+  --info: #9aa4c2;
+  --info-bg: #1c2136;
+  --accent: #7193f8;
+  --accent-ink: #0a0d1d;
+  --on-status: #0a0d1d;
+  --cat-1: #4c6ed5;
+  --cat-2: #cf3487;
+  --cat-3: #17817e;
+  --cat-4: #986c16;
+  --cat-5: #7666c5;
+  --cat-ink: #ffffff;
+}
+/* tokens:end */
+* { box-sizing: border-box; }
+html, body { margin: 0; overflow-x: clip; background: var(--bg); color: var(--ink); }
+body { font-family: var(--font-sans); font-weight: 500; font-size: var(--step-0); line-height: 1.45; -webkit-font-smoothing: antialiased; }
+button { font: inherit; }
+.wrap { max-width: 520px; margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-8); }
+.brand { font-family: var(--font-display); font-weight: 700; font-size: var(--step-1); margin: 0 0 18px; }
+.brand span { color: var(--accent); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-2); padding: var(--space-6) var(--space-5); }
+h1 { font-family: var(--font-display); margin: 0 0 var(--space-2); font-size: clamp(var(--step-2), 6vw, var(--step-4)); font-weight: 700; line-height: 1.1; }
+.sub { margin: 0 0 var(--space-4); color: var(--ink-2); }
+.sub b { color: var(--ink); }
+ul.facts { list-style: none; margin: 0 0 var(--space-4); padding: 0; border-top: 1px solid var(--line); }
+ul.facts li { padding: var(--space-3) 0; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+ul.facts li b { color: var(--ink); }
+.btn { display: block; width: 100%; border: 0; border-radius: var(--radius-1); padding: var(--space-4) 20px; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-ink); min-height: 54px; text-align: center; }
+.btn.ghost { background: transparent; color: var(--ink); border: 2px solid var(--line); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.buttons { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-top: var(--space-4); }
+.status { margin: 14px 0 0; padding: var(--space-3) 14px; border-radius: var(--radius-1); font-weight: 600; }
+.status:empty { display: none; }
+.status.info { background: var(--soft); color: var(--ink-2); }
+.status.ok { background: var(--go-bg); color: var(--go); }
+.status.warn { background: var(--ask-bg); color: var(--ask); }
+.status.error { background: var(--no-bg); color: var(--no); }
+.note { color: var(--ink-3); font-size: var(--step--1); margin: var(--space-4) 0 0; overflow-wrap: anywhere; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:hover:not(:disabled) { filter: brightness(1.08); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <p class="brand">Counter<span>sign</span></p>
+  <section class="card" aria-labelledby="title">
+    <h1 id="title">Sign in with a passkey</h1>
+    <p class="sub"><b id="client">An app</b> is asking to sign you in to this shop, so it can check out for you.</p>
+    <ul class="facts">
+      <li>Your passkey stays on this device. The shop learns a key, not your name or email.</li>
+      <li>It is the same passkey this shop asks for when you approve a purchase.</li>
+      <li>After you sign in you go back to <b id="back">the app</b>.</li>
+    </ul>
+    <div class="buttons">
+      <button class="btn" id="signin" type="button">Sign in with passkey</button>
+      <button class="btn ghost" id="cancel" type="button">Cancel</button>
+    </div>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <p class="note">Signing in for <span id="issuer"></span></p>
+  </section>
+</main>
+<script type="application/json" id="signin-data">{{SIGNIN_JSON}}</script>
+<script>
+// The OAuth sign-in (C14, web/oauth.py). The passkey signs the challenge the
+// server sends, which covers this one sealed sign-in request; the page posts the
+// assertion and goes where the answer says, back to the app with a code.
+// It keeps {credential id, public key} in localStorage under the same key as
+// the approval page (shopper.js), so one passkey serves both.
+"use strict";
+const STORE_KEY = "countersign.passkey.v1";
+const ES256 = -7;
+const data = JSON.parse(document.getElementById("signin-data").textContent);
+const $ = (id) => document.getElementById(id);
+let memoryCred = null;
+
+function b64url(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function fromB64url(text) {
+  const s = text.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(s + "=".repeat((4 - (s.length % 4)) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function readStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}") || {}; } catch (e) { return {}; } }
+function loadCred(rpId) {
+  const c = readStore()[rpId];
+  if (c && typeof c.credential_id === "string" && typeof c.public_key_spki_der === "string") return c;
+  return memoryCred && memoryCred.rp_id === rpId ? memoryCred : null;
+}
+function saveCred(rpId, cred) {
+  memoryCred = { ...cred, rp_id: rpId };
+  const all = readStore();
+  all[rpId] = cred;
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(all)); } catch (e) { /* private window: memory only */ }
+}
+function status(text, kind) { const el = $("status"); el.textContent = text; el.className = "status " + (kind || "info"); }
+
+async function register(rpId) {
+  const created = await navigator.credentials.create({ publicKey: {
+    rp: { id: rpId, name: "Countersign" },
+    user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "countersign-shopper", displayName: "Countersign shopper" },
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    pubKeyCredParams: [{ type: "public-key", alg: ES256 }],
+    authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
+    attestation: "none",
+    timeout: 120000,
+  } });
+  const response = created.response;
+  if (typeof response.getPublicKey !== "function" || !response.getPublicKey()) {
+    throw new Error("This browser cannot share a passkey's public key. Try a current Chrome, Safari, Edge or Firefox.");
+  }
+  if (typeof response.getPublicKeyAlgorithm === "function" && response.getPublicKeyAlgorithm() !== ES256) {
+    throw new Error("This device made a passkey the shop cannot check (it needs ES256).");
+  }
+  return { credential_id: b64url(created.rawId), public_key_spki_der: b64url(response.getPublicKey()) };
+}
+
+async function signIn() {
+  const w = data.webauthn;
+  $("signin").disabled = true;
+  try {
+    if (!window.isSecureContext || !window.PublicKeyCredential) throw new Error("This browser cannot use passkeys here.");
+    if (location.origin !== w.origin) throw new Error("This page is not on " + w.origin + ", so the passkey would not be accepted.");
+    let cred = loadCred(w.rp_id);
+    if (!cred) {
+      status("Creating a passkey for this shop on your device…");
+      cred = await register(w.rp_id);
+      saveCred(w.rp_id, cred);
+    }
+    status("Confirm on your device to sign in…");
+    const assertion = await navigator.credentials.get({ publicKey: {
+      challenge: fromB64url(w.challenge), rpId: w.rp_id,
+      allowCredentials: [{ type: "public-key", id: fromB64url(cred.credential_id) }],
+      userVerification: w.user_verification || "preferred", timeout: 120000,
+    } });
+    const r = assertion.response;
+    const res = await fetch(location.pathname, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request: data.request, credential_id: b64url(assertion.rawId),
+        public_key_spki_der: cred.public_key_spki_der, authenticator_data: b64url(r.authenticatorData),
+        client_data_json: b64url(r.clientDataJSON), signature: b64url(r.signature) }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.redirect) throw new Error(body.error_description || "The shop did not accept the sign-in.");
+    status("Signed in. Taking you back to the app…", "ok");
+    location.assign(body.redirect);
+  } catch (err) {
+    $("signin").disabled = false;
+    if (err && err.name === "NotAllowedError") status("Not signed in: the passkey prompt was closed or timed out. You can try again.", "warn");
+    else status((err && err.message) || "Something went wrong; you are not signed in.", "error");
+  }
+}
+
+function cancel() {
+  const url = new URL(data.redirect_uri);
+  url.searchParams.set("error", "access_denied");
+  url.searchParams.set("error_description", "the shopper cancelled the sign-in");
+  if (data.state != null) url.searchParams.set("state", data.state);
+  url.searchParams.set("iss", data.issuer);
+  location.assign(url.toString());
+}
+
+$("client").textContent = data.client_name;
+$("back").textContent = new URL(data.redirect_uri).host;
+$("issuer").textContent = data.issuer;
+$("signin").addEventListener("click", signIn);
+$("cancel").addEventListener("click", cancel);
+</script>
+</body>
+</html>
