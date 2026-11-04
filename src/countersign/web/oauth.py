@@ -211,6 +211,7 @@ class OAuthServer:
     _used: dict[str, float] = field(default_factory=dict)  # sign-in request and code ids -> when they expire
     _passkeys: dict[str, bytes] = field(default_factory=dict)  # credential id -> the key it first signed with
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    jwks_fetches: list[dict[str, Any]] = field(default_factory=list)  # the last few: when, and who asked
 
     def __post_init__(self) -> None:
         self.sealer = Sealer(self.signer.seal_key())
@@ -386,7 +387,8 @@ class OAuthServer:
         audience = resource or self.audience
         if audience:
             claims["aud"] = audience
-        out = {"access_token": self.signer.sign(claims, typ="at+jwt"), "token_type": "Bearer",
+        # typ JWT, not RFC 9068's at+jwt: common verifiers (Nimbus, Java's default) refuse an unexpected typ.
+        out = {"access_token": self.signer.sign(claims), "token_type": "Bearer",
                "expires_in": ACCESS_TTL, "scope": scope,
                "refresh_token": self.sealer.seal("refresh", {"client_id": client_id, "sub": sub, "scope": scope,
                                                              "resource": resource, "exp": iat + REFRESH_TTL})}
@@ -479,7 +481,10 @@ def oauth_app(server: OAuthServer) -> FastAPI:
         return JSONResponse(server.metadata(), headers={**CORS, "Cache-Control": "public, max-age=300"})
 
     @app.get(JWKS_PATH)
-    def jwks() -> JSONResponse:
+    def jwks(request: Request) -> JSONResponse:
+        # Who fetches it is the one sign that Airwallex checks a token at all (shown on /healthz).
+        server.jwks_fetches[:] = (server.jwks_fetches + [{"at": int(server.clock()),
+                                  "user_agent": (request.headers.get("user-agent") or "")[:80]}])[-5:]
         # Airwallex fetches this on a token check with a short timeout: it is built once and cacheable.
         return JSONResponse(server.jwks(), headers={**CORS, "Cache-Control": "public, max-age=3600"})
 

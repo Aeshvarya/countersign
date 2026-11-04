@@ -230,7 +230,7 @@ class ServerTest(unittest.TestCase):
     def test_the_access_token_verifies_against_the_jwks(self):
         tokens = self.exchange()
         header, claims = verify_jwt(tokens["access_token"], self.server.jwks())
-        self.assertEqual(header["typ"], "at+jwt")
+        self.assertEqual(header["typ"], "JWT")
         self.assertEqual(claims["iss"], ISSUER)
         self.assertEqual(claims["aud"], RESOURCE)
         self.assertEqual(claims["exp"] - claims["iat"], oauth.ACCESS_TTL)
@@ -333,6 +333,11 @@ class HttpTest(unittest.TestCase):
             self.assertEqual(res.headers["access-control-allow-origin"], "*")
             self.assertIn("max-age", res.headers["cache-control"])
         self.assertEqual(self.http.get(oauth.DISCOVERY_PATH).json()["issuer"], ISSUER)
+
+    def test_jwks_fetches_are_remembered_for_the_health_check(self):
+        self.http.get(oauth.JWKS_PATH, headers={"User-Agent": "Airwallex-Verifier/1"})
+        fetches = self.http.app.house.oauth.jwks_fetches
+        self.assertEqual(fetches[-1]["user_agent"], "Airwallex-Verifier/1")
 
     def test_check_host_passes_the_oauth_server(self):
         def fetch(method, url, body):
