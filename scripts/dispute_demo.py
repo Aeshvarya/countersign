@@ -22,7 +22,8 @@ Prints the dispute id and its status after each step, and what receipt.verify fo
 a header, a token, or a value from Airwallex's bodies.
 
 Exit 0: decided for the merchant. 1: the receipt does not verify, or is for another
-payment. 2: Airwallex refused a call or could not be reached; the step is printed.
+payment. 2: Airwallex refused a call, could not be reached, or did not decide for the
+merchant; the reason is printed.
 """
 
 from __future__ import annotations
@@ -88,7 +89,10 @@ def run(client: Any, signed: dict[str, Any], public_key: str, now: datetime, *, 
     except UNREACHABLE as err:
         out(f"  stopped at {step}: Airwallex could not be reached ({type(err).__name__})")
         return 2
-    return 0 if resolved.status in ("WON", "REVERSED") else 2
+    if resolved.status not in ("WON", "REVERSED"):
+        out(f"  stopped: the dispute ended {resolved.status or 'with no status'}, not for the merchant")
+        return 2
+    return 0
 
 
 def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = None, client: Any = None,
@@ -105,7 +109,8 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
 
     with open(args.receipt) as fh:
         signed = json.load(fh)
-    paid = (signed.get("body") or {}).get("payment_id") if isinstance(signed, dict) else None
+    body = signed.get("body") if isinstance(signed, dict) else None
+    paid = body.get("payment_id") if isinstance(body, dict) else None
     intent = args.intent or paid
     if not intent:
         out("  stopped: the receipt names no payment, so there is no intent to dispute")
@@ -120,7 +125,7 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
     elif args.base_url:
         try:
             public_key = fetch_key(args.base_url)
-        except (*UNREACHABLE, KeyError) as err:
+        except (*UNREACHABLE, KeyError, TypeError, ValueError) as err:  # down, or not answering with a key
             out(f"  stopped: the host's merchant key could not be read ({type(err).__name__})")
             return 2
     else:
@@ -129,10 +134,9 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
 
     if client is None:
         try:
-            client = Airwallex(environ["AIRWALLEX_CLIENT_ID"], environ["AIRWALLEX_API_KEY"],
-                               environ.get("AIRWALLEX_BASE_URL", "https://api.sandbox.airwallex.com"))
-        except KeyError as missing:
-            parser.error(f"set {missing.args[0]} in .env")
+            client = Airwallex.from_env()
+        except RuntimeError as err:
+            parser.error(str(err))
     return run(client, signed, public_key, now or datetime.now(timezone.utc), intent=intent, stage=args.stage,
                verify_url=verify_url, out=out, opener=opener)
 

@@ -10,8 +10,9 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
+import os
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -55,9 +56,9 @@ class FakeAirwallex:
     base_url = "https://api.sandbox.airwallex.com"
     timeout = 20
 
-    def __init__(self, fail_on=None, error=None):
+    def __init__(self, fail_on=None, error=None, decided="WON"):
         self.posts = []
-        self.fail_on, self.error = fail_on, error
+        self.fail_on, self.error, self.decided = fail_on, error, decided
         self.stage = "RFI"
 
     def token(self):
@@ -73,7 +74,7 @@ class FakeAirwallex:
         step = path.rsplit("/", 1)[1]
         if step == "create":
             self.stage = body["stage"]
-        status = {"create": "REQUIRES_RESPONSE", "challenge": "CHALLENGED", "resolve": "WON"}[step]
+        status = {"create": "REQUIRES_RESPONSE", "challenge": "CHALLENGED", "resolve": self.decided}[step]
         return {"id": "dst_1", "stage": self.stage, "status": status, "payment_intent_id": "int_paid",
                 "amount": 98.5, "currency": "USD", "customer_name": SENTINEL, "issuer_comment": SENTINEL}
 
@@ -106,6 +107,11 @@ class DisputeCallsTest(unittest.TestCase):
         self.assertEqual(body["due_at"], "2026-12-07T09:00:00+0000")  # the guide's own format
         self.assertEqual((opened.id, opened.stage, opened.status), ("dst_1", "RFI", "REQUIRES_RESPONSE"))
 
+    def test_the_due_date_is_sent_in_utc_whatever_the_clock_says(self):
+        ist = timezone(timedelta(hours=5, minutes=30))
+        disputes.open_dispute(self.api, "int_paid", datetime(2026, 11, 30, 14, 30, tzinfo=ist))
+        self.assertEqual(self.api.posts[0][1]["due_at"], "2026-12-07T09:00:00+0000")
+
     def test_the_upload_goes_to_the_file_host_as_multipart(self):
         file_id = disputes.upload_file(self.api, b"%PDF-1.4 x", "receipt-ORD-1001.pdf", "dispute dst_1",
                                        opener=self.files)
@@ -119,6 +125,12 @@ class DisputeCallsTest(unittest.TestCase):
                       b"%PDF-1.4 x\r\n", req.data)
         self.assertIn(b'name="notes"\r\n\r\ndispute dst_1\r\n', req.data)
         self.assertTrue(req.data.endswith(f"--{boundary}--\r\n".encode()))
+
+    def test_a_quote_or_line_break_cannot_end_a_multipart_header(self):
+        disputes.upload_file(self.api, b"x", 'r"\r\nX-Injected: 1.pdf', 'n"\r\nx', opener=self.files)
+        data = self.files.requests[0].data
+        self.assertIn(b'filename="rX-Injected: 1.pdf"\r\n', data)
+        self.assertIn(b'name="notes"\r\n\r\nnx\r\n', data)
 
     def test_the_file_host_follows_the_api_host(self):
         self.assertEqual(disputes.files_url("https://api.sandbox.airwallex.com"), "https://files.sandbox.airwallex.com")
@@ -235,6 +247,17 @@ class DisputeDemoTest(unittest.TestCase):
         self.assertEqual(self.api.posts[0][1]["stage"], "CHARGEBACK")
         self.assertEqual(self.api.posts[1][1]["product_type"], "PHYSICAL_GOODS")
 
+    def test_a_dispute_not_decided_for_the_merchant_says_so(self):
+        api = FakeAirwallex(decided="LOST")
+        self.assertEqual(self.run_demo(signed_receipt(), api=api), 2)
+        self.assertEqual(self.lines[-1], "  stopped: the dispute ended LOST, not for the merchant")
+
+    def test_a_receipt_with_no_body_opens_nothing(self):
+        for broken in ({"body": "x"}, ["not", "a", "receipt"]):
+            with self.subTest(broken=broken):
+                self.assertEqual(self.run_demo(broken), 1)
+                self.assertEqual(self.api.posts, [])
+
     def test_a_tampered_receipt_stops_before_any_evidence(self):
         signed = signed_receipt()
         signed["body"]["charged"]["amount"] = "1.00"
@@ -273,7 +296,8 @@ class DisputeDemoTest(unittest.TestCase):
     def test_a_host_that_gives_no_key_opens_nothing(self):
         file = self.tmp / "receipt.json"
         file.write_text(json.dumps(signed_receipt()))
-        for error in (TimeoutError("timed out"), KeyError("public_key")):
+        for error in (TimeoutError("timed out"), KeyError("public_key"), TypeError("[] is not a dict"),
+                      ValueError("unknown url type")):
             with self.subTest(error=type(error).__name__):
                 def fetch(url):
                     raise error
@@ -309,8 +333,8 @@ class DisputeDemoTest(unittest.TestCase):
 
         file = self.tmp / "receipt.json"
         file.write_text(json.dumps(signed_receipt()))
-        with unittest.mock.patch("urllib.request.urlopen", urlopen):
-            code = dispute_demo.main(["--receipt", str(file), "--merchant-key", PUBLIC], environ=SECRETS,
+        with unittest.mock.patch("urllib.request.urlopen", urlopen), unittest.mock.patch.dict(os.environ, SECRETS):
+            code = dispute_demo.main(["--receipt", str(file), "--merchant-key", PUBLIC], environ={},
                                      opener=self.files, now=NOW, out=self.lines.append)
         self.assertEqual(code, 0)
         self.assertEqual(seen[0].get_header("X-api-key"), "api-key-SECRET")  # it did log in with them

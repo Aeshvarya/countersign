@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from .airwallex import AirwallexError
@@ -57,7 +57,7 @@ def open_dispute(client: Any, payment_intent_id: str, now: datetime, *, reason_c
     there is no currency here to get wrong.
     """
     body: dict[str, Any] = {"payment_intent_id": payment_intent_id, "stage": stage, "reason_code": reason_code,
-                            "due_at": (now + due_in).strftime("%Y-%m-%dT%H:%M:%S+0000")}
+                            "due_at": (now + due_in).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")}
     if comment:
         body["comment"] = comment
     return _dispute(client.post("/simulation/pa/payment_disputes/create", body))
@@ -71,12 +71,21 @@ def files_url(base_url: str) -> str:
     return f"{scheme}{sep}files.{host[len('api.'):]}"
 
 
-def upload_file(client: Any, data: bytes, filename: str, notes: str = "",
+def _field(text: str) -> str:
+    """A multipart header value: no quote or line break can end it early."""
+    return re.sub(r'["\r\n]', "", text)[:MAX_NAME]
+
+
+def upload_file(client: Any, data: bytes, filename: str, notes: str = "", content_type: str = "application/pdf",
                 opener: Callable[..., Any] = urllib.request.urlopen) -> str:
-    """One file to Airwallex's file service; returns the file_id a challenge refers to."""
+    """One file to Airwallex's file service; returns the file_id a challenge refers to.
+
+    Its own request, not the client's: the client sends JSON to the API host only.
+    """
     boundary = uuid.uuid4().hex
+    filename, notes = _field(filename), _field(notes)
     parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-             f"Content-Type: application/pdf\r\n\r\n".encode() + data + b"\r\n"]
+             f"Content-Type: {content_type}\r\n\r\n".encode() + data + b"\r\n"]
     if notes:
         parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="notes"\r\n\r\n{notes}\r\n'.encode())
     req = urllib.request.Request(f"{files_url(client.base_url)}/api/v1/files/upload",
@@ -115,7 +124,7 @@ def submit_evidence(client: Any, dispute: Dispute, pdf: bytes, *, filename: str,
     """Upload the receipt, then challenge the dispute with it."""
     if len(pdf) > MAX_PDF:
         raise ValueError(f"the evidence is {len(pdf)} bytes; Visa takes a PDF of at most {MAX_PDF}")
-    file_id = upload_file(client, pdf, filename, notes=f"dispute {dispute.id}"[:MAX_NAME], opener=opener)
+    file_id = upload_file(client, pdf, filename, notes=f"dispute {dispute.id}", opener=opener)
     return challenge(client, dispute, file_id, description=description,
                      product_description=product_description, request_id=client.request_id())
 
@@ -139,8 +148,9 @@ def evidence_lines(signed: dict[str, Any], findings: tuple[str, ...], public_key
                    verify_url: str | None = None) -> list[tuple[str, str]]:
     """What the PDF says, as (font, text): facts read from the receipt, then the receipt itself.
 
-    The JSON is printed exactly as signed (only re-indented), and long lines are cut, never
-    re-flowed, so joining a cut line back gives the same characters.
+    The JSON is the signed JSON re-indented, with anything outside ASCII written as a \\u
+    escape (the standard fonts cannot draw it), so it parses back to the values that were
+    signed. Long lines are cut, never re-flowed: joining them back gives the same text.
     """
     body = signed["body"]
     lines = [
@@ -163,7 +173,7 @@ def evidence_lines(signed: dict[str, Any], findings: tuple[str, ...], public_key
 # A one-file PDF writer: the three standard fonts, A4, top to bottom. No dependency.
 FONTS = {"title": ("F2", 14), "bold": ("F2", 10), "text": ("F1", 10), "mono": ("F3", 8)}
 MONO_WIDTH = 100  # Courier is 0.6 em wide: 100 characters at 8 pt fit the 495 pt line
-TEXT_WIDTH = 92
+TEXT_WIDTH = 84  # Helvetica at 10 pt, with room for a run of capitals
 PAGE, MARGIN = (595, 842), 50
 
 
