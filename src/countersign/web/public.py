@@ -55,7 +55,8 @@ def router(house: Any) -> APIRouter:
         return {"status": "ok", "acp": house.acp, "authority": house.authority,
                 "shopper_passkey": bool(api and api.config.require_shopper_signature),
                 "card_payments": hasattr(house.merchant, "confirm"),
-                "fallback_mcp": bool(house.mcp_token), "console": bool(house.lever_token)}
+                "fallback_mcp": bool(house.mcp_token), "console": bool(house.lever_token),
+                "oauth": getattr(house, "oauth", None) is not None, "keep_awake": bool(getattr(house, "keep_awake", False))}
 
     @r.get(KEY_PATH)
     def merchant_key() -> dict[str, str]:

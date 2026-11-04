@@ -247,6 +247,18 @@ class KeepAwakeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             house_from_env({"COUNTERSIGN_KEEP_AWAKE": "1"})
 
+    def test_the_health_check_says_whether_it_and_the_oauth_server_are_on(self):
+        from countersign.web.public import router
+
+        app = FastAPI()
+        app.include_router(router(house_from_env({"COUNTERSIGN_PUBLIC_URL": PUBLIC, "COUNTERSIGN_KEEP_AWAKE": "1"})))
+        health = TestClient(app).get("/healthz").json()
+        self.assertEqual((health["oauth"], health["keep_awake"]), (True, True))
+        app = FastAPI()
+        app.include_router(router(house_from_env({})))
+        health = TestClient(app).get("/healthz").json()
+        self.assertEqual((health["oauth"], health["keep_awake"]), (False, False))
+
 
 if __name__ == "__main__":
     unittest.main()
