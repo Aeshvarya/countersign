@@ -51,6 +51,9 @@ services:
       # sign-in and its tokens survive a restart.
       - key: COUNTERSIGN_OAUTH_SIGNING_KEY
         sync: false
+      # The host pings its own /healthz every 5 minutes, so the free plan never sleeps (web/host.py keep_awake).
+      - key: COUNTERSIGN_KEEP_AWAKE
+        value: "1"
       # The demo agent stays the free scripted stand-in even if a key is set. Change this here
       # (not in the dashboard) only once the Anthropic spend cap is on, then set the key.
       - key: COUNTERSIGN_MODEL

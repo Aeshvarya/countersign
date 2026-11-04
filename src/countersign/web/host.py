@@ -33,6 +33,8 @@ Configuration, all optional:
     COUNTERSIGN_LEVER_TOKEN            bearer token for the merchant console and its levers (32+ characters)
     COUNTERSIGN_SYNC_CATALOG           1: a lever also upserts the product to Airwallex's catalogue
     COUNTERSIGN_OAUTH_SIGNING_KEY      the OAuth server's ES256 key (web/oauth.py); it is served once a public URL is set
+    COUNTERSIGN_KEEP_AWAKE             1: this process GETs its own public /healthz every 5 minutes, so a free
+                                       host that sleeps after about 15 idle minutes never does (keep_awake)
 """
 
 from __future__ import annotations
@@ -41,6 +43,9 @@ import base64
 import binascii
 import json
 import logging
+import threading
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
@@ -74,6 +79,7 @@ KEY_PATH = "/.well-known/countersign-merchant-key"
 WEBHOOK_PATH = "/webhooks/airwallex"
 # The direct door's routes (C7). Exact paths, so the demo's own routes never reach the edge.
 TAP_PATHS = ("/products", "/offers", "/checkout")
+KEEP_AWAKE_EVERY = 300.0  # seconds; Render's free plan sleeps after about 15 idle minutes
 
 
 def authority_of(public_url: str | None) -> str:
@@ -160,6 +166,7 @@ class House:
     airwallex: Airwallex | None = None  # for the levers' catalogue sync
     sync_catalog: bool = False
     oauth: OAuthServer | None = None  # C14, with a public URL to be its issuer
+    keep_awake: bool = False  # ping our own public URL while running (COUNTERSIGN_KEEP_AWAKE)
 
     def public_key(self) -> dict[str, str]:
         raw = self.signer.key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -199,10 +206,44 @@ def house_from_env(environ: Mapping[str, str], *, merchant: MerchantGateway | No
     feed = Feed()
     edge.add_middleware(FeedMiddleware, feed=feed)  # sees Airwallex's calls and our MCP's alike
     sync = environ.get("COUNTERSIGN_SYNC_CATALOG", "").strip().lower() in ("1", "true", "yes")
+    awake = environ.get("COUNTERSIGN_KEEP_AWAKE", "").strip().lower() in ("1", "true", "yes")
+    if awake and not environ.get("COUNTERSIGN_PUBLIC_URL"):
+        raise ValueError("COUNTERSIGN_KEEP_AWAKE needs COUNTERSIGN_PUBLIC_URL, the address it pings")
     return House(merchant, edge, signer, authority, acp is not None, store,
                  environ.get("AIRWALLEX_WEBHOOK_SECRET", "").encode(), mcp_token.encode(),
                  environ.get("COUNTERSIGN_PUBLIC_URL") or None, feed, lever_token.encode(),
-                 airwallex_from_env(environ), sync, oauth_from_env(environ))
+                 airwallex_from_env(environ), sync, oauth_from_env(environ), awake)
+
+
+def _get(url: str) -> int:
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "countersign-keep-awake"}),
+                                timeout=60) as response:
+        return response.status
+
+
+def keep_awake(public_url: str, *, every: float = KEEP_AWAKE_EVERY, fetch: Callable[[str], int] = _get,
+               stop: threading.Event | None = None) -> threading.Thread:
+    """Ping our own /healthz through the public address until `stop` is set.
+
+    The request leaves the process and comes back in through Render's proxy, so
+    it counts as traffic and the free instance is never idle long enough to
+    sleep. GitHub's scheduled keep-warm fired only every 3 to 10 hours
+    (PROGRESS Open questions); this one runs as long as the service does. A
+    failed ping is logged and the next one tried on time.
+    """
+    stop = stop or threading.Event()
+    url = public_url.rstrip("/") + "/healthz"
+
+    def run() -> None:
+        while not stop.wait(every):
+            try:
+                fetch(url)
+            except (OSError, urllib.error.URLError) as err:
+                log.warning("keep-awake ping to %s failed: %s", url, err)
+
+    thread = threading.Thread(target=run, name="keep-awake", daemon=True)
+    thread.start()
+    return thread
 
 
 def webhook_app(house: House) -> FastAPI:
@@ -265,6 +306,8 @@ class Host:
         self.hooks = webhook_app(house)
         self.mcp = mcp_app(house, house.mcp_token, house.public_url) if house.mcp_token else None
         self.oauth = oauth_app(house.oauth) if house.oauth is not None else None
+        if house.keep_awake and house.public_url:
+            keep_awake(house.public_url)
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] == "http" and scope["path"] == WEBHOOK_PATH:
