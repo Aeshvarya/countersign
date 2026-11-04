@@ -58,6 +58,7 @@ class FakeAirwallex:
     def __init__(self, fail_on=None, error=None):
         self.posts = []
         self.fail_on, self.error = fail_on, error
+        self.stage = "RFI"
 
     def token(self):
         return "token-SECRET"
@@ -69,8 +70,11 @@ class FakeAirwallex:
         self.posts.append((path, body))
         if self.fail_on and self.fail_on in path:
             raise self.error
-        status = {"create": "REQUIRES_RESPONSE", "challenge": "CHALLENGED", "resolve": "WON"}[path.rsplit("/", 1)[1]]
-        return {"id": "dst_1", "stage": "CHARGEBACK", "status": status, "payment_intent_id": "int_paid",
+        step = path.rsplit("/", 1)[1]
+        if step == "create":
+            self.stage = body["stage"]
+        status = {"create": "REQUIRES_RESPONSE", "challenge": "CHALLENGED", "resolve": "WON"}[step]
+        return {"id": "dst_1", "stage": self.stage, "status": status, "payment_intent_id": "int_paid",
                 "amount": 98.5, "currency": "USD", "customer_name": SENTINEL, "issuer_comment": SENTINEL}
 
 
@@ -98,9 +102,9 @@ class DisputeCallsTest(unittest.TestCase):
         self.assertEqual(path, "/simulation/pa/payment_disputes/create")
         self.assertEqual(set(body), {"payment_intent_id", "stage", "reason_code", "due_at"})
         self.assertEqual((body["payment_intent_id"], body["stage"], body["reason_code"]),
-                         ("int_paid", "CHARGEBACK", "10.4"))
+                         ("int_paid", "RFI", "10.4"))  # the builder guide's stage for a case to challenge
         self.assertEqual(body["due_at"], "2026-12-07T09:00:00+0000")  # the guide's own format
-        self.assertEqual((opened.id, opened.status), ("dst_1", "REQUIRES_RESPONSE"))
+        self.assertEqual((opened.id, opened.stage, opened.status), ("dst_1", "RFI", "REQUIRES_RESPONSE"))
 
     def test_the_upload_goes_to_the_file_host_as_multipart(self):
         file_id = disputes.upload_file(self.api, b"%PDF-1.4 x", "receipt-ORD-1001.pdf", "dispute dst_1",
@@ -129,19 +133,27 @@ class DisputeCallsTest(unittest.TestCase):
         self.assertEqual((err.exception.status, err.exception.body["code"]), (400, "invalid_argument"))
 
     def test_the_challenge_names_the_receipt_as_the_primary_document(self):
-        answered = disputes.submit_evidence(self.api, "dst_1", b"%PDF-1.4 x", filename="receipt-ORD-1001.pdf",
+        rfi = disputes.Dispute("dst_1", "RFI", "REQUIRES_RESPONSE", "int_paid")
+        answered = disputes.submit_evidence(self.api, rfi, b"%PDF-1.4 x", filename="receipt-ORD-1001.pdf",
                                             description="d", product_description="1 x KIT-265-0", opener=self.files)
         path, body = self.api.posts[0]
         self.assertEqual(path, "/pa/payment_disputes/dst_1/challenge")
-        self.assertEqual(body["request_id"], "req-1")
-        self.assertEqual((body["challenge_method"], body["product_type"]), ("STANDARD", "PHYSICAL_GOODS"))
-        self.assertEqual(body["supporting_documents"],
-                         {"documents": [{"type": "PRIMARY", "file_ids": ["file_1"], "description": "d"}]})
+        self.assertEqual(body, {"request_id": "req-1", "challenge_method": "STANDARD", "reason": "OTHER_REASONS",
+                                "supporting_documents": {"documents": [{"type": "PRIMARY", "file_ids": ["file_1"],
+                                                                        "description": "d"}]}})
         self.assertEqual(answered.status, "CHALLENGED")
+
+    def test_a_chargeback_challenge_also_says_what_was_sold(self):
+        chargeback = disputes.Dispute("dst_1", "CHARGEBACK", "REQUIRES_RESPONSE", "int_paid")
+        disputes.challenge(self.api, chargeback, "file_1", description="d", product_description="1 x KIT-265-0",
+                           request_id="req-1")
+        body = self.api.posts[0][1]
+        self.assertEqual((body["product_type"], body["product_description"]), ("PHYSICAL_GOODS", "1 x KIT-265-0"))
 
     def test_evidence_over_visas_pdf_limit_is_never_uploaded(self):
         with self.assertRaises(ValueError):
-            disputes.submit_evidence(self.api, "dst_1", b"x" * (disputes.MAX_PDF + 1), filename="r.pdf",
+            disputes.submit_evidence(self.api, disputes.Dispute("dst_1", "RFI", "", None),
+                                     b"x" * (disputes.MAX_PDF + 1), filename="r.pdf",
                                      description="d", product_description="p", opener=self.files)
         self.assertEqual((self.files.requests, self.api.posts), ([], []))
 
@@ -214,9 +226,14 @@ class DisputeDemoTest(unittest.TestCase):
         self.assertEqual(len(self.files.requests), 1)
         self.assertIn(b"%PDF-1.4", self.files.requests[0].data)
         text = "\n".join(self.lines)
-        for expected in ("dst_1  CHARGEBACK REQUIRES_RESPONSE", "VERIFIED", "within the approved 8400.00",
-                         "CHARGEBACK CHALLENGED", "CHARGEBACK WON"):
+        for expected in ("dst_1  RFI REQUIRES_RESPONSE", "VERIFIED", "within the approved 8400.00",
+                         "RFI CHALLENGED", "RFI WON"):
             self.assertIn(expected, text)
+
+    def test_the_stage_can_be_chargeback(self):
+        self.assertEqual(self.run_demo(signed_receipt(), "--stage", "CHARGEBACK"), 0)
+        self.assertEqual(self.api.posts[0][1]["stage"], "CHARGEBACK")
+        self.assertEqual(self.api.posts[1][1]["product_type"], "PHYSICAL_GOODS")
 
     def test_a_tampered_receipt_stops_before_any_evidence(self):
         signed = signed_receipt()
@@ -287,7 +304,8 @@ class DisputeDemoTest(unittest.TestCase):
             seen.append(req)
             if req.full_url.endswith("/authentication/login"):
                 return io.BytesIO(json.dumps({"token": "token-SECRET", "expires_at": SENTINEL}).encode())
-            return io.BytesIO(json.dumps(FakeAirwallex().post(req.full_url.split("/api/v1")[1])).encode())
+            answer = FakeAirwallex().post(req.full_url.split("/api/v1")[1], json.loads(req.data or b"{}"))
+            return io.BytesIO(json.dumps(answer).encode())
 
         file = self.tmp / "receipt.json"
         file.write_text(json.dumps(signed_receipt()))

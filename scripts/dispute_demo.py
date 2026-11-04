@@ -4,11 +4,13 @@
     python scripts/dispute_demo.py --receipt receipt.json
     python scripts/dispute_demo.py --receipt receipt.json --intent int_...   the intent, if you name it, must be the receipt's
     python scripts/dispute_demo.py --receipt receipt.json --merchant-key <base64>          offline key, no host
+    python scripts/dispute_demo.py --receipt receipt.json --stage CHARGEBACK              if the sandbox refuses RFI
 
 The receipt is the signed JSON the shopper page keeps (body, key_id, alg, signature).
 
 1. The cardholder's bank opens a dispute on the paid intent: Airwallex's simulation API,
-   Visa reason 10.4 (card-absent fraud), the whole payment.
+   Visa reason 10.4 (card-absent fraud), the whole payment, at RFI as the builder guide's
+   dispute kit opens a case the merchant challenges.
 2. receipt.verify checks the receipt against the merchant's public key, read from the host
    (COUNTERSIGN_PUBLIC_URL + /.well-known/countersign-merchant-key) or given with
    --merchant-key. If it does not verify, the script stops: the merchant has no answer, and
@@ -48,7 +50,7 @@ def host_key(base_url: str) -> str:
         return json.loads(resp.read())["public_key"]
 
 
-def run(client: Any, signed: dict[str, Any], public_key: str, now: datetime, *, intent: str,
+def run(client: Any, signed: dict[str, Any], public_key: str, now: datetime, *, intent: str, stage: str,
         verify_url: str | None, out: Callable[[str], None], opener: Callable[..., Any] | None = None) -> int:
     try:
         key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key, validate=True))
@@ -57,7 +59,7 @@ def run(client: Any, signed: dict[str, Any], public_key: str, now: datetime, *, 
         return 1
     step = "open"
     try:
-        opened = disputes.open_dispute(client, intent, now)
+        opened = disputes.open_dispute(client, intent, now, stage=stage)
         out(f"1 dispute opened   {opened.id}  {opened.stage} {opened.status}")
 
         check = receipt.verify(signed, key)
@@ -71,7 +73,7 @@ def run(client: Any, signed: dict[str, Any], public_key: str, now: datetime, *, 
         step = "evidence"
         pdf = disputes.evidence_pdf(signed, check.findings, public_key, verify_url)
         extra = {} if opener is None else {"opener": opener}
-        answered = disputes.submit_evidence(client, opened.id, pdf, filename=disputes.evidence_filename(signed),
+        answered = disputes.submit_evidence(client, opened, pdf, filename=disputes.evidence_filename(signed),
                                             description=disputes.evidence_description(signed, check.findings),
                                             product_description=disputes.product_description(signed), **extra)
         out(f"3 evidence sent    {answered.id}  {answered.stage} {answered.status}  (receipt PDF, {len(pdf)} bytes)")
@@ -98,6 +100,7 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
     parser.add_argument("--intent", help="the paid payment intent; defaults to the receipt's payment_id")
     parser.add_argument("--merchant-key", help="base64 of the merchant's Ed25519 public key, instead of the host's")
     parser.add_argument("--base-url", default=environ.get("COUNTERSIGN_PUBLIC_URL"), help="the host, for its key")
+    parser.add_argument("--stage", choices=("RFI", "CHARGEBACK"), default="RFI", help="where the dispute opens")
     args = parser.parse_args(argv)
 
     with open(args.receipt) as fh:
@@ -130,7 +133,7 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
                                environ.get("AIRWALLEX_BASE_URL", "https://api.sandbox.airwallex.com"))
         except KeyError as missing:
             parser.error(f"set {missing.args[0]} in .env")
-    return run(client, signed, public_key, now or datetime.now(timezone.utc), intent=intent,
+    return run(client, signed, public_key, now or datetime.now(timezone.utc), intent=intent, stage=args.stage,
                verify_url=verify_url, out=out, opener=opener)
 
 

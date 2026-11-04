@@ -12,9 +12,10 @@ The calls, checked against Airwallex's API reference and dispute guides on 2026-
     POST /api/v1/pa/payment_disputes/{id}/challenge            the merchant's answer, standard flow
     POST /api/v1/simulation/pa/payment_disputes/{id}/resolve   sandbox: decided for the merchant
 
-Visa takes evidence as PDF, TIFF or JPEG (a PDF at most 2 MB), not PNG, so the receipt goes
-in as a PDF written here with the standard library: the signed JSON exactly as signed, and
-what `receipt.verify` found in it.
+The builder guide's dispute kit opens a case the merchant will challenge at `RFI`; at
+`CHARGEBACK` the challenge also needs a product type. Visa takes evidence as PDF, TIFF or
+JPEG (a PDF at most 2 MB), not PNG, so the receipt goes in as a PDF written here with the
+standard library: the signed JSON and what `receipt.verify` found in it.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ def _dispute(body: dict[str, Any]) -> Dispute:
 
 
 def open_dispute(client: Any, payment_intent_id: str, now: datetime, *, reason_code: str = CARD_ABSENT_FRAUD,
-                 stage: str = "CHARGEBACK", due_in: timedelta = timedelta(days=7),
+                 stage: str = "RFI", due_in: timedelta = timedelta(days=7),
                  comment: str | None = None) -> Dispute:
     """The cardholder's bank opens a dispute on a paid intent (sandbox only).
 
@@ -94,28 +95,28 @@ def upload_file(client: Any, data: bytes, filename: str, notes: str = "",
         raise AirwallexError(err.code, body) from None
 
 
-def challenge(client: Any, dispute_id: str, file_id: str, *, description: str, product_description: str,
+def challenge(client: Any, dispute: Dispute, file_id: str, *, description: str, product_description: str,
               request_id: str) -> Dispute:
     """The merchant's answer: the receipt as the primary document, through the standard flow."""
-    body = {
+    body: dict[str, Any] = {
         "request_id": request_id,
         "challenge_method": "STANDARD",
         "reason": "OTHER_REASONS",  # none of Airwallex's other reasons is "the payment was approved"
-        "product_type": "PHYSICAL_GOODS",  # required at CHARGEBACK
-        "product_description": product_description,
         "supporting_documents": {"documents": [{"type": "PRIMARY", "file_ids": [file_id],
                                                 "description": description}]},
     }
-    return _dispute(client.post(f"/pa/payment_disputes/{dispute_id}/challenge", body))
+    if dispute.stage == "CHARGEBACK":  # required there, and only applicable there
+        body.update(product_type="PHYSICAL_GOODS", product_description=product_description)
+    return _dispute(client.post(f"/pa/payment_disputes/{dispute.id}/challenge", body))
 
 
-def submit_evidence(client: Any, dispute_id: str, pdf: bytes, *, filename: str, description: str,
+def submit_evidence(client: Any, dispute: Dispute, pdf: bytes, *, filename: str, description: str,
                     product_description: str, opener: Callable[..., Any] = urllib.request.urlopen) -> Dispute:
     """Upload the receipt, then challenge the dispute with it."""
     if len(pdf) > MAX_PDF:
         raise ValueError(f"the evidence is {len(pdf)} bytes; Visa takes a PDF of at most {MAX_PDF}")
-    file_id = upload_file(client, pdf, filename, notes=f"dispute {dispute_id}"[:MAX_NAME], opener=opener)
-    return challenge(client, dispute_id, file_id, description=description,
+    file_id = upload_file(client, pdf, filename, notes=f"dispute {dispute.id}"[:MAX_NAME], opener=opener)
+    return challenge(client, dispute, file_id, description=description,
                      product_description=product_description, request_id=client.request_id())
 
 
