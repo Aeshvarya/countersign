@@ -1,5 +1,6 @@
-"""U3: the dispute calls over a fake Airwallex, each as documented."""
+"""U3: the dispute calls over a fake Airwallex, each as documented, and the receipt as evidence."""
 
+import base64
 import io
 import json
 import re
@@ -7,11 +8,33 @@ import unittest
 import urllib.error
 from datetime import datetime, timezone
 
-from countersign import disputes
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from countersign import disputes, receipt
 from countersign.airwallex import AirwallexError
 
 NOW = datetime(2026, 11, 30, 9, 0, tzinfo=timezone.utc)
+MERCHANT = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+PUBLIC = base64.b64encode(MERCHANT.public_key().public_bytes(serialization.Encoding.Raw,
+                                                             serialization.PublicFormat.Raw)).decode()
 SENTINEL = "VALUE-FROM-AIRWALLEX"  # in every fake answer; must never be printed
+
+
+def signed_receipt(**charged):
+    body = {
+        "v": 1, "merchant_id": "m-1", "order_number": "ORD-1001", "payment_id": "int_paid", "idempotency_key": "k1",
+        "agent": {"signature_agent": "https://agent.example", "key_id": "agent-key-1", "nonce": "n1",
+                  "tag": "agent-payer-auth"},
+        "approval": {"hash": "a" * 64, "ceiling": "8400.00", "currency": "INR", "approver": "shopper",
+                     "approved_at": "2026-11-02T09:58:00+00:00", "expires_at": "2026-11-02T10:13:00+00:00"},
+        "charged": {"amount": "8283.85", "currency": "INR", "merchant_amount": "98.50", "merchant_currency": "USD",
+                    "fx_quote_id": "cvq_1", "rate": "84.10", **charged},
+        "items": [{"sku": "KIT-265-0", "quantity": 1, "unit_price": "98.50"}],
+        "delivery": "standard",
+        "decided_at": "2026-11-02T10:00:00+00:00",
+    }
+    return receipt.sign(body, receipt.MerchantSigner(MERCHANT, "merchant-key-1"))
 
 
 class FakeAirwallex:
@@ -114,6 +137,46 @@ class DisputeCallsTest(unittest.TestCase):
         resolved = disputes.resolve_for_merchant(self.api, "dst_1")
         self.assertEqual(self.api.posts, [("/simulation/pa/payment_disputes/dst_1/resolve", {"in_favor_of": "MERCHANT"})])
         self.assertEqual(resolved.status, "WON")
+
+
+class EvidencePdfTest(unittest.TestCase):
+    def test_the_pdf_is_well_formed_and_carries_the_receipt(self):
+        signed = signed_receipt()
+        check = receipt.verify(signed, MERCHANT.public_key())
+        pdf = disputes.evidence_pdf(signed, check.findings, PUBLIC, "https://shop.example/verify")
+        self.assertTrue(pdf.startswith(b"%PDF-1.4\n") and pdf.endswith(b"%%EOF\n"))
+        self.assertLess(len(pdf), disputes.MAX_PDF)
+        self.assert_xref_points_at_objects(pdf)
+        for text in (b"(Order ORD-1001, payment int_paid, merchant m-1)", PUBLIC.encode(),
+                     b"https://shop.example/verify", b"signed by the merchant's key"):
+            self.assertIn(text, pdf)
+
+    def test_the_json_in_the_pdf_is_the_signed_json_cut_never_reflowed(self):
+        signed = signed_receipt()
+        lines = disputes.evidence_lines(signed, (), PUBLIC)
+        mono = [text for font, text in lines if font == "mono"]
+        self.assertTrue(all(len(t) <= disputes.MONO_WIDTH for t in mono))
+        self.assertEqual("".join(mono), "".join(json.dumps(signed, indent=2, sort_keys=True).splitlines()))
+        self.assertIn(signed["signature"], "".join(mono))
+
+    def test_a_long_receipt_runs_onto_more_pages(self):
+        lines = [("mono", f"line {i}") for i in range(200)]
+        pdf = disputes.render_pdf(lines)
+        self.assertIn(b"/Count 3 ", pdf)
+        self.assert_xref_points_at_objects(pdf)
+
+    def test_brackets_and_backslashes_cannot_end_a_string_early(self):
+        pdf = disputes.render_pdf([("text", r"a (b) c\d")])
+        self.assertIn(rb"(a \(b\) c\\d) Tj", pdf)
+
+    def assert_xref_points_at_objects(self, pdf):
+        start = int(pdf.rsplit(b"startxref\n", 1)[1].split(b"\n")[0])
+        self.assertTrue(pdf[start:].startswith(b"xref\n"))
+        rows = pdf[start:].split(b"\n")
+        count = int(rows[1].split()[1])
+        for n in range(1, count):
+            offset = int(rows[2 + n][:10])
+            self.assertTrue(pdf[offset:].startswith(b"%d 0 obj\n" % n), n)
 
 
 if __name__ == "__main__":

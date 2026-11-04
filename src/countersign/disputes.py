@@ -126,3 +126,119 @@ def resolve_for_merchant(client: Any, dispute_id: str, comment: str | None = Non
         body["comment"] = comment
     return _dispute(client.post(f"/simulation/pa/payment_disputes/{dispute_id}/resolve", body))
 
+
+# The evidence file -------------------------------------------------------------------------
+
+def evidence_filename(signed: dict[str, Any]) -> str:
+    order = re.sub(r"[^A-Za-z0-9_-]", "", str(signed["body"].get("order_number") or "order"))
+    return f"receipt-{order}"[: MAX_NAME - len(".pdf")] + ".pdf"
+
+
+def evidence_lines(signed: dict[str, Any], findings: tuple[str, ...], public_key: str,
+                   verify_url: str | None = None) -> list[tuple[str, str]]:
+    """What the PDF says, as (font, text): facts read from the receipt, then the receipt itself.
+
+    The JSON is printed exactly as signed (only re-indented), and long lines are cut, never
+    re-flowed, so joining a cut line back gives the same characters.
+    """
+    body = signed["body"]
+    lines = [
+        ("title", "Countersign receipt"),
+        ("text", f"Order {body.get('order_number')}, payment {body.get('payment_id')}, "
+                 f"merchant {body.get('merchant_id')}"),
+        ("text", f"Signed {body.get('decided_at')} with {signed.get('alg')} key {signed.get('key_id')}"),
+        ("text", f"Merchant public key (base64): {public_key}"),
+    ]
+    if verify_url:
+        lines.append(("text", f"Check it in a browser: {verify_url}"))
+    lines += [("text", ""), ("bold", "receipt.verify found")]
+    lines += [("text", f"- {f}") for f in findings]
+    lines += [("text", ""), ("bold", "The signed receipt (JSON)")]
+    for line in json.dumps(signed, indent=2, sort_keys=True).splitlines():
+        lines += [("mono", line[i:i + MONO_WIDTH]) for i in range(0, max(len(line), 1), MONO_WIDTH)]
+    return lines
+
+
+# A one-file PDF writer: the three standard fonts, A4, top to bottom. No dependency.
+FONTS = {"title": ("F2", 14), "bold": ("F2", 10), "text": ("F1", 10), "mono": ("F3", 8)}
+MONO_WIDTH = 100  # Courier is 0.6 em wide: 100 characters at 8 pt fit the 495 pt line
+TEXT_WIDTH = 92
+PAGE, MARGIN = (595, 842), 50
+
+
+def _wrap(font: str, text: str) -> list[str]:
+    if font == "mono" or len(text) <= TEXT_WIDTH:
+        return [text]
+    out, line = [], ""
+    for word in text.split(" "):
+        while len(word) > TEXT_WIDTH:  # a key or an id with no spaces: cut it
+            if line:
+                out.append(line)
+                line = ""
+            out.append(word[:TEXT_WIDTH])
+            word = word[TEXT_WIDTH:]
+        if line and len(line) + 1 + len(word) > TEXT_WIDTH:
+            out.append(line)
+            line = word
+        else:
+            line = f"{line} {word}" if line else word
+    return out + [line] if line else out
+
+
+def _escape(text: str) -> bytes:
+    raw = text.encode("cp1252", errors="replace")
+    return raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
+
+
+def render_pdf(lines: list[tuple[str, str]]) -> bytes:
+    pages: list[list[bytes]] = [[]]
+    y = PAGE[1] - MARGIN
+    for font, text in lines:
+        name, size = FONTS[font]
+        for part in _wrap(font, text):
+            step = round(size * 1.4)
+            if y - step < MARGIN:
+                pages.append([])
+                y = PAGE[1] - MARGIN
+            y -= step
+            pages[-1].append(b"BT /%s %d Tf %d %d Td (%s) Tj ET" % (name.encode(), size, MARGIN, y, _escape(part)))
+
+    fonts = [b"Helvetica", b"Helvetica-Bold", b"Courier"]
+    first_page = 3 + len(fonts)  # 1 catalog, 2 pages, then the fonts, then a page and its stream each
+    kids = b" ".join(b"%d 0 R" % (first_page + 2 * i) for i in range(len(pages)))
+    objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
+               b"<< /Type /Pages /Kids [%s] /Count %d >>" % (kids, len(pages))]
+    objects += [b"<< /Type /Font /Subtype /Type1 /BaseFont /%s /Encoding /WinAnsiEncoding >>" % f for f in fonts]
+    resources = b"<< /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >>"
+    for i, ops in enumerate(pages):
+        stream = b"\n".join(ops)
+        objects.append(b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources %s /Contents %d 0 R >>"
+                       % (PAGE[0], PAGE[1], resources, first_page + 2 * i + 1))
+        objects.append(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream))
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for n, obj in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (n, obj)
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    return bytes(out)
+
+
+def evidence_pdf(signed: dict[str, Any], findings: tuple[str, ...], public_key: str,
+                 verify_url: str | None = None) -> bytes:
+    return render_pdf(evidence_lines(signed, findings, public_key, verify_url))
+
+
+def evidence_description(signed: dict[str, Any], findings: tuple[str, ...]) -> str:
+    """The challenge's one line about the file: what was checked, in receipt.verify's own words."""
+    return (f"Merchant-signed receipt for order {signed['body'].get('order_number')}. "
+            f"receipt.verify: {'; '.join(findings)}.")
+
+
+def product_description(signed: dict[str, Any]) -> str:
+    items = signed["body"].get("items") or []
+    return ", ".join(f"{i.get('quantity')} x {i.get('sku')}" for i in items) or "see the receipt"
