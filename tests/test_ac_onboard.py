@@ -68,7 +68,7 @@ DISCOVERY = {"issuer": BASE, "authorization_endpoint": BASE + "/oauth/authorize"
 JWKS = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "k1", "x": "x", "y": "y"}]}
 
 
-def host(acp_status=401, acp_body=None, page_status=200, seconds=0.3, discovery=None, jwks=None):
+def host(acp_status=401, acp_body=None, page_status=200, seconds=0.3, discovery=None, jwks=None, jwks_seconds=0.1):
     """A fake host. With no discovery document the OAuth server answers 404, as before C14 is live."""
     calls = []
 
@@ -79,7 +79,7 @@ def host(acp_status=401, acp_body=None, page_status=200, seconds=0.3, discovery=
         if url.endswith("/.well-known/openid-configuration"):
             return (404, None, 0.1) if discovery is None else (200, discovery, 0.1)
         if url.endswith("/.well-known/jwks.json"):
-            return (404, None, 0.1) if jwks is None else (200, jwks, 0.1)
+            return (404, None, 0.1) if jwks is None else (200, jwks, jwks_seconds)
         return page_status, None, 0.1
     fetch.calls = calls
     return fetch
@@ -181,7 +181,16 @@ class HostCheckTest(unittest.TestCase):
     def test_an_oauth_server_as_registered_passes(self):
         code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks=JWKS))
         self.assertEqual(code, 0, text)
-        self.assertIn("a JWKS with 1 key(s), as onboarding registers", text)
+        self.assertIn("a JWKS with 1 key(s) in 0.10 s, as onboarding registers", text)
+        self.assertNotIn("sign-in may fail", text)
+
+    def test_a_slow_jwks_is_a_warning_only(self):
+        # Airwallex rejected tokens when the JWKS took over 500 ms (#commerce-kits-9-and-10, 2026-11-04)
+        for seconds, warned in ((0.5, False), (0.51, True), (22.6, True)):
+            with self.subTest(seconds=seconds):
+                code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks=JWKS, jwks_seconds=seconds))
+                self.assertEqual(code, 0, text)
+                self.assertEqual("sign-in may fail" in text, warned, text)
 
     def test_an_oauth_server_that_disagrees_fails(self):
         cases = {

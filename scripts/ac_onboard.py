@@ -25,7 +25,10 @@ Airwallex's first call would fail, so --onboard sends nothing. Then the OAuth
 server: no discovery document yet is a warning (onboarding stores the URLs
 either way); one that disagrees with what onboarding registers (issuer, jwks_uri,
 an endpoint missing, no PKCE S256) or a JWKS with no keys fails the check,
-because every Claude sign-in would then fail.
+because every Claude sign-in would then fail. A JWKS slower than 0.5 s is a
+warning: Airwallex fetches it to check Claude's access tokens and gave up after
+500 ms until 2026-11-04, when it raised the limit without saying to what
+(#commerce-kits-9-and-10). The time is measured from here, not from Airwallex.
 
 The body follows Airwallex's guide of 2026-11-03: the PSP key pair; apis with
 create_checkout ({base}/acp/create_checkout), the HMAC secret and the merchant
@@ -72,6 +75,7 @@ DISCOVERY_PATH = "/.well-known/openid-configuration"
 OIDC_ENDPOINTS = ("authorization_endpoint", "token_endpoint", "registration_endpoint")
 OAUTH_SCOPES = ["openid", "email"]  # advertised to Claude; ACP does not enforce them
 SLOW_SECONDS = 10.0  # a free Render instance waking from sleep takes longer than this
+JWKS_SECONDS = 0.5  # Airwallex's JWKS timeout until 2026-11-04; raised since, the new limit not given
 
 # fetch(method, url, body) -> (status, parsed JSON body or None, seconds taken)
 Fetch = Callable[[str, str, bytes | None], tuple[int, object, float]]
@@ -271,12 +275,17 @@ def check_oauth(base_url: str, fetch: Fetch) -> tuple[bool, list[str]]:
     problems = oauth_problems(doc, base_url)
     if problems:
         return False, [f"GET {DISCOVERY_PATH} -> 200, but " + "; ".join(problems)]
-    status, keys, _ = fetch("GET", oauth_base(base_url) + JWKS_PATH, None)
+    status, keys, seconds = fetch("GET", oauth_base(base_url) + JWKS_PATH, None)
     if status != 200 or not isinstance(keys, dict) or not keys.get("keys"):
         return False, [f"GET {DISCOVERY_PATH} -> 200, but GET {JWKS_PATH} -> {status} with no keys: "
                        "every access token would be rejected"]
-    return True, [f"GET {DISCOVERY_PATH} -> 200: issuer, endpoints, PKCE S256 and a JWKS with "
-                  f"{len(keys['keys'])} key(s), as onboarding registers"]
+    lines = [f"GET {DISCOVERY_PATH} -> 200: issuer, endpoints, PKCE S256 and a JWKS with "
+             f"{len(keys['keys'])} key(s) in {seconds:.2f} s, as onboarding registers"]
+    if seconds > JWKS_SECONDS:
+        lines.append(f"GET {JWKS_PATH} took {seconds:.2f} s: warning, Airwallex rejected tokens when its JWKS "
+                     f"fetch took over {JWKS_SECONDS} s (its limit until 2026-11-04, raised since to a value "
+                     "not given), so Claude's sign-in may fail")
+    return True, lines
 
 
 def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = None,
