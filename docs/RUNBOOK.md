@@ -6,7 +6,7 @@ The exact, repeatable steps the video is filmed from: connect Claude to the merc
 
 **Host** (Render's settings, see `render.yaml`): `COUNTERSIGN_PUBLIC_URL`, `COUNTERSIGN_ACP_HMAC_SECRET`, `COUNTERSIGN_LEVER_TOKEN`, `COUNTERSIGN_MERCHANT_SIGNING_KEY`, and for the live take `COUNTERSIGN_MERCHANT=airwallex`, `AIRWALLEX_CLIENT_ID`, `AIRWALLEX_API_KEY`, `AIRWALLEX_WEBHOOK_SECRET`, `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1`, `COUNTERSIGN_SYNC_CATALOG=1`, and the OAuth server's signing key (C14; its name comes with `web/oauth.py`). On our fallback MCP also `COUNTERSIGN_MCP_TOKEN`.
 
-**The host is awake.** A sleeping free instance took 22.6 s to answer its first call on 2026-11-03 (0.3 s once awake), long enough to time out Airwallex's `create_checkout`. Run `python scripts/ac_onboard.py --check-host` a minute before the take: it must say "401 from the ACP door" with no "slow" warning, and the OAuth server must pass.
+**The host is awake.** A sleeping free instance took 22.6 s to answer its first call on 2026-11-03 and 33.2 s on 2026-11-04 (0.3 s once awake), long enough to time out Airwallex's `create_checkout`, and Claude's sign-in too: Airwallex fetches our JWKS to check the access token (whether it caches it is not said) and gave up after 500 ms until 2026-11-04 (raised since, the new limit not given). Run `python scripts/ac_onboard.py --check-host` a minute before the take: it must say "401 from the ACP door" with no "slow" warning, and the OAuth server must pass with no "sign-in may fail" warning.
 
 **Recording terminal** (from `.env`, loaded with `set -a; . ./.env; set +a`): `COUNTERSIGN_PUBLIC_URL` and `COUNTERSIGN_LEVER_TOKEN` (for the levers), and on our MCP `COUNTERSIGN_MCP_TOKEN`.
 
@@ -47,7 +47,7 @@ Start every take from an empty folder, so no project instructions load either.
 5. A browser opens on our sign-in page: sign in with the passkey. Shoppers are guests, so there are no saved cards or addresses.
 6. Start a new chat and check that the `agentic-commerce` tools are listed.
 
-**It does not connect:** `tail -f ~/Library/Logs/Claude/mcp-server-agentic-commerce.log`, and `python scripts/ac_onboard.py --check-host` (the OAuth server must pass). A 401 in the log after a good sign-in is the access token: which claims Airwallex's MCP checks is not documented yet (PROGRESS Open questions).
+**It does not connect:** `tail -f ~/Library/Logs/Claude/mcp-server-agentic-commerce.log`, and `python scripts/ac_onboard.py --check-host` (the OAuth server must pass). A 401 in the log after a good sign-in is the access token. First rule out a slow JWKS: `--check-host` prints how long it took, and a JWKS slower than Airwallex's timeout was the whole cause of another team's 401s (#commerce-kits-9-and-10, 2026-11-04). Beyond that, which claims Airwallex's MCP checks is not documented yet (PROGRESS Open questions).
 
 **Sign in again from scratch** (a take that must show the sign-in, or a stuck one): quit Claude Desktop, delete `mcp-remote`'s saved sign-in in `~/.mcp-auth` (its documented default; not checked on the recording machine), and open Claude Desktop again.
 
