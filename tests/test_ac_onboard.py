@@ -181,7 +181,7 @@ class HostCheckTest(unittest.TestCase):
     def test_an_oauth_server_as_registered_passes(self):
         code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks=JWKS))
         self.assertEqual(code, 0, text)
-        self.assertIn("a JWKS with 1 key(s) in 0.10 s, as onboarding registers", text)
+        self.assertIn("a JWKS with 1 RS256/ES256 key(s) in 0.10 s, as onboarding registers", text)
         self.assertNotIn("sign-in may fail", text)
 
     def test_a_slow_jwks_is_a_warning_only(self):
@@ -211,6 +211,25 @@ class HostCheckTest(unittest.TestCase):
                 code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks=jwks))
                 self.assertEqual(code, 1, text)
                 self.assertIn("every access token would be rejected", text)
+
+    def test_only_an_rs256_or_es256_key_can_check_a_token(self):
+        rsa = {"kty": "RSA", "kid": "r1", "n": "n", "e": "AQAB"}
+        receipt_key = {"kty": "OKP", "crv": "Ed25519", "kid": "merchant-key-1", "x": "x"}  # ours, for receipts only
+        p384 = {**JWKS["keys"][0], "crv": "P-384"}
+        cases = {
+            "the receipt key": ([receipt_key], False),
+            "EC on P-384": ([p384], False),
+            "EC P-256 naming another alg": ([{**JWKS["keys"][0], "alg": "ES384"}], False),
+            "not a key at all": (["k1"], False),
+            "RSA": ([rsa], True),
+            "EC P-256 naming ES256": ([{**JWKS["keys"][0], "alg": "ES256"}], True),
+            "the receipt key beside an ES256 key": ([receipt_key, JWKS["keys"][0]], True),
+        }
+        for said, (keys, ok) in cases.items():
+            with self.subTest(said):
+                code, text = run(["--check-host"], fetch=host(discovery=DISCOVERY, jwks={"keys": keys}))
+                self.assertEqual(code, 0 if ok else 1, text)
+                self.assertEqual("the only kinds Airwallex verifies" in text, not ok, text)
 
     def test_an_oauth_mismatch_stops_the_onboard(self):
         client = FakeClient()

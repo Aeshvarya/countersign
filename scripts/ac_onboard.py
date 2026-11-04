@@ -24,8 +24,9 @@ mounted; a 404 means the host does not serve the edge at all. Either way
 Airwallex's first call would fail, so --onboard sends nothing. Then the OAuth
 server: no discovery document yet is a warning (onboarding stores the URLs
 either way); one that disagrees with what onboarding registers (issuer, jwks_uri,
-an endpoint missing, no PKCE S256) or a JWKS with no keys fails the check,
-because every Claude sign-in would then fail. A JWKS slower than 0.5 s is a
+an endpoint missing, no PKCE S256) or a JWKS with no RS256 or ES256 key (the
+only kinds the guide accepts; the receipt key is Ed25519, so it cannot double as
+one) fails the check, because every Claude sign-in would then fail. A JWKS slower than 0.5 s is a
 warning: Airwallex fetches it to check Claude's access tokens and gave up after
 500 ms until 2026-11-04, when it raised the limit without saying to what
 (#commerce-kits-9-and-10). The time is measured from here, not from Airwallex.
@@ -76,6 +77,7 @@ OIDC_ENDPOINTS = ("authorization_endpoint", "token_endpoint", "registration_endp
 OAUTH_SCOPES = ["openid", "email"]  # advertised to Claude; ACP does not enforce them
 SLOW_SECONDS = 10.0  # a free Render instance waking from sleep takes longer than this
 JWKS_SECONDS = 0.5  # Airwallex's JWKS timeout until 2026-11-04; raised since, the new limit not given
+TOKEN_ALGS = ("RS256", "ES256")  # what the guide (11-03) says Airwallex verifies access tokens with
 
 # fetch(method, url, body) -> (status, parsed JSON body or None, seconds taken)
 Fetch = Callable[[str, str, bytes | None], tuple[int, object, float]]
@@ -266,6 +268,13 @@ def oauth_problems(doc: Mapping, base_url: str) -> list[str]:
     return problems
 
 
+def token_key(key: object) -> bool:
+    """True for a JWK that can verify an RS256 or ES256 token: RSA, or EC on P-256, with no other alg named."""
+    if not isinstance(key, dict) or key.get("alg") not in (None, *TOKEN_ALGS):
+        return False
+    return key.get("kty") == "RSA" or (key.get("kty") == "EC" and key.get("crv") == "P-256")
+
+
 def check_oauth(base_url: str, fetch: Fetch) -> tuple[bool, list[str]]:
     """The merchant OAuth server (C14) as Claude will find it. Not served yet is a warning, not a failure."""
     status, doc, _ = fetch("GET", oauth_base(base_url) + DISCOVERY_PATH, None)
@@ -279,8 +288,13 @@ def check_oauth(base_url: str, fetch: Fetch) -> tuple[bool, list[str]]:
     if status != 200 or not isinstance(keys, dict) or not keys.get("keys"):
         return False, [f"GET {DISCOVERY_PATH} -> 200, but GET {JWKS_PATH} -> {status} with no keys: "
                        "every access token would be rejected"]
+    usable = sum(token_key(key) for key in keys["keys"])
+    if not usable:
+        return False, [f"GET {DISCOVERY_PATH} -> 200, but none of the {len(keys['keys'])} key(s) at {JWKS_PATH} "
+                       f"is an {' or '.join(TOKEN_ALGS)} key (RSA, or EC on P-256), the only kinds Airwallex "
+                       "verifies: every access token would be rejected"]
     lines = [f"GET {DISCOVERY_PATH} -> 200: issuer, endpoints, PKCE S256 and a JWKS with "
-             f"{len(keys['keys'])} key(s) in {seconds:.2f} s, as onboarding registers"]
+             f"{usable} {'/'.join(TOKEN_ALGS)} key(s) in {seconds:.2f} s, as onboarding registers"]
     if seconds > JWKS_SECONDS:
         lines.append(f"GET {JWKS_PATH} took {seconds:.2f} s: warning, Airwallex rejected tokens when its JWKS "
                      f"fetch took over {JWKS_SECONDS} s (its limit until 2026-11-04, raised since to a value "
