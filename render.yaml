@@ -47,6 +47,10 @@ services:
       # 1: a lever also upserts the changed product to Airwallex's catalogue (needs the Airwallex keys).
       - key: COUNTERSIGN_SYNC_CATALOG
         sync: false
+      # The OAuth server's ES256 key (C14), from `python -m countersign.web.oauth`, so Claude's
+      # sign-in and its tokens survive a restart.
+      - key: COUNTERSIGN_OAUTH_SIGNING_KEY
+        sync: false
       # The demo agent stays the free scripted stand-in even if a key is set. Change this here
       # (not in the dashboard) only once the Anthropic spend cap is on, then set the key.
       - key: COUNTERSIGN_MODEL

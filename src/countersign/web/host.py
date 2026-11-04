@@ -10,6 +10,8 @@ merchant, the one Airwallex onboards, needs a fixed address instead:
     /.well-known/countersign-merchant-key   the key that verifies this merchant's receipts
     /webhooks/airwallex             payment events; settle a card payment and sign its receipt (C9)
     /acp/mcp                        our fallback merchant MCP, only if COUNTERSIGN_MCP_TOKEN is set
+    /.well-known/openid-configuration, /.well-known/jwks.json, /oauth/...
+                                    the OAuth server Claude signs the shopper in through (C14, web/oauth.py)
     everything else                 the demo page and its API
 
 So one service answers all of it: those paths go to one long-lived merchant
@@ -30,6 +32,7 @@ Configuration, all optional:
     COUNTERSIGN_MCP_TOKEN              bearer token for /acp/mcp (at least 32 characters); needs /acp
     COUNTERSIGN_LEVER_TOKEN            bearer token for the merchant console and its levers (32+ characters)
     COUNTERSIGN_SYNC_CATALOG           1: a lever also upserts the product to Airwallex's catalogue
+    COUNTERSIGN_OAUTH_SIGNING_KEY      the OAuth server's ES256 key (web/oauth.py); it is served once a public URL is set
 """
 
 from __future__ import annotations
@@ -60,6 +63,9 @@ from ..fx import AirwallexFx, FakeFx
 from ..merchant import FakeMerchant, MerchantGateway
 from .console import Feed, FeedMiddleware
 from .merchant_mcp import MCP_PATH, mcp_app
+from .oauth import PATHS as OAUTH_PATHS
+from .oauth import OAuthServer, oauth_app
+from .oauth import server_from_env as oauth_from_env
 
 log = logging.getLogger("countersign.host")
 
@@ -153,6 +159,7 @@ class House:
     lever_token: bytes = b""  # mounts the console's API and the levers (V6) when set
     airwallex: Airwallex | None = None  # for the levers' catalogue sync
     sync_catalog: bool = False
+    oauth: OAuthServer | None = None  # C14, with a public URL to be its issuer
 
     def public_key(self) -> dict[str, str]:
         raw = self.signer.key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -195,7 +202,7 @@ def house_from_env(environ: Mapping[str, str], *, merchant: MerchantGateway | No
     return House(merchant, edge, signer, authority, acp is not None, store,
                  environ.get("AIRWALLEX_WEBHOOK_SECRET", "").encode(), mcp_token.encode(),
                  environ.get("COUNTERSIGN_PUBLIC_URL") or None, feed, lever_token.encode(),
-                 airwallex_from_env(environ), sync)
+                 airwallex_from_env(environ), sync, oauth_from_env(environ))
 
 
 def webhook_app(house: House) -> FastAPI:
@@ -257,12 +264,15 @@ class Host:
         self.house = house
         self.hooks = webhook_app(house)
         self.mcp = mcp_app(house, house.mcp_token, house.public_url) if house.mcp_token else None
+        self.oauth = oauth_app(house.oauth) if house.oauth is not None else None
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] == "http" and scope["path"] == WEBHOOK_PATH:
             await self.hooks(scope, receive, send)
         elif scope["type"] == "http" and scope["path"] == MCP_PATH and self.mcp is not None:
             await self.mcp(scope, receive, send)
+        elif scope["type"] == "http" and scope["path"] in OAUTH_PATHS and self.oauth is not None:
+            await self.oauth(scope, receive, send)
         elif scope["type"] == "http" and self.house.owns(scope["method"], scope["path"]):
             await self.house.edge(scope, receive, send)
         else:
