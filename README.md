@@ -17,6 +17,7 @@ Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: app
 | Claude as the shopper's agent (A13) | done on our fallback MCP: `docs/RUNBOOK.md` (clean profile, the add commands, a purchase prompt and each exception, rehearsed five times); Airwallex's MCP in Claude Desktop through `mcp-remote` written up, not rehearsed: it waits on Kit 10 onboarding and our OAuth server (C14) |
 | Real card payments through Airwallex (C9) | done offline: the shopper pays in Drop-in on `/pay/<id>`, paid only from Airwallex's own record; a refused card leaves the order open for another card and says what Airwallex reported, and cancel closes the payment; first live run waits on sandbox keys |
 | Shopper passkey approval (U1, C13) | done: verifier, edge routes, the shopper page (`/approve/<id>`), and the signature in the receipt (C13), attached only on `/acp` after it checks, never taken from an agent on the TAP door. It proves a passkey for this site signed the exact terms, not whose passkey it is (Decisions 2026-10-31) |
+| Dispute ending (U3) | done offline: `scripts/dispute_demo.py` opens a sandbox dispute on a receipt's payment, checks the receipt and stops if it fails, sends it to Airwallex as a PDF, challenges with it, and asks the sandbox simulator to decide; the live run waits on a card-paid sandbox intent |
 | Receipts anyone can check (C8) | done: the shopper page and `/verify` check the merchant's signature in the browser, no server asked |
 | Merchant console and levers (A15, V6) | done: `/console` shows every checkout call and the countersign's answer live; price, stock and delivery change on cue, and a reset puts the catalogue back for the next take; `scripts/change_event.py` does the same from a terminal |
 | Colours (V8) | one token file, light and dark, with the palette and a type, space, shape and motion scale (`edge/static/tokens.css`); the catalogue pages and product images use it; the web pages move onto it on `varunika/v8-apply-web` (in review); `scripts/contrast.py` checks every pair against WCAG AA (all pass) |
@@ -49,6 +50,7 @@ set -a; . ./.env; set +a
 .venv/bin/python scripts/smoke.py --base-url https://<public host> --buy # one purchase end to end: you approve and pay, it checks the receipt
 .venv/bin/python scripts/change_event.py --base-url https://<public host> --sku <sku> --percent 12   # the price moves on cue (also --price, --stock, --delivery)
 .venv/bin/python scripts/change_event.py --base-url https://<public host> --reset                    # every moved product back as uploaded
+.venv/bin/python scripts/dispute_demo.py --receipt countersign-receipt-<order>.json                   # a sandbox dispute on that payment, answered with the receipt
 eval "$(.venv/bin/python scripts/mcp_token.py)"                          # an Airwallex login token into the shell, never on screen (not used on the Claude Desktop path)
 .venv/bin/python scripts/contrast.py                                     # WCAG AA contrast of every colour pair, light and dark (--strict exits 1)
 .venv/bin/python scripts/audit.py                                        # before the repo goes public: credentials, .env, card numbers, links
@@ -104,6 +106,7 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `src/countersign/edge/hmac_auth.py`, `edge/idempotency.py` | the platform HMAC check (one scheme by config) and ACP idempotency rules |
 | `src/countersign/catalog_gmc.py` | C11 the catalogue as GMC rows, chunking that keeps a product's variants together, the upload |
 | `src/countersign/airwallex.py` | Airwallex REST client |
+| `src/countersign/disputes.py` | U3 a sandbox dispute: open, upload the receipt as a PDF, challenge, resolve |
 | `scripts/payment_spike.py` | real rate lock + real payment on the Airwallex sandbox, in one command |
 | `scripts/tap_interop.py` | interop check against Visa's TAP reference code |
 | `scripts/upload_catalog.py` | upload the catalogue to Airwallex (dry run without keys) |
@@ -111,6 +114,7 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `scripts/smoke.py` | checks every door of the deployed host; `--buy` runs one purchase end to end |
 | `scripts/contrast.py` | V8 WCAG AA contrast of every colour pair the pages use, light and dark |
 | `scripts/change_event.py` | V6 from a terminal: price, stock, delivery or reset on the running host, through its lever routes |
+| `scripts/dispute_demo.py` | U3 the dispute ending, step by step, stopping if the receipt does not verify |
 | `scripts/mcp_token.py` | an Airwallex login token, straight into the shell; not used on the Claude Desktop path |
 | `scripts/audit.py` | the audit before the repo goes public (A10), also run in CI |
 | `docs/VIDEO_RUN.md` | the video, shot by shot: what is on screen and what to type (A9) |

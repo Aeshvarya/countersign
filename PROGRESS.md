@@ -13,7 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-11-03_
+_Updated 2026-11-04_
+
+- **2026-11-04 (Varunika): U3, the dispute ending, is on main offline** (`4f501fb`). `scripts/dispute_demo.py --receipt countersign-receipt-<order>.json` (the file the shopper page downloads) opens a sandbox dispute on that receipt's payment (RFI, Visa 10.4, as the builder guide's dispute kit does), checks the receipt with `receipt.verify` against the host's published key and stops there if it fails, uploads it as a PDF, challenges with it, and asks the simulator to decide for the merchant. On screen, one line per step: `1 dispute opened dst_… RFI REQUIRES_RESPONSE`, `2 receipt VERIFIED` and what it found, `3 evidence sent … RFI CHALLENGED (receipt PDF, … bytes)`, `4 decided … WON`. No token or Airwallex value is printed. **For Aeshvarya (A9, the last scene):** it needs `.env` with the sandbox keys and `COUNTERSIGN_PUBLIC_URL`, plus one receipt from a card-paid order, so it waits on card acceptance (Turner). The live run's unknowns are in Open questions.
 
 - **2026-11-03 evening (Varunika): W1, W4 and W5 are on main** (`403ae1c`, `f730903`, `3d60a08`). W1: Airwallex's `create_checkout` at `/acp/create_checkout`, a fresh quote and rate lock per call, kept for the payment webhook (`api.quote_for`); its numbers and the W3 interface are in Decisions for Aeshvarya's OK before the 11-05 freeze. W4: `scripts/ac_onboard.py --onboard` now registers `/acp/create_checkout`, `apis.oauth.acp` and the image domain, so **Aeshvarya can onboard**; `--update` sends the whole `apis` section through `config/update`; `--check-host` reads the OAuth server too (live host 11-03: ACP door 401 as it should, product page 200, OAuth server not served yet, a warning). W5: `docs/RUNBOOK.md` has Claude Desktop with `mcp-remote`, all marked not rehearsed. **For C14 (Aeshvarya):** the discovery `issuer` must be exactly `COUNTERSIGN_PUBLIC_URL` with no trailing slash and `jwks_uri` `{that}/.well-known/jwks.json`, or `--check-host` fails and Claude's sign-in would too. `aeshvarya/shop-name` tested clean merged with main (524 tests); left for his merge.
 
@@ -89,6 +91,7 @@ _Updated 2026-11-03_
 
 ## Open questions
 
+- **U3 on the live sandbox** (2026-11-04, Varunika): the first run answers four things. (1) Does the simulator open a dispute on an intent paid through Drop-in or Airwallex's MCP? (2) Does it take the challenge at RFI with the receipt as the only document? If not, rerun with `--stage CHARGEBACK`, which adds the product type. (3) Which status comes after the resolve at RFI? `WON` or `REVERSED` is expected; anything else is printed and exits 2. (4) Does the file host take the PDF for `supporting_documents`? The builder guide says JPG or PDF, and Visa's table allows a PDF of up to 2 MB. **For Aeshvarya's `airwallex.py` (not edited):** `disputes.upload_file` builds its own multipart request because the client sends JSON to the API host only. A multipart send in the client would give the upload its 429 backoff and error parsing.
 - **The host sleeps between keep-warm pings** (2026-11-03, Varunika, for Aeshvarya's A7): `keep-warm.yml` asks for every 10 minutes, but its scheduled runs on 11-01 to 11-03 came 4 to 10 hours apart (GitHub runs scheduled workflows late here, as measured 10-19). The free instance sleeps in between: the first unsigned `POST /acp/create_checkout` took 22.6 s, the next 0.3 s, and Airwallex's `create_checkout` may time out on a cold host. Options: an outside monitor (UptimeRobot, already on his list) or the paid instance before onboarding rather than before recording. `docs/RUNBOOK.md` now checks the host is awake before each take.
 - **Which access-token claims does Airwallex's MCP check?** (2026-11-03) Another Kit 10 team, onboarded with ES256 tokens that verify against their JWKS, gets 401 from the ACP endpoint and asked in #commerce-kits-9-and-10 whether `aud` must be the ACP MCP URL; no answer yet. It decides what C14's tokens carry.
 - **`docs/VIDEO_RUN.md` row 2** (2026-11-03, Varunika, for Aeshvarya's A9): still connects Airwallex's MCP with `claude mcp add` and a bearer token; the 11-03 path is Claude Desktop with `mcp-remote` and our OAuth sign-in (`docs/RUNBOOK.md` section 2). `scripts/mcp_token.py` is not used on that path.
@@ -142,6 +145,9 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-11-04
+- **U3 offline** (Varunika, `4f501fb`): `disputes.py` opens a sandbox dispute (RFI, Visa 10.4), uploads the receipt as a PDF written with the standard library (Visa takes PDF, not PNG), challenges with it as the primary document and resolves for the merchant, each call checked against Airwallex's API reference and the builder guide's dispute kit. `scripts/dispute_demo.py` stops before any evidence if the receipt does not verify, and opens nothing for another payment's receipt. 564 tests.
 
 ### 2026-11-03
 - **W1, C10 amended** (Varunika, `403ae1c`): `POST /acp/create_checkout` answers Airwallex's 11-03 contract (available quantities, one SHIPPING method with standard and express, subtotal and total without shipping, a permalink) and keeps a quote per call for W3; tests from the guide's examples and its four fulfillment rules; `/acp/checkout_sessions` unchanged. 524 tests.
