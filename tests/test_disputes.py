@@ -1,10 +1,15 @@
-"""U3: the dispute calls over a fake Airwallex, each as documented, and the receipt as evidence."""
+"""U3: the dispute ending over a fake Airwallex: each call as documented, and the script stops when it should."""
 
 import base64
+import importlib.util
 import io
 import json
+import pathlib
 import re
+import sys
+import tempfile
 import unittest
+import unittest.mock
 import urllib.error
 from datetime import datetime, timezone
 
@@ -14,10 +19,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from countersign import disputes, receipt
 from countersign.airwallex import AirwallexError
 
+_PATH = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "dispute_demo.py"
+_spec = importlib.util.spec_from_file_location("dispute_demo", _PATH)
+dispute_demo = importlib.util.module_from_spec(_spec)
+sys.modules["dispute_demo"] = dispute_demo
+_spec.loader.exec_module(dispute_demo)
+
 NOW = datetime(2026, 11, 30, 9, 0, tzinfo=timezone.utc)
 MERCHANT = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
 PUBLIC = base64.b64encode(MERCHANT.public_key().public_bytes(serialization.Encoding.Raw,
                                                              serialization.PublicFormat.Raw)).decode()
+SECRETS = {"AIRWALLEX_CLIENT_ID": "client-id-SECRET", "AIRWALLEX_API_KEY": "api-key-SECRET"}
 SENTINEL = "VALUE-FROM-AIRWALLEX"  # in every fake answer; must never be printed
 
 
@@ -177,6 +189,117 @@ class EvidencePdfTest(unittest.TestCase):
         for n in range(1, count):
             offset = int(rows[2 + n][:10])
             self.assertTrue(pdf[offset:].startswith(b"%d 0 obj\n" % n), n)
+
+
+class DisputeDemoTest(unittest.TestCase):
+    def setUp(self):
+        self.api, self.files, self.lines = FakeAirwallex(), FakeFiles(), []
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = pathlib.Path(tmp.name)
+
+    def run_demo(self, signed, *argv, api=None, files=None, environ=None, key=PUBLIC):
+        file = self.tmp / "receipt.json"
+        file.write_text(json.dumps(signed))
+        return dispute_demo.main(["--receipt", str(file), "--merchant-key", key, *argv], environ=environ or {},
+                                 client=self.api if api is None else api, opener=files or self.files, now=NOW,
+                                 out=self.lines.append)
+
+    def paths(self, api=None):
+        return [p.rsplit("/", 1)[1] for p, _ in (api or self.api).posts]
+
+    def test_the_scene_opens_answers_and_wins(self):
+        self.assertEqual(self.run_demo(signed_receipt()), 0)
+        self.assertEqual(self.paths(), ["create", "challenge", "resolve"])
+        self.assertEqual(len(self.files.requests), 1)
+        self.assertIn(b"%PDF-1.4", self.files.requests[0].data)
+        text = "\n".join(self.lines)
+        for expected in ("dst_1  CHARGEBACK REQUIRES_RESPONSE", "VERIFIED", "within the approved 8400.00",
+                         "CHARGEBACK CHALLENGED", "CHARGEBACK WON"):
+            self.assertIn(expected, text)
+
+    def test_a_tampered_receipt_stops_before_any_evidence(self):
+        signed = signed_receipt()
+        signed["body"]["charged"]["amount"] = "1.00"
+        self.assertEqual(self.run_demo(signed), 1)
+        self.assertEqual((self.paths(), self.files.requests), (["create"], []))
+        self.assertIn("FAILED", "\n".join(self.lines))
+        self.assertIn("dst_1 stays open", self.lines[-1])
+
+    def test_a_receipt_signed_by_another_key_stops_before_any_evidence(self):
+        other = Ed25519PrivateKey.generate()
+        signed = receipt.sign(signed_receipt()["body"], receipt.MerchantSigner(other, "merchant-key-1"))
+        self.assertEqual(self.run_demo(signed), 1)
+        self.assertEqual((self.paths(), self.files.requests), (["create"], []))
+
+    def test_a_receipt_for_another_payment_opens_nothing(self):
+        self.assertEqual(self.run_demo(signed_receipt(), "--intent", "int_other"), 1)
+        self.assertEqual(self.api.posts, [])
+        self.assertIn("for payment int_paid, not int_other", self.lines[-1])
+
+    def test_a_merchant_key_that_is_not_a_key_opens_nothing(self):
+        for key in ("not-a-key", base64.b64encode(b"short").decode()):
+            with self.subTest(key=key):
+                self.assertEqual(self.run_demo(signed_receipt(), key=key), 1)
+                self.assertEqual(self.api.posts, [])
+
+    def test_the_key_comes_from_the_host_when_none_is_given(self):
+        file = self.tmp / "receipt.json"
+        file.write_text(json.dumps(signed_receipt()))
+        asked = []
+        code = dispute_demo.main(["--receipt", str(file)], environ={"COUNTERSIGN_PUBLIC_URL": "https://shop.example/"},
+                                 client=self.api, fetch_key=lambda url: asked.append(url) or PUBLIC,
+                                 opener=self.files, now=NOW, out=self.lines.append)
+        self.assertEqual((code, asked), (0, ["https://shop.example/"]))
+        self.assertIn(b"https://shop.example/verify", self.files.requests[0].data)
+
+    def test_a_host_that_gives_no_key_opens_nothing(self):
+        file = self.tmp / "receipt.json"
+        file.write_text(json.dumps(signed_receipt()))
+        for error in (TimeoutError("timed out"), KeyError("public_key")):
+            with self.subTest(error=type(error).__name__):
+                def fetch(url):
+                    raise error
+                code = dispute_demo.main(["--receipt", str(file), "--base-url", "https://shop.example"], environ={},
+                                         client=self.api, fetch_key=fetch, opener=self.files, now=NOW,
+                                         out=self.lines.append)
+                self.assertEqual((code, self.api.posts), (2, []))
+
+    def test_a_5xx_from_the_simulation_api_stops_cleanly(self):
+        for step, fail_on in (("open", "create"), ("evidence", "challenge"), ("resolve", "resolve")):
+            with self.subTest(step=step):
+                self.lines.clear()
+                api = FakeAirwallex(fail_on, AirwallexError(503, {"code": "service_unavailable", "message": SENTINEL}))
+                self.assertEqual(self.run_demo(signed_receipt(), api=api, files=FakeFiles()), 2)
+                self.assertEqual(self.paths(api)[-1], fail_on)  # nothing after the refused call
+                self.assertEqual(self.lines[-1], f"  stopped at {step}: Airwallex answered HTTP 503 service_unavailable")
+
+    def test_an_upload_that_never_answers_stops_cleanly(self):
+        self.assertEqual(self.run_demo(signed_receipt(), files=FakeFiles(TimeoutError("timed out"))), 2)
+        self.assertEqual(self.paths(), ["create"])
+        self.assertEqual(self.lines[-1], "  stopped at evidence: Airwallex could not be reached (TimeoutError)")
+
+    def test_no_secret_header_or_airwallex_value_is_printed(self):
+        # The real client from .env this time, its transport faked: login, then the three dispute calls.
+        seen = []
+
+        def urlopen(req, timeout=None):
+            seen.append(req)
+            if req.full_url.endswith("/authentication/login"):
+                return io.BytesIO(json.dumps({"token": "token-SECRET", "expires_at": SENTINEL}).encode())
+            return io.BytesIO(json.dumps(FakeAirwallex().post(req.full_url.split("/api/v1")[1])).encode())
+
+        file = self.tmp / "receipt.json"
+        file.write_text(json.dumps(signed_receipt()))
+        with unittest.mock.patch("urllib.request.urlopen", urlopen):
+            code = dispute_demo.main(["--receipt", str(file), "--merchant-key", PUBLIC], environ=SECRETS,
+                                     opener=self.files, now=NOW, out=self.lines.append)
+        self.assertEqual(code, 0)
+        self.assertEqual(seen[0].get_header("X-api-key"), "api-key-SECRET")  # it did log in with them
+        self.assertEqual(self.files.requests[0].get_header("Authorization"), "Bearer token-SECRET")
+        printed = "\n".join(self.lines)
+        for secret in ("client-id-SECRET", "api-key-SECRET", "token-SECRET", SENTINEL, "Bearer"):
+            self.assertNotIn(secret, printed)
 
 
 if __name__ == "__main__":
