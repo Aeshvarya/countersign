@@ -354,6 +354,7 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertEqual(page.headers["x-frame-options"], "DENY")
         self.assertIn("Sign in with passkey", page.text)
+        self.assertIn(oauth.TOKENS.read_text().strip()[:200], page.text)  # the shared colours, not a copy
         raw = page.text.split('id="signin-data">', 1)[1].split("</script>", 1)[0]
         self.assertNotIn("<", raw)
         data = json.loads(raw)

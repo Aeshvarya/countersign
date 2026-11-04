@@ -77,7 +77,8 @@ REQUEST_TTL = 600  # the sign-in page stays usable this long
 CODE_TTL = 120
 REFRESH_TTL = 30 * 24 * 3600
 CHALLENGE_LABEL = "countersign-oauth-v1"
-PAGE = Path(__file__).parent / "static" / "signin.html"
+PAGE = Path(__file__).parent / "static" / "oauth" / "signin.html"
+TOKENS = Path(__file__).parent.parent / "edge" / "static" / "tokens.css"  # the colours every page draws from
 _VERIFIER = frozenset(string.ascii_letters + string.digits + "-._~")  # RFC 7636 unreserved characters
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]", "::1")
 
@@ -464,7 +465,9 @@ def _basic_client_id(request: Request) -> str | None:
 
 def oauth_app(server: OAuthServer) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    page = PAGE.read_text(encoding="utf-8")
+    page = PAGE.read_text(encoding="utf-8").replace(
+        "/* {{TOKENS}}: edge/static/tokens.css, put in by web/oauth.py when the server starts */",
+        TOKENS.read_text(encoding="utf-8"))
 
     @app.options("/{path:path}")
     def preflight(path: str) -> Response:
