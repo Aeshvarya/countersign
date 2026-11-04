@@ -139,7 +139,8 @@ def upload(rows: list[dict[str, str]], post: Callable[[str, dict[str, Any]], dic
     for i, chunk in enumerate(chunks(rows, limit)):
         if i:
             sleep(pause)
-        reply = post(PRODUCTS_PATH, {"type": "gmc", "gmc_products": chunk})
+        sent = [{k: v for k, v in row.items() if k != "item_group_id"} for row in chunk]
+        reply = post(PRODUCTS_PATH, {"type": "gmc", "gmc_products": sent})
         counts = {k: int(reply.get(f"records_{k}") or 0) for k in ("added", "updated", "failed")}
         counts["rows"] = len(chunk)
         result.calls.append(counts)
