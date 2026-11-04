@@ -206,5 +206,47 @@ class WebhookTest(unittest.TestCase):
         self.assertEqual(client.post(WEBHOOK_PATH, content=raw, headers=hmac_auth.sign(raw, b"")).status_code, 401)
 
 
+@unittest.skipIf(TestClient is None, "needs the server extra: pip install -e '.[server]' httpx")
+class KeepAwakeTest(unittest.TestCase):
+    def test_it_pings_our_own_health_check_until_stopped(self):
+        import threading
+
+        from countersign.web.host import keep_awake
+
+        seen, stop = [], threading.Event()
+
+        def fetch(url):
+            seen.append(url)
+            if len(seen) == 3:
+                stop.set()
+            return 200
+
+        keep_awake("https://shop.example/", every=0.01, fetch=fetch, stop=stop).join(2)
+        self.assertEqual(seen, ["https://shop.example/healthz"] * 3)
+
+    def test_a_failed_ping_is_logged_and_the_next_one_still_goes(self):
+        import threading
+
+        from countersign.web.host import keep_awake
+
+        calls, stop = [], threading.Event()
+
+        def fetch(url):
+            calls.append(url)
+            if len(calls) == 2:
+                stop.set()
+            raise OSError("host asleep")
+
+        with self.assertLogs("countersign.host", "WARNING"):
+            keep_awake("https://shop.example", every=0.01, fetch=fetch, stop=stop).join(2)
+        self.assertEqual(len(calls), 2)
+
+    def test_it_is_off_unless_asked_and_needs_a_public_url(self):
+        self.assertFalse(house_from_env({}).keep_awake)
+        self.assertTrue(house_from_env({"COUNTERSIGN_PUBLIC_URL": PUBLIC, "COUNTERSIGN_KEEP_AWAKE": "1"}).keep_awake)
+        with self.assertRaises(ValueError):
+            house_from_env({"COUNTERSIGN_KEEP_AWAKE": "1"})
+
+
 if __name__ == "__main__":
     unittest.main()
