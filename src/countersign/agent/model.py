@@ -82,8 +82,9 @@ FIELD_WORDS = {"shopper_total": "your price", "merchant_total": "the merchant's 
 
 def _query(request: str) -> str:
     """The words worth searching for: no verbs, articles, amounts or currencies."""
-    query = re.sub(r"[₹€$]", " ", request.lower())
-    query = re.sub(r"\b(buy|me|a|an|the|please|under|below|for|\d[\d,]*|inr|usd|eur)\b", " ", query)
+    query = re.sub(r"(^|\s)[as](?=\$)", r"\1", request.lower())  # A$ and S$ are dollars too
+    query = re.sub(r"[₹€$£]", " ", query)
+    query = re.sub(r"\b(buy|me|a|an|the|please|under|below|for|\d[\d,.]*|inr|usd|eur|gbp|aud|sgd)\b", " ", query)
     return " ".join(query.split())
 
 
@@ -133,7 +134,7 @@ class ScriptedModel:
         if name == "search_products":
             if not result["products"]:
                 return self._say("I couldn't find anything matching that.")
-            budget = re.search(r"under\s*[₹$]?\s*([\d,]+)", request.lower())
+            budget = re.search(r"under\s*(?:[as]?\$|[₹€£])?\s*([\d,.]+)", request.lower())
             wanted = {_singular(w) for w in _query(request).split()}
             matches = [p for p in result["products"] if _noun(p["title"]) in wanted]
             if not matches:

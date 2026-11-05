@@ -85,7 +85,7 @@ class Door:
         return r.json()
 
     def checkout(self, sku: str) -> str:
-        return self.acp(SESSIONS, {"items": [{"id": sku, "quantity": 1}], "currency": "INR"})["id"]
+        return self.acp(SESSIONS, {"items": [{"id": sku, "quantity": 1}], "currency": "EUR"})["id"]
 
     def raise_price(self, sku: str, percent: int) -> None:
         self.http.post("/api/levers/price", json={"sku": sku, "percent": percent}, headers=self.lever).raise_for_status()
