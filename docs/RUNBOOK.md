@@ -83,11 +83,13 @@ Yes, go ahead and pay.
 
 **Expect:** an order number (`ORD-…`), the amount charged in rupees, and a signed receipt. With `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1`, Claude first gives the approval link: approve on the phone, then tell it *"Approved on my phone."* With `COUNTERSIGN_MERCHANT=airwallex`, it gives a pay link: pay in Airwallex's Drop-in, then tell it *"Paid."*, and it reads back the order and the receipt.
 
-**On Airwallex's MCP** (not rehearsed): Airwallex asks our `create_checkout` for the price, then creates and charges the payment itself.
+**On Airwallex's MCP** (not rehearsed in this run book; run live twice on 2026-11-05, PROGRESS Log): Airwallex asks our `create_checkout` for the price, then creates and charges the payment itself.
 
 - **Expect first:** the total in rupees and two shipping options, Standard (5-7 business days, free) and Express (2 business days, ₹840.16 offline at 84.10). Our total never includes shipping: Airwallex adds the option the shopper picks (₹8,997.02 offline with Express).
-- **The ceiling stays with Claude:** `create_checkout` carries no ceiling, so on this path the ₹8,400 never reaches the merchant.
-- **Then:** the shopper pays on Airwallex's payment page. Our webhook check then signs the receipt, or refunds in full with the reason when the payment does not match a live quote we signed, or, with `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1`, when the shopper's passkey did not sign those exact terms (W3; how the shopper signs on this path is not built yet).
+- **The ceiling stays with Claude:** `create_checkout` carries no ceiling, so on this path the ₹8,400 never reaches the merchant. Airwallex also has no way for `create_checkout` to tell the agent that an order needs someone's approval (#commerce-kits-9-and-10, 2026-11-05), so this path cannot ask again either.
+- **Then:** the live runs went create, choose shipping, delegate the test card's token, complete. Sandbox test cards take any future expiry and any three-digit CVV (Airwallex, 2026-11-05). The order id Claude is given is our checkout id (`chk_…`).
+- **After the payment:** Airwallex's webhook reaches us and W3 checks the paid intent against the quote it belongs to: the currency, the shipping option, the amount to the paisa, and that it was created before the quote expired. All hold: the merchant signs the receipt and serves it at `https://<host>/receipts/<checkout id>`. Anything else: a full refund with the reason, and no receipt. W3 does not check a shopper passkey on this path.
+- **Save the receipt at once** (it lives in memory, and a redeploy loses it): `curl -s https://<host>/receipts/<checkout id> -o countersign-receipt-<checkout id>.json`. That file is what `scripts/dispute_demo.py --receipt` takes for the dispute ending.
 
 ## 4. The exceptions
 
@@ -106,13 +108,13 @@ On Airwallex's MCP (not rehearsed):
 | --- | --- | --- |
 | Out of stock | `python scripts/change_event.py --sku KIT-265-0 --stock 0` before the first message | Our `create_checkout` answers `available_quantity: 0`; how Claude words it is Airwallex's MCP |
 | Express shipping | The shopper picks Express | The paid total is ours plus Express: ₹8,997.02 offline |
-| Price change after the quote | `--percent 12` between the price shown and the payment | Decided by the payment webhook check against the quote that payment belongs to (W3, not built yet) |
+| Price change after the quote | `--percent 12` between the price shown and the payment | Paid at the price quoted, with a receipt: W3 checks the payment against its own quote, never today's price, so the change reaches only the next `create_checkout` (read from `settle.py`, not run live) |
 
 After every exception: `python scripts/change_event.py --reset`.
 
 ## 5. Between takes
 
-- Never redeploy during a session: open checkouts and the order counter live in memory (order numbers restart at `ORD-1001`).
+- Never redeploy during a session: open checkouts, the order counter, Airwallex's quotes and the receipts at `/receipts/<checkout id>` live in memory (order numbers restart at `ORD-1001`). Every push to `main` redeploys the host (`autoDeploy` in `render.yaml`), a PROGRESS line included: the receipt from the 2026-11-05 live run answered 404 at 13:10 IST, after the 12:55 merge.
 - Offline, the payment id contains `fake` and Claude may say so; live, it is Airwallex's intent id.
 - If Claude completes again on its own after "asked again", stop the take and re-record that beat.
 
@@ -128,4 +130,6 @@ Against our fallback MCP on a local host with the offline merchant, from a fresh
 | 4 | Purchase | Paid, `ORD-1002`, ₹8,156.86 |
 | 5 | Out of stock | Not charged; Claude asked what to do |
 
-Not rehearsed yet: Claude Desktop with `mcp-remote`, our OAuth sign-in, Airwallex's MCP and its payment page, the passkey on a phone, Drop-in, the clean profile from section 1.
+Run live outside a take (Aeshvarya, 2026-11-04 and 11-05, PROGRESS Log): Claude Desktop with `mcp-remote` 0.16.0, our OAuth sign-in, Airwallex's MCP, and two purchases paid with the test card, the second ending in a signed receipt.
+
+Not rehearsed yet as a take: all of that from the clean profile in section 1, the passkey on a phone, Drop-in, and any exception on Airwallex's MCP.
