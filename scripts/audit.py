@@ -41,7 +41,8 @@ ASSIGNED_SECRET = re.compile(
     re.MULTILINE)
 PLACEHOLDER = re.compile(r"^(?:<.*>|\$\{?[A-Z_]+\}?|x+|\.\.\.|changeme|your[-_].*)$", re.IGNORECASE)
 # Airwallex's published sandbox test cards; nothing else that looks like a card may be in the repository.
-TEST_CARDS = {"4035501000000008", "2223000048400011", "4000000000000002", "4242424242424242"}
+TEST_CARDS = {"4035501000000008", "2223000048400011", "4000000000000002", "4242424242424242",
+              "4646464646464644"}  # the last: declined by Airwallex's risk engine at any amount (risk_declined)
 CARD = re.compile(r"(?<![\d.])(?:\d[ -]?){12,18}\d(?![\d.])")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})")
 EMAIL_OK = re.compile(r"(?:^|\.)(?:example\.(?:com|org|net)|countersign\.dev|anthropic\.com|users\.noreply\.github\.com)$")
