@@ -8,7 +8,8 @@ merchant, the one Airwallex onboards, needs a fixed address instead:
     /products /offers /checkout     the direct door, for agents that sign with TAP (C7)
     /orders/<key>
     /.well-known/countersign-merchant-key   the key that verifies this merchant's receipts
-    /webhooks/airwallex             payment events; settle a card payment and sign its receipt (C9)
+    /webhooks/airwallex             payment events; settle a card payment and sign its receipt (C9),
+                                    including the ones Airwallex's MCP makes for our create_checkout (W3)
     /acp/mcp                        our fallback merchant MCP, only if COUNTERSIGN_MCP_TOKEN is set
     /.well-known/openid-configuration, /.well-known/jwks.json, /oauth/...
                                     the OAuth server Claude signs the shopper in through (C14, web/oauth.py)
@@ -66,6 +67,7 @@ from ..edge import create_app as create_edge
 from ..edge import hmac_auth, pages
 from ..fx import AirwallexFx, FakeFx
 from ..merchant import FakeMerchant, MerchantGateway
+from ..settle import Settlement, Settler
 from .console import Feed, FeedMiddleware
 from .merchant_mcp import MCP_PATH, mcp_app
 from .oauth import PATHS as OAUTH_PATHS
@@ -167,6 +169,7 @@ class House:
     sync_catalog: bool = False
     oauth: OAuthServer | None = None  # C14, with a public URL to be its issuer
     keep_awake: bool = False  # ping our own public URL while running (COUNTERSIGN_KEEP_AWAKE)
+    settler: Settler | None = None  # W3: the payments Airwallex's MCP makes, with /acp and Airwallex keys
 
     def public_key(self) -> dict[str, str]:
         raw = self.signer.key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -209,10 +212,12 @@ def house_from_env(environ: Mapping[str, str], *, merchant: MerchantGateway | No
     awake = environ.get("COUNTERSIGN_KEEP_AWAKE", "").strip().lower() in ("1", "true", "yes")
     if awake and not environ.get("COUNTERSIGN_PUBLIC_URL"):
         raise ValueError("COUNTERSIGN_KEEP_AWAKE needs COUNTERSIGN_PUBLIC_URL, the address it pings")
+    client = airwallex_from_env(environ)
+    settler = Settler(client, edge.state.acp.quote_for, signer, store) if client and acp else None
     return House(merchant, edge, signer, authority, acp is not None, store,
                  environ.get("AIRWALLEX_WEBHOOK_SECRET", "").encode(), mcp_token.encode(),
                  environ.get("COUNTERSIGN_PUBLIC_URL") or None, feed, lever_token.encode(),
-                 airwallex_from_env(environ), sync, oauth_from_env(environ), awake)
+                 client, sync, oauth_from_env(environ), awake, settler)
 
 
 def _get(url: str) -> int:
@@ -251,8 +256,9 @@ def webhook_app(house: House) -> FastAPI:
 
     The event is only a nudge. Its signature is checked (x-timestamp and
     x-signature, HMAC-SHA256 under the webhook secret), and then the merchant
-    fetches the intent itself (AirwallexMerchant.confirm) before anything is
-    marked paid or refunded. A non-2xx answer makes Airwallex retry.
+    fetches the intent itself (AirwallexMerchant.confirm for the intents it
+    started, Settler.settle for the ones Airwallex's MCP made) before anything
+    is marked paid or refunded. A non-2xx answer makes Airwallex retry.
     """
     hooks = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -267,13 +273,21 @@ def webhook_app(house: House) -> FastAPI:
         except ValueError:
             return JSONResponse({"error": "the body is not JSON"}, status_code=400)
         intent_id = intent_of(event) if isinstance(event, dict) else None
-        if intent_id is None or not isinstance(house.merchant, AirwallexMerchant):
+        if intent_id is None:
             return {"ignored": True}
+        log.warning("webhook %s for %s", event.get("name"), intent_id)
         try:
-            order = await run_in_threadpool(house.merchant.confirm, intent_id)
+            order = (await run_in_threadpool(house.merchant.confirm, intent_id)
+                     if isinstance(house.merchant, AirwallexMerchant) else None)
+            settled = (await run_in_threadpool(house.settler.settle, intent_id)
+                       if order is None and house.settler is not None else None)
         except (AirwallexError, *UNREACHABLE) as err:
             log.warning("webhook for %s not settled yet: %s", intent_id, err)
             return JSONResponse({"error": "Airwallex could not be reached; retry"}, status_code=503)
+        if settled is not None:
+            record_settlement(house, settled)
+            return {"order_number": settled.checkout_id, "status": settled.status,
+                    "receipt": settled.receipt is not None}
         if order is None:
             return {"ignored": True}
         receipt = release(order, house.signer, house.store)
@@ -295,6 +309,17 @@ def record_payment(house: House, order: Any, receipt: dict[str, Any] | None, sou
         reasons = "; ".join(getattr(house.merchant, "problems", {}).get(order.idempotency_key, ()))
         house.feed.add("payment", "no", f"Payment {order.status}: {order.order_number}", reasons or source,
                        order=order.order_number)
+
+
+def record_settlement(house: House, settled: Settlement) -> None:
+    """One console line when a payment Airwallex's MCP made is settled (W3)."""
+    if settled.status == "paid":
+        house.feed.add("payment", "go", f"Payment confirmed with Airwallex: {settled.checkout_id}",
+                       f"{settled.amount} {settled.currency} · receipt signed · Airwallex's MCP",
+                       order=settled.checkout_id)
+    elif settled.status == "refunded":
+        house.feed.add("payment", "no", f"Payment refunded: {settled.checkout_id}", "; ".join(settled.reasons),
+                       order=settled.checkout_id)
 
 
 class Host:
