@@ -99,6 +99,15 @@ class ChunksTest(unittest.TestCase):
                     seen.setdefault(row["item_group_id"], set()).add(n)
             self.assertTrue(all(len(where) == 1 for where in seen.values()), limit)
 
+    def test_rows_go_up_without_their_group(self):
+        sent = []
+        catalog_gmc.upload(self.rows, lambda path, body: sent.append(body) or {"records_added": len(body["gmc_products"])},
+                           sleep=lambda s: None)
+        posted = [row for body in sent for row in body["gmc_products"]]
+        self.assertEqual([r["id"] for r in posted], [r["id"] for r in self.rows])
+        self.assertFalse(any("item_group_id" in r for r in posted))
+        self.assertTrue(all("item_group_id" in r for r in self.rows))  # the rows themselves keep it
+
     def test_301_single_variant_rows_split_300_plus_1(self):
         rows = [{"id": f"X-{i:03d}-0", "item_group_id": f"X-{i:03d}"} for i in range(301)]
         self.assertEqual([len(c) for c in catalog_gmc.chunks(rows)], [300, 1])
