@@ -1,20 +1,29 @@
-"""C10: the checkout API Airwallex's merchant MCP calls (our `create_checkout`).
+"""C10: the merchant's checkout API. Airwallex's merchant MCP calls our
+`create_checkout`; our own MCP (web/merchant_mcp.py) calls the checkout sessions.
 
-Shaped on the Agentic Commerce Protocol, version 2026-04-17: create, update,
-read, complete and cancel a checkout session. This is the only module that
-knows ACP JSON. It turns sessions into the same Terms and Approval the direct
-TAP door uses, and completing a session runs the same countersign(): the live
-offer is rebuilt with a fresh rate lock and decide() charges, asks again or
-refuses. Nothing here decides money.
+Shaped on the Agentic Commerce Protocol: create, update, read, complete and
+cancel a checkout session. The API-Version header says 2026-04-17, but the
+session body is still mostly the 2025-09-29 shape (`fulfillment_address`,
+`fulfillment_option_id`, line items with `base_amount`, a top-level
+`countersign` object, the warning codes over_ceiling, terms_changed and expired,
+which the 2026-04-17 enums do not have). Moving the body to 2026-04-17 changes
+C10, so it needs both builders. This is the only module that knows ACP JSON. It
+turns sessions into the same Terms and Approval the direct TAP door uses, and
+completing a session runs the same countersign(): the live offer is rebuilt
+with a fresh rate lock and decide() charges, asks again or refuses. Nothing here
+decides money.
 
-The caller is a platform (Airwallex), not an agent, so these routes sit outside
-the TAP check and are authenticated by the shared HMAC secret instead
-(hmac_auth). The body cap still applies.
+The callers are platforms, not agents (Airwallex for create_checkout, our own
+MCP for the sessions, signing in-process), so these routes sit outside the TAP
+check and are authenticated by the shared HMAC secret instead (hmac_auth). The
+body cap still applies.
 
 Statuses on the wire are ACP's four only (not_ready_for_payment,
-ready_for_payment, completed, canceled): Airwallex's hosted MCP sits between us
-and the agent and may drop a session whose status it does not know. A session
-waiting for a passkey signature over its terms is not_ready_for_payment, with an
+ready_for_payment, completed, canceled). The first reason was that Airwallex's
+hosted MCP would sit in front of the session routes and might drop a status it
+did not know; since 2026-11-03 it calls create_checkout instead, and the four
+stay because they are all an ACP client can read. A session waiting for a
+passkey signature over its terms is not_ready_for_payment, with an
 approval_required message and the approval link in `links`.
 
 What the shopper approved: until the shopper signs the terms themselves (U1),
