@@ -74,7 +74,10 @@ def _last_tool_exchange(messages: list[dict]) -> tuple[str | None, dict | None]:
     return call.name, json.loads(result["content"])
 
 
-VARIANTS = {"lite", "standard", "pro", "max"}  # the catalogue's tiers, after a product's name
+VARIANTS = {"lite", "standard", "pro", "max"}
+# What a changed field is called when the agent tells the shopper.
+FIELD_WORDS = {"shopper_total": "your price", "merchant_total": "the merchant's price", "items": "the items",
+               "delivery": "delivery", "stock": "stock", "shopper_currency": "your currency"}  # the catalogue's tiers, after a product's name
 
 
 def _query(request: str) -> str:
@@ -158,7 +161,8 @@ class ScriptedModel:
             if outcome == "proceed":
                 return self._say(f"Done. Order {result['order_number']}, charged {result['charged']}. The merchant's receipt is saved.")
             if outcome == "reask":
-                changes = "; ".join(f"{c['field']}: {c['approved']} → {c['live']}" for c in result["changes"])
+                changes = "; ".join(f"{FIELD_WORDS.get(c['field'], c['field'])}: {c['approved']} → {c['live']}"
+                                    for c in result["changes"])
                 sku_qty = result["cart"]
                 return self._tool("get_offer", {"items": sku_qty}, f"Something changed since you approved ({changes}). Getting fresh terms.")
             return self._say(f"The merchant refused: {result['reason']}. Nothing was charged.")
