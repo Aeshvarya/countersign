@@ -108,7 +108,8 @@ On Airwallex's MCP (not rehearsed):
 | --- | --- | --- |
 | Out of stock | `python scripts/change_event.py --sku KIT-265-0 --stock 0` before the first message | Our `create_checkout` answers `available_quantity: 0`; how Claude words it is Airwallex's MCP |
 | Express shipping | The shopper picks Express | The paid total is ours plus Express: ₹8,997.02 offline |
-| Price change after the quote | `--percent 12` between the price shown and the payment | Paid at the price quoted, with a receipt: W3 checks the payment against its own quote, never today's price, so the change reaches only the next `create_checkout` (read from `settle.py`, not run live) |
+| Price change after the last update | `--percent 12` after the shopper's last change to the session, before paying | Paid at the price already quoted, with a receipt: W3 checks the payment against its own quote, never today's price (run live 2026-11-05) |
+| Price change before an update | `--percent 12`, then the shopper changes the session (for example the shipping) | The update calls our `create_checkout` again and the total moves (₹8,794.23 → ₹9,673.75 live) with no message to the agent: only Claude can ask the shopper again. For the re-ask on screen, film it on our MCP (section 4, first table) |
 
 After every exception: `python scripts/change_event.py --reset`.
 
