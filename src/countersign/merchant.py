@@ -19,6 +19,11 @@ from .fx import FxGateway
 from .terms import LineItem, Terms, money
 
 
+# The synthetic shop's name, shown to the shopper and the agent and bound into the terms. A real-sounding
+# brand: with an id like "merchant_demo" the agent told shoppers it was a test store.
+MERCHANT_NAME = "Larch Lane"
+
+
 @dataclass(frozen=True)
 class Product:
     sku: str
@@ -96,7 +101,7 @@ def hash_int(text: str) -> int:
 
 
 class FakeMerchant:
-    def __init__(self, fx: FxGateway, merchant_id: str = "merchant_demo", currency: str = "USD"):
+    def __init__(self, fx: FxGateway, merchant_id: str = MERCHANT_NAME, currency: str = "USD"):
         self.merchant_id = merchant_id
         self.currency = currency
         self.fx = fx

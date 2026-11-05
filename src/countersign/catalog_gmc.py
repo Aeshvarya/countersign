@@ -22,12 +22,11 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Callable, Iterable
 
-from .merchant import Product, synthetic_catalog
+from .merchant import MERCHANT_NAME, Product, synthetic_catalog
 from .terms import minor_units, money
 
 PRODUCTS_PATH = "/pa/agentic_commerce/products"  # under /api/v1, which the client adds
 MAX_ROWS_PER_CALL = 300
-MERCHANT_NAME = "Countersign Store"
 
 # The fields Airwallex's own example row uses. Anything else is sent only on
 # request (extended=True), until Airwallex confirms it accepts more of GMC.

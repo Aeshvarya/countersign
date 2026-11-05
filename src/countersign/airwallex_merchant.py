@@ -33,7 +33,7 @@ from typing import Any
 from .airwallex import UNREACHABLE, Airwallex, AirwallexError
 from .decide import Decision, Outcome
 from .fx import AirwallexFx, FxGateway
-from .merchant import FakeMerchant, Order
+from .merchant import MERCHANT_NAME, FakeMerchant, Order
 from .payments import SUCCEEDED, AirwallexPayments, Handoff, PaymentIntent, check_paid
 from .terms import Terms
 
@@ -78,7 +78,7 @@ def failed_attempt(body: dict[str, Any]) -> tuple[bool, str | None]:
 
 
 class AirwallexMerchant(FakeMerchant):
-    def __init__(self, client: Airwallex, fx: FxGateway | None = None, merchant_id: str = "merchant_demo",
+    def __init__(self, client: Airwallex, fx: FxGateway | None = None, merchant_id: str = MERCHANT_NAME,
                  currency: str = "USD") -> None:
         super().__init__(fx if fx is not None else AirwallexFx(client), merchant_id, currency)
         self.client = client
