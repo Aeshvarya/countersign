@@ -3,10 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Countersign</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<title>Countersign · let an agent shop, pay only what you approved</title>
+<meta name="description" content="A live demo: an AI agent shops for you, you approve the exact terms, and the merchant re-checks them against the live price and exchange rate before it charges.">
 <style>
 /* tokens:begin, copied from src/countersign/edge/static/tokens.css by scripts/apply_tokens.py: change colours there */
 :root {
@@ -125,222 +123,648 @@
 }
 /* tokens:end */
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { scroll-behavior: smooth; }
 html, body { margin: 0; overflow-x: clip; background: var(--bg); color: var(--ink); }
-body { font-family: var(--font-sans); font-weight: 500; font-size: var(--step-0); line-height: 1.45;
-       font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+body { font-family: var(--font-sans); font-weight: 500; font-size: var(--step-0); line-height: 1.5;
+       font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; min-height: 100vh; }
 button, input { font: inherit; color: inherit; }
-.wrap { max-width: 1320px; margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-8); }
-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: 22px; flex-wrap: wrap; }
-.brand { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-.brand h1 { font-family: var(--font-display); margin: 0; font-size: var(--step-3); font-weight: 700; }
-.brand h1 span { color: var(--accent); }
-.brand p { margin: 0; color: var(--ink-2); font-weight: 500; }
-.pills { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.pill { padding: 6px var(--space-3); border-radius: var(--radius-1); background: var(--panel); border: 1px solid var(--line); font-weight: 600; font-size: var(--step--1); }
-.pill b { font-weight: 700; }
+h1, h2, h3, h4, p { margin: 0; }
+a { color: var(--accent); }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 0 var(--space-5); }
+@media (max-width: 640px) { .wrap { padding: 0 var(--space-4); } }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-/* start */
-.start { background: var(--panel); border-radius: var(--radius-2); padding: var(--space-7) var(--space-6); border: 1px solid var(--line); }
-.start h2 { font-family: var(--font-display); margin: 0 0 6px; font-size: clamp(var(--step-3), 5vw, calc(var(--step-5) * var(--ratio))); font-weight: 700; line-height: 1.02; max-width: 15ch; }
-.start .sub { color: var(--ink-2); font-size: var(--step-1); font-weight: 500; max-width: 60ch; margin: 10px 0 26px; }
-.ask { display: flex; gap: 10px; flex-wrap: wrap; }
-.ask input[type=text] { flex: 1 1 320px; min-width: 0; padding: var(--space-4) 18px; border-radius: var(--radius-1); border: 2px solid var(--line); background: var(--bg); font-size: var(--step-1); font-weight: 600; }
-.ask input[type=text]:focus { outline: none; border-color: var(--accent); }
-.seg { display: inline-flex; border: 2px solid var(--line); border-radius: var(--radius-1); overflow: hidden; }
-.seg button { border: 0; background: transparent; padding: 0 var(--space-4); font-weight: 600; cursor: pointer; min-height: 52px; }
-.seg button[aria-pressed=true] { background: var(--ink); color: var(--bg); }
-.btn { border: 0; border-radius: var(--radius-1); padding: 14px 20px; font-weight: 600; cursor: pointer; background: var(--ink); color: var(--bg); min-height: 52px; }
+/* a quiet wash of the accent behind the top of the page: a fill, not a shadow */
+.wash { position: absolute; inset: 0 0 auto 0; height: 620px; pointer-events: none; z-index: -1;
+        background: radial-gradient(60% 70% at 78% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
+                    radial-gradient(40% 50% at 8% 10%, color-mix(in srgb, var(--go) 9%, transparent), transparent 70%); }
+
+/* ---------------------------------------------------------------- top bar */
+.top { position: sticky; top: 0; z-index: 20; border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
+       background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: saturate(1.4) blur(12px);
+       -webkit-backdrop-filter: saturate(1.4) blur(12px); }
+.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-height: 64px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
+.brand .word { font-family: var(--font-display); font-size: var(--step-2); font-weight: 700; letter-spacing: -0.01em; }
+.brand .word em { font-style: normal; color: var(--accent); }
+.seal { width: 30px; height: 30px; color: var(--accent); flex: none; }
+.top-actions { display: flex; align-items: center; gap: var(--space-2); }
+.status-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+               border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); background: var(--panel);
+               font-size: var(--step--1); font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.status-chip b { color: var(--ink); font-weight: 700; }
+.status-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--go); }
+.status-chip .dot.live { animation: breathe 2.4s var(--ease) infinite; }
+@keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.8); } }
+@media (max-width: 860px) { .status-chip.market { display: none; } }
+@media (max-width: 560px) { .status-chip.agent { display: none; } .help-label { display: none; } }
+.icon-btn { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 999px; cursor: pointer;
+            border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); background: var(--panel); color: var(--ink-2); }
+.icon-btn svg { width: 18px; height: 18px; }
+.icon-btn:hover { color: var(--ink); border-color: var(--line); }
+kbd { font-family: var(--font-mono); font-size: 0.75rem; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line); color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid transparent;
+       border-radius: 12px; padding: 12px 20px; min-height: 48px; font-weight: 650; cursor: pointer; text-decoration: none;
+       background: var(--ink); color: var(--bg); transition: transform var(--dur) var(--ease), opacity var(--dur) var(--ease); }
 .btn.primary { background: var(--accent); color: var(--accent-ink); }
-.btn.ghost { background: transparent; color: var(--ink); border: 2px solid var(--line); }
-.btn.small { min-height: 0; padding: 9px 13px; border-radius: var(--radius-1); font-size: var(--step--1); }
-a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+.btn.ghost { background: var(--panel); color: var(--ink); border-color: color-mix(in srgb, var(--line) 70%, transparent); }
+.btn.ghost:hover:not(:disabled) { border-color: var(--ink-2); }
+.btn.small { min-height: 36px; padding: 7px 13px; font-size: var(--step--1); border-radius: 10px; }
+.btn.block { width: 100%; }
+.btn:hover:not(:disabled) { transform: translateY(-1px); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.chips { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-4); }
-.chip { border: 1px solid var(--line); background: var(--bg); border-radius: var(--radius-1); padding: var(--space-2) 14px; font-weight: 600; cursor: pointer; }
+.btn svg { width: 18px; height: 18px; flex: none; }
 
-/* board */
-.board { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: var(--space-4); align-items: start; }
-@media (max-width: 1080px) { .board { grid-template-columns: 1fr; } }
-.col { background: var(--panel); border-radius: var(--radius-2); border: 1px solid var(--line); min-width: 0; }
-.col > h3 { margin: 0; padding: var(--space-4) 18px var(--space-3); font-size: var(--step--1); font-weight: 700; color: var(--ink-3); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
-.col .body { padding: 14px 18px 18px; }
+/* ---------------------------------------------------------------- hero */
+.hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: var(--space-7); align-items: center; padding-block: var(--space-8) var(--space-7); }
+@media (max-width: 960px) { .hero { grid-template-columns: 1fr; gap: var(--space-6); padding-block: var(--space-6) var(--space-5); } }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: var(--step--1); font-weight: 700; letter-spacing: .04em;
+           text-transform: uppercase; color: var(--accent); }
+.eyebrow::before { content: ""; width: 18px; height: 2px; background: currentColor; border-radius: 2px; }
+.hero h1 { font-family: var(--font-display); font-weight: 700; letter-spacing: -0.02em; line-height: 1.02;
+           font-size: clamp(2.3rem, 5.2vw, 4.1rem); margin: var(--space-4) 0 var(--space-4); max-width: 16ch; }
+.hero h1 .said { color: var(--accent); }
+.lede { color: var(--ink-2); font-size: var(--step-1); max-width: 54ch; }
+.ask-form { margin-top: var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); max-width: 640px; }
+.ask-box { display: flex; align-items: center; gap: var(--space-2); padding: 6px 6px 6px 18px; border-radius: 16px;
+           background: var(--panel); border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+           transition: border-color var(--dur) var(--ease); }
+.ask-box:focus-within { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 22%, transparent); }
+.ask-box input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: var(--step-1); font-weight: 600; padding: 10px 0; }
+@media (max-width: 560px) { .ask-box { flex-wrap: wrap; padding: 6px; } .ask-box input { flex-basis: 100%; padding: 10px 12px; }
+                            .ask-box .btn { width: 100%; } }
+.ask-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--soft); }
+.seg button { border: 0; background: transparent; padding: 6px 14px; border-radius: 9px; font-weight: 650; cursor: pointer; font-size: var(--step--1); color: var(--ink-2); }
+.seg button[aria-pressed=true] { background: var(--panel); color: var(--ink); outline: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
+.seg-label { font-size: var(--step--1); color: var(--ink-3); font-weight: 600; margin-right: 6px; }
+.chips { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.chips .lbl { font-size: var(--step--1); color: var(--ink-3); font-weight: 600; }
+.chip { border: 1px dashed color-mix(in srgb, var(--line) 80%, transparent); background: transparent; border-radius: 999px; padding: 6px 13px;
+        font-weight: 600; font-size: var(--step--1); cursor: pointer; color: var(--ink-2); transition: transform var(--dur) var(--ease); }
+.chip:hover { border-style: solid; color: var(--ink); transform: translateY(-1px); }
+.fine { font-size: var(--step--1); color: var(--ink-3); }
+
+/* the hero's little film: you ask, the agent finds, the merchant countersigns */
+.film { position: relative; padding: var(--space-5); border-radius: 22px; background: var(--panel);
+        border: 1px solid color-mix(in srgb, var(--line) 55%, transparent); display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+.film::before { content: ""; position: absolute; left: 41px; top: 56px; bottom: 56px; width: 2px;
+                background: repeating-linear-gradient(to bottom, var(--soft) 0 6px, transparent 6px 12px); }
+.film-row { position: relative; display: grid; grid-template-columns: 34px 1fr; gap: 14px; align-items: start; opacity: 0;
+            animation: film-in 9s var(--ease) infinite; }
+.film-row:nth-child(2) { animation-delay: 0s; }
+.film-row:nth-child(3) { animation-delay: .9s; }
+.film-row:nth-child(4) { animation-delay: 1.8s; }
+.film-row:nth-child(5) { animation-delay: 2.7s; }
+@keyframes film-in { 0% { opacity: 0; transform: translateY(8px); } 5%, 88% { opacity: 1; transform: none; } 96%, 100% { opacity: 0; transform: translateY(-4px); } }
+.who { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 0.8rem; z-index: 1; }
+.who.you { background: var(--ink); color: var(--bg); }
+.who.agent { background: var(--accent); color: var(--accent-ink); }
+.who.merchant { background: var(--go); color: var(--on-status); }
+.who.check { background: var(--go-bg); color: var(--go); outline: 1px solid var(--go); }
+.film-card { padding: 10px 14px; border-radius: 14px; background: var(--soft); }
+.film-card .t { font-size: var(--step--1); color: var(--ink-3); font-weight: 700; }
+.film-card .v { font-weight: 650; }
+.film-card.go { background: var(--go-bg); }
+.film-card.go .v { color: var(--go); }
+.film-head { display: flex; justify-content: space-between; align-items: center; font-size: var(--step--1); font-weight: 700; color: var(--ink-3); }
+.film-head .rec { display: inline-flex; gap: 6px; align-items: center; }
+.film-head .rec::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--no); animation: breathe 1.6s var(--ease) infinite; }
+
+/* ---------------------------------------------------------------- explainer sections on the first screen */
+.section { padding-block: var(--space-7); border-top: 1px solid color-mix(in srgb, var(--line) 35%, transparent); }
+.section-head { display: flex; justify-content: space-between; align-items: end; gap: var(--space-4); margin-bottom: var(--space-5); flex-wrap: wrap; }
+.section-head h2 { font-family: var(--font-display); font-size: clamp(var(--step-3), 3vw, var(--step-5)); font-weight: 700; letter-spacing: -0.01em; }
+.section-head p { color: var(--ink-2); max-width: 56ch; }
+.steps3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); }
+@media (max-width: 860px) { .steps3 { grid-template-columns: 1fr; } }
+.step-card { padding: var(--space-5); border-radius: 18px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
+.step-card .n { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-weight: 800; background: var(--soft); color: var(--accent); }
+.step-card h3 { font-size: var(--step-1); font-weight: 700; margin: var(--space-4) 0 6px; }
+.step-card p { color: var(--ink-2); }
+.tries { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--space-3); }
+.try { padding: var(--space-4); border-radius: 16px; border: 1px solid color-mix(in srgb, var(--line) 50%, transparent); background: var(--panel); }
+.try h3 { font-size: var(--step-0); font-weight: 700; margin: 10px 0 4px; }
+.try p { color: var(--ink-2); font-size: var(--step--1); }
+.outcome { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+.outcome.go { background: var(--go-bg); color: var(--go); }
+.outcome.ask { background: var(--ask-bg); color: var(--ask); }
+.outcome.no { background: var(--no-bg); color: var(--no); }
+.foot { padding-block: var(--space-6) var(--space-8); color: var(--ink-3); font-size: var(--step--1); display: flex; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+
+/* ---------------------------------------------------------------- the board */
+.board-wrap { padding-block: var(--space-5) var(--space-8); }
+.board-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-4); }
+.board-head h2 { font-family: var(--font-display); font-size: var(--step-3); font-weight: 700; letter-spacing: -0.01em; }
+.board-head .req { color: var(--ink-2); font-weight: 600; }
+.progress { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: var(--space-5); list-style: none; padding: 0; }
+.progress li { position: relative; padding: 12px 12px 10px; border-radius: 12px; background: var(--panel);
+               border: 1px solid color-mix(in srgb, var(--line) 40%, transparent); color: var(--ink-3); font-size: var(--step--1); font-weight: 650; overflow: hidden; }
+.progress li .k { display: block; font-size: 0.7rem; letter-spacing: .05em; text-transform: uppercase; font-weight: 800; margin-bottom: 2px; }
+.progress li::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--accent);
+                      transform: scaleX(0); transform-origin: left; transition: transform 500ms var(--ease); }
+.progress li.done { color: var(--ink); }
+.progress li.done::after { transform: scaleX(1); background: var(--go); }
+.progress li.now { color: var(--ink); border-color: var(--accent); }
+.progress li.now::after { transform: scaleX(1); animation: sweep 1.6s var(--ease) infinite; }
+.progress li.stop { color: var(--ask); border-color: var(--ask); }
+.progress li.stop::after { transform: scaleX(1); background: var(--ask); }
+.progress li.fail { color: var(--no); border-color: var(--no); }
+.progress li.fail::after { transform: scaleX(1); background: var(--no); }
+@keyframes sweep { 0% { transform: scaleX(.05); } 60% { transform: scaleX(1); } 100% { transform: scaleX(1); opacity: .2; } }
+@media (max-width: 720px) { .progress li { padding: 8px 4px 9px; font-size: 0; text-align: center; }
+                            .progress li .k { font-size: 0.64rem; margin: 0; letter-spacing: .02em; }
+                            .progress .num, .progress .long { display: none; } }
+
+.board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+@media (max-width: 1120px) { .board { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); } .board .col.edge-col { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .board { grid-template-columns: minmax(0, 1fr); } .board .col.approval-col { order: -1; } }
+.col { background: var(--panel); border-radius: 20px; border: 1px solid color-mix(in srgb, var(--line) 50%, transparent); min-width: 0; overflow: hidden; }
+.col-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 16px 18px 12px; }
+.col-head h3 { font-size: var(--step-0); font-weight: 750; display: flex; align-items: center; gap: 10px; }
+.col-head h3 .ico { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; background: var(--soft); color: var(--accent); }
+.col-head h3 .ico svg { width: 16px; height: 16px; }
+.col-sub { padding: 0 18px 12px; color: var(--ink-3); font-size: var(--step--1); border-bottom: 1px solid color-mix(in srgb, var(--line) 35%, transparent); }
+.info { width: 28px; height: 28px; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); background: transparent;
+        color: var(--ink-3); font-weight: 800; font-size: 0.8rem; cursor: pointer; flex: none; }
+.info:hover, .info[aria-expanded=true] { color: var(--accent); border-color: var(--accent); }
+.explain { margin: 0 18px 12px; padding: 12px 14px; border-radius: 12px; background: var(--info-bg); color: var(--ink-2); font-size: var(--step--1); }
+.explain b { color: var(--ink); }
+.col-body { padding: 16px 18px 18px; }
 
 /* conversation */
-.feed { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow: auto; }
-.msg { padding: 10px 13px; border-radius: var(--radius-1); background: var(--soft); max-width: 92%; overflow-wrap: anywhere; }
-.msg.shopper { align-self: flex-end; background: var(--ink); color: var(--bg); font-weight: 600; }
-.msg.agent { align-self: flex-start; }
-.msg.sys { align-self: center; background: transparent; color: var(--ink-3); font-size: var(--step--1); font-weight: 600; text-align: center; padding: 2px var(--space-2); }
-.msg.go { background: var(--go-bg); color: var(--go); font-weight: 600; }
-.msg.ask { background: var(--ask-bg); color: var(--ask); font-weight: 600; }
-.msg.no { background: var(--no-bg); color: var(--no); font-weight: 600; }
-.msg.market { align-self: center; background: transparent; border: 1px dashed var(--ask); color: var(--ask); font-size: var(--step--1); font-weight: 600; }
-.typing { color: var(--ink-3); font-weight: 600; font-size: var(--step--1); }
-.typing::after { content: "…"; animation: dots 1.2s steps(4) infinite; }
-@keyframes dots { 0% { content: ""; } 33% { content: "."; } 66% { content: ".."; } 100% { content: "..."; } }
-@media (prefers-reduced-motion: reduce) { .typing::after { animation: none; content: "..."; } }
+.feed { display: flex; flex-direction: column; gap: 10px; max-height: min(68vh, 640px); overflow: auto; scroll-behavior: smooth; padding-right: 2px; }
+.msg { padding: 10px 14px; border-radius: 16px; background: var(--soft); max-width: 92%; overflow-wrap: anywhere; animation: rise 320ms var(--ease) both; }
+.msg.shopper { align-self: flex-end; background: var(--ink); color: var(--bg); font-weight: 600; border-bottom-right-radius: 6px; }
+.msg.agent { align-self: flex-start; border-bottom-left-radius: 6px; }
+.msg.agent::before { content: "Your agent"; display: block; font-size: 0.7rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
+.msg.sys { align-self: center; background: transparent; color: var(--ink-3); font-size: var(--step--1); font-weight: 650; text-align: center; padding: 2px 8px;
+           display: inline-flex; align-items: center; gap: 6px; }
+.msg.sys::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.msg.go { background: var(--go-bg); color: var(--go); font-weight: 650; border: 1px solid color-mix(in srgb, var(--go) 40%, transparent); }
+.msg.ask { background: var(--ask-bg); color: var(--ask); font-weight: 650; border: 1px solid color-mix(in srgb, var(--ask) 40%, transparent); }
+.msg.no { background: var(--no-bg); color: var(--no); font-weight: 650; border: 1px solid color-mix(in srgb, var(--no) 40%, transparent); }
+.msg .sub { display: block; font-weight: 550; opacity: .9; margin-top: 2px; }
+.msg.market { align-self: center; background: transparent; border: 1px dashed var(--ask); color: var(--ask); font-size: var(--step--1); font-weight: 650; border-radius: 999px; padding: 5px 12px; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+.typing { align-self: flex-start; display: inline-flex; gap: 5px; padding: 12px 14px; border-radius: 16px; border-bottom-left-radius: 6px; background: var(--soft); }
+.typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); animation: hop 1.1s var(--ease) infinite; }
+.typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes hop { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-5px); opacity: 1; } }
 
 /* approval */
-.card { border-radius: var(--radius-1); border: 2px solid var(--line); padding: 18px; }
-.card.pending { border-color: var(--accent); }
+.card { border-radius: 16px; border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); padding: 20px; animation: rise 360ms var(--ease) both; }
+.card.pending { border: 2px solid var(--accent); }
 .card.go { border-color: var(--go); background: var(--go-bg); }
 .card.ask { border-color: var(--ask); background: var(--ask-bg); }
 .card.no { border-color: var(--no); background: var(--no-bg); }
-.label { font-size: var(--step--1); font-weight: 700; color: var(--ink-3); margin-bottom: var(--space-1); }
-.item { font-size: var(--step-1); font-weight: 700; }
-.why { color: var(--ink-2); font-weight: 500; margin: 6px 0 14px; }
-.big { font-size: clamp(var(--step-4), 4.6vw, calc(var(--step-5) * var(--ratio))); font-weight: 700; line-height: 1; }
-.rows { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-4); margin: 14px 0; font-weight: 500; }
-.rows dt { color: var(--ink-3); font-weight: 600; }
-.rows dd { margin: 0; text-align: right; font-weight: 600; }
-.lock { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--go); }
-.lock.low { color: var(--ask); }
-.ceiling { display: flex; gap: 10px; align-items: center; margin: 14px 0 6px; flex-wrap: wrap; }
-.ceiling .field { display: inline-flex; align-items: center; border: 2px solid var(--line); border-radius: var(--radius-1); background: var(--bg); padding-left: 14px; }
-.ceiling .field span { font-size: var(--step-1); font-weight: 700; color: var(--ink-3); }
-.ceiling .field:focus-within { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
-.ceiling input { border: 0 !important; outline: none; width: 150px; padding: var(--space-3) 14px; border: 2px solid var(--line); border-radius: var(--radius-1); background: var(--bg); font-size: var(--step-1); font-weight: 700; }
-.hint { color: var(--ink-2); font-size: var(--step--1); font-weight: 500; }
-.actions { display: flex; gap: 10px; margin-top: var(--space-4); flex-wrap: wrap; }
-.diff { width: 100%; border-collapse: collapse; margin: 10px 0 2px; font-weight: 600; font-size: var(--step--1); }
-.diff th { text-align: left; color: var(--ink-3); font-size: var(--step--1); font-weight: 700; padding: var(--space-1) 0; }
-.diff td { padding: 6px 0; border-top: 1px solid var(--soft); vertical-align: top; overflow-wrap: anywhere; }
-.diff td.new { color: var(--ask); font-weight: 700; }
+.label { font-size: 0.72rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px; }
+.item { font-size: var(--step-2); font-weight: 750; line-height: 1.2; letter-spacing: -0.01em; }
+.why { color: var(--ink-2); margin: 6px 0 18px; }
+.price { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.big { font-size: clamp(2.2rem, 4.2vw, 3.2rem); font-weight: 800; line-height: 1; letter-spacing: -0.02em; }
+.price .was { color: var(--ink-3); font-weight: 650; font-size: var(--step--1); }
+.rows { display: grid; grid-template-columns: auto 1fr; gap: 10px var(--space-4); margin: 18px 0; padding: 14px 0;
+        border-top: 1px solid color-mix(in srgb, var(--line) 35%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--line) 35%, transparent); }
+.rows dt { color: var(--ink-3); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.rows dd { margin: 0; text-align: right; font-weight: 650; overflow-wrap: anywhere; }
+.tip { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; font-size: 0.65rem; font-weight: 800;
+       border: 1px solid var(--line); color: var(--ink-3); cursor: help; }
+.tip:hover::after, .tip:focus::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-30%); width: 240px; z-index: 5;
+       padding: 10px 12px; border-radius: 10px; background: var(--ink); color: var(--bg); font-size: 0.78rem; font-weight: 550; line-height: 1.4; text-align: left;
+       text-transform: none; letter-spacing: 0; animation: rise 160ms var(--ease) both; }
+.lockbar { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.lockbar .bar { width: 120px; height: 4px; border-radius: 4px; background: var(--soft); overflow: hidden; }
+.lockbar .bar i { display: block; height: 100%; background: var(--go); transform-origin: left; transition: transform 1s linear; }
+.lockbar.low .bar i { background: var(--ask); }
+.lockbar.low span { color: var(--ask); }
+.lockbar span { color: var(--go); }
+.ceiling-wrap { display: grid; gap: 8px; }
+.ceiling { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.field { display: inline-flex; align-items: center; border: 1px solid color-mix(in srgb, var(--line) 80%, transparent); border-radius: 12px; background: var(--bg); padding-left: 14px; }
+.field span { font-size: var(--step-1); font-weight: 750; color: var(--ink-3); }
+.field:focus-within { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 22%, transparent); }
+.field input { border: 0; outline: none; width: 140px; padding: 10px 12px; background: transparent; font-size: var(--step-1); font-weight: 750; }
+.quick { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.quick button { border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); background: var(--panel); border-radius: 999px; padding: 5px 11px;
+                font-size: var(--step--1); font-weight: 650; cursor: pointer; color: var(--ink-2); }
+.quick button:hover { color: var(--ink); border-color: var(--ink-2); }
+.hint { color: var(--ink-2); font-size: var(--step--1); }
+.actions { display: flex; gap: 10px; margin-top: var(--space-5); flex-wrap: wrap; }
+.actions .btn.primary { flex: 1 1 220px; }
+.diff { width: 100%; border-collapse: collapse; margin: 12px 0 2px; font-weight: 600; font-size: var(--step--1); }
+.diff th { text-align: left; color: var(--ink-3); font-size: 0.72rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; padding: 4px 0; }
+.diff td { padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--ask) 25%, transparent); vertical-align: top; overflow-wrap: anywhere; }
+.diff td.new { color: var(--ask); font-weight: 750; }
 .diff td:first-child, .diff th:first-child { white-space: nowrap; padding-right: var(--space-3); }
-.empty { color: var(--ink-3); font-weight: 600; text-align: center; padding: 34px 10px; }
+.empty { color: var(--ink-3); font-weight: 600; text-align: center; padding: 28px 12px; }
 .stack { display: flex; flex-direction: column; gap: 14px; }
 
+/* skeleton while the agent shops: a sheen moved with transform */
+.skel { position: relative; overflow: hidden; border-radius: 16px; border: 1px solid color-mix(in srgb, var(--line) 45%, transparent); padding: 20px; display: grid; gap: 12px; }
+.skel i { display: block; height: 12px; border-radius: 6px; background: var(--soft); }
+.skel i.l { width: 40%; } .skel i.m { width: 70%; height: 20px; } .skel i.b { width: 55%; height: 40px; } .skel i.s { width: 85%; }
+.skel::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+               background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--panel) 70%, transparent), transparent); animation: sheen 1.4s var(--ease) infinite; }
+@keyframes sheen { to { transform: translateX(100%); } }
+.skel-note { text-align: center; color: var(--ink-3); font-size: var(--step--1); font-weight: 600; }
+
+/* the outcome stamp */
+.stamp { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px 8px 10px; border-radius: 12px; font-weight: 800; letter-spacing: .06em;
+         text-transform: uppercase; font-size: var(--step--1); border: 2px solid currentColor; animation: stamp 520ms var(--ease) both; }
+.stamp svg { width: 22px; height: 22px; }
+.stamp.go { color: var(--go); } .stamp.ask { color: var(--ask); } .stamp.no { color: var(--no); }
+@keyframes stamp { 0% { opacity: 0; transform: scale(1.6) rotate(-8deg); } 60% { opacity: 1; transform: scale(.96) rotate(-3deg); } 100% { transform: scale(1) rotate(-3deg); } }
+
 /* edge */
-.edge { display: flex; flex-direction: column; gap: 6px; max-height: 34vh; overflow: auto; }
-.e { display: grid; grid-template-columns: 22px 1fr; gap: var(--space-2); font-size: var(--step--1); font-weight: 600; padding: 7px 9px; border-radius: var(--radius-1); background: var(--soft); overflow-wrap: anywhere; }
-.e .k { font-weight: 700; }
-.e.ok .k { color: var(--go); } .e.bad .k { color: var(--no); }
-.e small { display: block; color: var(--ink-3); font-weight: 600; }
+.edge-log { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; }
+.e { display: grid; grid-template-columns: 22px 1fr; gap: 8px; font-size: var(--step--1); font-weight: 600; padding: 8px 10px; border-radius: 10px; background: var(--soft);
+     overflow-wrap: anywhere; animation: rise 280ms var(--ease) both; }
+.e .k { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 0.7rem; font-weight: 800; }
+.e.ok .k { background: var(--go-bg); color: var(--go); } .e.bad .k { background: var(--no-bg); color: var(--no); }
+.e small { display: block; color: var(--ink-3); font-weight: 600; font-family: var(--font-mono); font-size: 0.72rem; }
 .sec { margin-top: var(--space-5); }
-.sec h4 { margin: 0 0 var(--space-2); font-size: var(--step--1); font-weight: 700; color: var(--ink-3); }
-.levers { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.sec-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0 0 10px; }
+.sec-h h4 { font-size: var(--step--1); font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
+.sec-h span { font-size: var(--step--1); color: var(--ink-3); }
+.levers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 @media (max-width: 420px) { .levers { grid-template-columns: 1fr; } }
-.receipt { border: 2px solid var(--line); border-radius: var(--radius-1); padding: var(--space-3); font-size: var(--step--1); font-weight: 600; }
-.receipt .rn { font-size: var(--step-1); font-weight: 700; }
-.findings { margin: var(--space-2) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-1); }
-.findings li::before { content: "✓ "; color: var(--go); font-weight: 700; }
-.findings.bad li::before { content: "✗ "; color: var(--no); }
-.verdict { font-weight: 700; margin-top: var(--space-2); }
+.lever { text-align: left; display: grid; gap: 4px; padding: 12px; border-radius: 14px; cursor: pointer; background: var(--panel);
+         border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); transition: transform var(--dur) var(--ease); }
+.lever:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--ink-2); }
+.lever:active:not(:disabled) { transform: translateY(0); }
+.lever:disabled { opacity: .45; cursor: not-allowed; }
+.lever .lt { font-weight: 750; font-size: var(--step--1); color: var(--ink); }
+.lever .outcome { justify-self: start; }
+.lever .ld { font-size: 0.78rem; color: var(--ink-2); font-weight: 550; line-height: 1.35; }
+.lever.fired { border-color: var(--ask); }
+.lever-note { margin-top: 8px; font-size: var(--step--1); color: var(--ink-3); }
+.receipt { position: relative; border-radius: 14px; padding: 16px; font-size: var(--step--1); font-weight: 600; background: var(--panel);
+           border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); animation: rise 360ms var(--ease) both; overflow: hidden; }
+.receipt::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: repeating-linear-gradient(90deg, var(--go) 0 10px, transparent 10px 16px); }
+.receipt .rn { font-size: var(--step-1); font-weight: 800; font-family: var(--font-mono); letter-spacing: -0.02em; }
+.receipt .amt { font-size: var(--step-2); font-weight: 800; margin: 6px 0 2px; }
+.receipt .stamp { position: absolute; right: 14px; top: 16px; }
+.receipt .actions { margin-top: 12px; }
+.findings { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.findings li { display: flex; gap: 8px; animation: rise 240ms var(--ease) both; }
+.findings li::before { content: "✓"; color: var(--go); font-weight: 800; }
+.findings.bad li::before { content: "✗"; color: var(--no); }
+.findings li:nth-child(2) { animation-delay: 60ms; } .findings li:nth-child(3) { animation-delay: 120ms; } .findings li:nth-child(4) { animation-delay: 180ms; }
+.verdict { font-weight: 800; margin-top: 10px; display: inline-flex; gap: 6px; align-items: center; }
 .verdict.ok { color: var(--go); } .verdict.bad { color: var(--no); }
-.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: var(--space-3) var(--space-4); border-radius: var(--radius-1); font-weight: 600; display: none; max-width: calc(100% - 32px); }
+
+/* ---------------------------------------------------------------- help drawer */
+.scrim { position: fixed; inset: 0; z-index: 40; background: color-mix(in srgb, var(--ink) 40%, transparent); opacity: 0; transition: opacity 240ms var(--ease); }
+.scrim.open { opacity: 1; }
+.help { position: fixed; z-index: 41; top: 0; right: 0; bottom: 0; width: min(480px, 100%); background: var(--panel); border-left: 1px solid var(--line);
+        transform: translateX(100%); transition: transform 320ms var(--ease); display: flex; flex-direction: column; }
+.help.open { transform: none; }
+.help-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent); }
+.help-head h2 { font-family: var(--font-display); font-size: var(--step-2); font-weight: 700; }
+.help-body { padding: 8px 22px 32px; overflow: auto; }
+.help-body h3 { font-size: var(--step--1); font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin: 24px 0 8px; }
+.help-body p, .help-body li { color: var(--ink-2); }
+.help-body p + p { margin-top: 8px; }
+.help-body ul { padding-left: 0; margin: 0; list-style: none; display: grid; gap: 10px; }
+.help-body li b { color: var(--ink); }
+.help-body dl { margin: 0; display: grid; gap: 12px; }
+.help-body dt { font-weight: 750; color: var(--ink); }
+.help-body dd { margin: 2px 0 0; color: var(--ink-2); }
+.help-body .outcome { margin-left: 4px; }
+
+.toast { position: fixed; left: 50%; bottom: 24px; z-index: 50; transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+         background: var(--ink); color: var(--bg); padding: 12px 18px; border-radius: 12px; font-weight: 650; max-width: calc(100% - 32px);
+         transition: transform 240ms var(--ease), opacity 240ms var(--ease); }
+.toast.show { transform: translate(-50%, 0); opacity: 1; }
+
 /* states: every control shows focus at once, answers a press, and says when it is off */
 a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px; }
-input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.btn { transition: transform var(--dur) var(--ease); }
-.btn:hover:not(:disabled) { filter: brightness(1.08); }
-.btn:active:not(:disabled) { transform: translateY(1px); }
+input:focus-visible { outline: none; }
 [aria-busy="true"] { cursor: progress; }
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
                            transition-duration: 0.01ms !important; }
+  .film-row { opacity: 1; }
 }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="brand">
-      <h1>Counter<span>sign</span></h1>
-      <p>The merchant countersigns before money moves.</p>
+<div class="wash" aria-hidden="true"></div>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Countersign, start over">
+      <svg class="seal" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 1.5l3.1 2.3 3.8-.4 1.5 3.5 3.5 1.5-.4 3.8 2.3 3.1-2.3 3.1.4 3.8-3.5 1.5-1.5 3.5-3.8-.4L16 30.5l-3.1-2.3-3.8.4-1.5-3.5-3.5-1.5.4-3.8L2.2 16l2.3-3.1-.4-3.8 3.5-1.5 1.5-3.5 3.8.4z"/><path d="M10.5 16.3l3.6 3.6 7.5-7.6" fill="none" stroke="var(--panel)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="word">Counter<em>sign</em></span>
+    </a>
+    <div class="top-actions">
+      <span class="status-chip agent" id="agentChip" title="Which agent is shopping for you"><span class="dot live"></span>Agent: <b id="agentName">offline demo agent</b></span>
+      <span class="status-chip market" id="marketChip" hidden title="The simulated exchange rate the merchant prices you in"><span class="dot"></span>Market: <b id="marketRate"></b></span>
+      <button class="icon-btn" id="themeBtn" type="button" aria-label="Switch between light and dark" title="Light or dark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M2 12h2.5M19.5 12H22M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+      </button>
+      <button class="btn ghost small" id="helpBtn" type="button" aria-controls="help" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M9.5 9.2a2.6 2.6 0 0 1 5 .9c0 1.8-2.5 2.2-2.5 3.9"/><circle cx="12" cy="17.3" r=".6" fill="currentColor"/></svg>
+        <span class="help-label">How it works</span> <kbd aria-hidden="true">?</kbd>
+      </button>
     </div>
-    <div class="pills" id="pills"></div>
-  </header>
+  </div>
+</header>
 
-  <section class="start" id="start">
-    <h2>Let an agent shop. Pay only what you said yes to.</h2>
-    <p class="sub">Your agent finds it, shows you exact terms in your own currency, and checks out. The merchant verifies the agent and re-checks your approval against the live price and exchange rate before it charges a cent.</p>
-    <form class="ask" id="ask">
-      <input type="text" id="request" value="Buy me a mechanical keyboard under ₹12,000" aria-label="What should your agent buy?">
-      <div class="seg" role="group" aria-label="Your currency">
-        <button type="button" data-ccy="INR" aria-pressed="true">₹ INR</button>
-        <button type="button" data-ccy="EUR" aria-pressed="false">€ EUR</button>
+<main>
+  <!-- ============================================================ first screen -->
+  <div id="start">
+    <section class="wrap hero">
+      <div>
+        <p class="eyebrow">Live demo · no real money moves</p>
+        <h1>Let an agent shop. Pay only what you <span class="said">said yes to.</span></h1>
+        <p class="lede">Your AI agent finds the product and shows you the exact terms in your currency. When it checks out, the merchant re-checks your yes against the live price and exchange rate. If anything moved, nothing is charged and your agent asks you again.</p>
+        <form class="ask-form" id="ask">
+          <label class="sr" for="request">What should your agent buy?</label>
+          <div class="ask-box">
+            <input type="text" id="request" value="Buy me a mechanical keyboard under ₹12,000" autocomplete="off" spellcheck="false">
+            <button class="btn primary" type="submit" id="go">
+              Send my agent
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <div class="ask-row">
+            <div class="chips"><span class="lbl">Try:</span>
+              <button type="button" class="chip" data-q="Buy me a pour-over kettle">Pour-over kettle</button>
+              <button type="button" class="chip" data-q="Buy me packing cubes for a trip">Packing cubes</button>
+              <button type="button" class="chip" data-q="Buy me wireless earbuds">Wireless earbuds</button>
+            </div>
+            <div><span class="seg-label">Pay in</span><span class="seg" role="group" aria-label="Your currency">
+              <button type="button" data-ccy="INR" aria-pressed="true">₹ INR</button>
+              <button type="button" data-ccy="EUR" aria-pressed="false">€ EUR</button>
+            </span></div>
+          </div>
+          <p class="fine">The shop sells 25 kinds of everyday things: keyboards, kettles, earbuds, desk lamps, yoga mats and more. Prices are in US dollars; you pay in your currency.</p>
+        </form>
       </div>
-      <button class="btn primary" type="submit">Send agent</button>
-    </form>
-    <div class="chips">
-      <button class="chip" data-q="Buy me a pour-over kettle">Pour-over kettle</button>
-      <button class="chip" data-q="Buy me packing cubes for a trip">Packing cubes</button>
-      <button class="chip" data-q="Buy me wireless earbuds">Wireless earbuds</button>
-    </div>
-  </section>
 
-  <section class="board" id="board" hidden>
-    <div class="col">
-      <h3>Conversation <span id="state" class="typing" hidden>working</span></h3>
-      <div class="body"><div class="feed" id="feed"></div></div>
+      <div class="film" aria-hidden="true">
+        <div class="film-head"><span>What happens next</span><span class="rec">live</span></div>
+        <div class="film-row"><span class="who you">You</span><div class="film-card"><div class="t">You ask</div><div class="v">“Buy me wireless earbuds”</div></div></div>
+        <div class="film-row"><span class="who agent">AI</span><div class="film-card"><div class="t">Your agent finds, and asks you</div><div class="v">Wireless earbuds Lite · ₹7,568.16 · approve up to ₹7,720?</div></div></div>
+        <div class="film-row"><span class="who you">You</span><div class="film-card"><div class="t">You say yes, with a ceiling</div><div class="v">Approved up to ₹7,720.00</div></div></div>
+        <div class="film-row"><span class="who check">✓</span><div class="film-card go"><div class="t">The merchant countersigns</div><div class="v">Same terms, rate still locked · charged ₹7,568.16 · receipt signed</div></div></div>
+      </div>
+    </section>
+
+    <section class="wrap section" aria-labelledby="how-h">
+      <div class="section-head">
+        <h2 id="how-h">Three parties, one rule</h2>
+        <p>Money moves only when the merchant's live terms still match what you approved. The merchant checks; your agent can't talk its way past it.</p>
+      </div>
+      <div class="steps3">
+        <div class="step-card"><span class="n">1</span><h3>Your agent shops</h3><p>It searches the shop and asks for an offer. Every request it makes is signed with its own key, so the merchant knows exactly which agent is calling.</p></div>
+        <div class="step-card"><span class="n">2</span><h3>You approve exact terms</h3><p>The item, the price in your currency, the exchange rate and how long it's locked, the delivery. You also set the most you'll pay.</p></div>
+        <div class="step-card"><span class="n">3</span><h3>The merchant countersigns</h3><p>At checkout the merchant re-prices everything live. Same terms: it charges and signs a receipt. Anything moved: nothing is charged, and your agent asks you again.</p></div>
+      </div>
+    </section>
+
+    <section class="wrap section" aria-labelledby="try-h">
+      <div class="section-head">
+        <h2 id="try-h">Then try to break it</h2>
+        <p>While your approval is waiting, the merchant's panel lets you change the world before you say yes. Each button shows a different thing the countersign catches.</p>
+      </div>
+      <div class="tries">
+        <div class="try"><span class="outcome go">Still charged</span><h3>Nudge the rate +1%</h3><p>The market moves a little but stays under your ceiling, so the merchant charges at the new rate.</p></div>
+        <div class="try"><span class="outcome ask">Asked again</span><h3>Move the rate +5%</h3><p>The price in your currency goes past the most you said you'd pay. Nothing is charged.</p></div>
+        <div class="try"><span class="outcome ask">Asked again</span><h3>Raise the price 12%</h3><p>The merchant changes its own price after you approved. Your yes no longer matches.</p></div>
+        <div class="try"><span class="outcome ask">Asked again</span><h3>Delay delivery</h3><p>Nothing about the price changes, but something you chose did. That counts too.</p></div>
+        <div class="try"><span class="outcome no">Refused</span><h3>Send bots</h3><p>Four fake checkouts hit the merchant: unsigned, a stranger's key, the wrong kind of signature and a swapped approval. Each is turned away.</p></div>
+      </div>
+    </section>
+
+    <footer class="wrap foot">
+      <span>Countersign · built for the Airwallex Agentic Banking hackathon, Kit 10.</span>
+      <span><a href="/verify">Check a receipt</a> · press <kbd>?</kbd> for help</span>
+    </footer>
+  </div>
+
+  <!-- ============================================================ the board -->
+  <section class="wrap board-wrap" id="board" hidden aria-live="polite">
+    <div class="board-head">
+      <div>
+        <h2>Your agent is shopping</h2>
+        <p class="req" id="reqLine"></p>
+      </div>
+      <a class="btn ghost small" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+        Start again
+      </a>
     </div>
-    <div class="col">
-      <h3>Your approval</h3>
-      <div class="body stack" id="approval"></div>
-    </div>
-    <div class="col">
-      <h3>Merchant's edge</h3>
-      <div class="body">
-        <div class="edge" id="edge"></div>
-        <div class="sec"><h4>Change the world before payment</h4>
-          <div class="levers">
-            <button class="btn ghost small" data-lever="rate" data-pct="1.01">Nudge the rate +1%</button>
-            <button class="btn ghost small" data-lever="rate" data-pct="1.05">Move the rate +5%</button>
-            <button class="btn ghost small" data-lever="price">Raise price 12%</button>
-            <button class="btn ghost small" data-lever="delivery">Delay delivery</button>
-            <button class="btn ghost small" data-lever="bot">Send bots</button>
+
+    <ol class="progress" id="progress" aria-label="Where this purchase is">
+      <li data-step="search"><span class="k"><span class="num">1 · </span>Search</span>Agent looks</li>
+      <li data-step="offer"><span class="k"><span class="num">2 · </span>Offer</span>Merchant prices it</li>
+      <li data-step="approve"><span class="k"><span class="num">3 · </span>Approve</span>You say yes</li>
+      <li data-step="sign"><span class="k"><span class="num">4 · </span><span class="long">Counter</span>sign</span>Merchant re-checks</li>
+      <li data-step="receipt"><span class="k"><span class="num">5 · </span>Receipt</span>Signed proof</li>
+    </ol>
+
+    <div class="board">
+      <article class="col" aria-labelledby="conv-h">
+        <div class="col-head">
+          <h3 id="conv-h"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></span>Conversation</h3>
+          <button class="info" type="button" data-explain="ex-conv" aria-expanded="false" aria-label="What is this panel?">i</button>
+        </div>
+        <p class="col-sub">You and your agent, as it works.</p>
+        <div class="explain" id="ex-conv" hidden>Everything your agent does, in order: what it searched, the offer it got, and what the merchant said at checkout. Grey lines are the agent's tool calls; dashed ones are changes you made with the merchant's buttons.</div>
+        <div class="col-body"><div class="feed" id="feed" role="log" aria-label="Conversation"></div></div>
+      </article>
+
+      <article class="col approval-col" aria-labelledby="appr-h">
+        <div class="col-head">
+          <h3 id="appr-h"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>Your approval</h3>
+          <button class="info" type="button" data-explain="ex-appr" aria-expanded="false" aria-label="What is this panel?">i</button>
+        </div>
+        <p class="col-sub">The exact terms. Nothing is bought until you say yes here.</p>
+        <div class="explain" id="ex-appr" hidden>These numbers come from the merchant's offer, not from the agent, so the agent can't change them. <b>The most you'll pay</b> is your ceiling: if the price in your currency rises above it, or the item or delivery changes, the merchant won't charge and your agent asks you again.</div>
+        <div class="col-body stack" id="approval"></div>
+      </article>
+
+      <article class="col edge-col" aria-labelledby="edge-h">
+        <div class="col-head">
+          <h3 id="edge-h"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v11h16V9"/><path d="M3 9h18"/><path d="M10 20v-6h4v6"/></svg></span>The merchant</h3>
+          <button class="info" type="button" data-explain="ex-edge" aria-expanded="false" aria-label="What is this panel?">i</button>
+        </div>
+        <p class="col-sub">What the shop sees, and buttons to change its world.</p>
+        <div class="explain" id="ex-edge" hidden>The merchant's <b>edge</b> checks every request before it reaches the shop: is it signed by a known agent (Visa's Trusted Agent Protocol), with the right kind of signature? Below that are buttons that change the shop or the market <b>after</b> the offer and <b>before</b> you approve, and the signed receipts the merchant hands back.</div>
+        <div class="col-body">
+          <div class="sec-h" style="margin-top:0"><h4>Requests checked</h4><span id="edgeCount"></span></div>
+          <div class="edge-log" id="edge"></div>
+          <div class="sec">
+            <div class="sec-h"><h4>Change the world</h4><span>before you approve</span></div>
+            <div class="levers">
+              <button class="lever" type="button" data-lever="rate" data-pct="1.01"><span class="lt">Nudge the rate +1%</span><span class="outcome go">charges</span><span class="ld">A small move that stays under your ceiling.</span></button>
+              <button class="lever" type="button" data-lever="rate" data-pct="1.05"><span class="lt">Move the rate +5%</span><span class="outcome ask">asks again</span><span class="ld">Pushes the price past the most you'll pay.</span></button>
+              <button class="lever" type="button" data-lever="price"><span class="lt">Raise price 12%</span><span class="outcome ask">asks again</span><span class="ld">The merchant changes its own price.</span></button>
+              <button class="lever" type="button" data-lever="delivery"><span class="lt">Delay delivery</span><span class="outcome ask">asks again</span><span class="ld">Same price, slower shipping: still a change.</span></button>
+              <button class="lever" type="button" data-lever="bot"><span class="lt">Send bots</span><span class="outcome no">refused</span><span class="ld">Four forged checkouts hit the edge.</span></button>
+            </div>
+            <p class="lever-note" id="leverNote">Press one while your approval is waiting, then approve, and watch what the merchant does.</p>
+          </div>
+          <div class="sec">
+            <div class="sec-h"><h4>Signed receipts</h4><span>proof of what you paid</span></div>
+            <div id="receipts" class="stack"><div class="empty">The merchant signs one when it charges.</div></div>
           </div>
         </div>
-        <div class="sec"><h4>Receipts</h4><div id="receipts" class="stack"><div class="empty" style="padding:10px">No receipts yet</div></div></div>
-      </div>
+      </article>
     </div>
   </section>
-</div>
-<div class="toast" id="toast" role="status"></div>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="help" id="help" role="dialog" aria-modal="true" aria-labelledby="help-h" hidden>
+  <div class="help-head">
+    <h2 id="help-h">How Countersign works</h2>
+    <button class="icon-btn" type="button" id="helpClose" aria-label="Close help"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div class="help-body">
+    <h3>The idea</h3>
+    <p>AI agents can now buy things for you. The risk is that the price, the exchange rate or the item changes between the moment you said yes and the moment money moves, and nobody checks.</p>
+    <p>Countersign makes the merchant check. Your approval is a precise statement of what you agreed to. At checkout the merchant re-prices everything live and only charges if it still matches, then signs a receipt you can verify yourself.</p>
+
+    <h3>Try it in four clicks</h3>
+    <ul>
+      <li><b>1. Send your agent.</b> Type what you want, or pick one of the examples.</li>
+      <li><b>2. Read the terms.</b> The middle panel shows the price in your currency, the rate and its countdown, and the delivery.</li>
+      <li><b>3. Change the world (optional).</b> Press a button in the merchant's panel before you approve.</li>
+      <li><b>4. Approve.</b> The merchant either countersigns and charges, or stops and your agent asks you again.</li>
+    </ul>
+
+    <h3>The merchant's buttons</h3>
+    <ul>
+      <li><b>Nudge the rate +1%</b><span class="outcome go">charges</span><br>Your ceiling has a little room above the price, so a small move is fine.</li>
+      <li><b>Move the rate +5%</b><span class="outcome ask">asks again</span><br>The price in your currency goes past your ceiling.</li>
+      <li><b>Raise price 12%</b><span class="outcome ask">asks again</span><br>The merchant's own price no longer matches the one you approved.</li>
+      <li><b>Delay delivery</b><span class="outcome ask">asks again</span><br>You approved 5–7 days. Twelve to fifteen is a different deal.</li>
+      <li><b>Send bots</b><span class="outcome no">refused</span><br>Unsigned, signed by a stranger, signed for browsing instead of paying, and an approval swapped in transit. The edge refuses all four.</li>
+    </ul>
+
+    <h3>Words on this page</h3>
+    <dl>
+      <dt>Rate lock</dt><dd>The exchange rate the merchant guarantees for a while (here, an hour). The countdown shows how long is left.</dd>
+      <dt>The most you'll pay (ceiling)</dt><dd>Your limit in your currency. It starts a little above the price so small market moves don't interrupt you.</dd>
+      <dt>Countersign</dt><dd>The merchant's second signature on your deal: it re-checks your approval at the moment of payment.</dd>
+      <dt>Agent signature (TAP)</dt><dd>Every request your agent makes is signed with its key, using Visa's Trusted Agent Protocol, so the merchant knows who is asking and whether it may pay.</dd>
+      <dt>Receipt</dt><dd>What was charged, against which approval, signed with the merchant's key. Press <b>Verify</b> to check it, or <b>Tamper, then verify</b> to see an edited one fail.</dd>
+    </dl>
+
+    <h3>What's real here</h3>
+    <p>Every agent request goes through the real merchant edge with real signatures, and the receipts are real Ed25519 signatures you can check in your browser. The shop, its stock and the exchange rate are simulated for this demo, and each visit gets its own private copy.</p>
+    <p>The same merchant also runs behind Airwallex's agentic commerce MCP, where Claude shops and Airwallex takes a test-card payment. See the run book in the repository.</p>
+    <p class="fine" style="margin-top:16px">Keys: <kbd>?</kbd> opens this panel, <kbd>Esc</kbd> closes it.</p>
+  </div>
+</aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
 let currency = "INR", sid = null, state = null, poll = null, verified = {};
+let shown = { feed: 0, edge: 0, approvalKey: "", receiptsKey: "", decision: null };
 
+/* ---------------------------------------------------------------- theme: the device's, until you pick */
+const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+const savedTheme = store.get("countersign.theme");
+if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+$("#themeBtn").onclick = () => {
+  const dark = document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  store.set("countersign.theme", document.documentElement.dataset.theme);
+};
+
+/* ---------------------------------------------------------------- helpers */
 const fmt = (amount, ccy) => {
   if (amount == null) return "—";
-  const n = Number(amount);
   const locale = ccy === "INR" ? "en-IN" : ccy === "EUR" ? "de-DE" : "en-US";
-  return new Intl.NumberFormat(locale, { style: "currency", currency: ccy, maximumFractionDigits: 2 }).format(n);
+  return new Intl.NumberFormat(locale, { style: "currency", currency: ccy, maximumFractionDigits: 2 }).format(Number(amount));
 };
+const cap = (s) => { s = String(s ?? ""); return s.charAt(0).toUpperCase() + s.slice(1); };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const toast = (t) => { const el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(() => el.style.display = "none", 3200); };
+const toast = (t) => { const el = $("#toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 3400); };
+const ICON = {
+  go: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M8 12.5l2.7 2.7L16.5 9"/></svg>',
+  ask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v5.5M12 16.5v.1"/></svg>',
+  no: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9.5"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
+};
 
 async function api(path, body) {
-  const r = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const r = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" },
+                                body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.detail || r.statusText);
   return data;
 }
 
-document.querySelectorAll(".seg button").forEach((b) => b.onclick = () => {
+/* ---------------------------------------------------------------- help drawer and panel explainers */
+function openHelp(open) {
+  const help = $("#help"), scrim = $("#scrim");
+  $("#helpBtn").setAttribute("aria-expanded", open);
+  if (open) {
+    help.hidden = scrim.hidden = false;
+    requestAnimationFrame(() => { help.classList.add("open"); scrim.classList.add("open"); $("#helpClose").focus(); });
+  } else {
+    help.classList.remove("open"); scrim.classList.remove("open");
+    setTimeout(() => { help.hidden = scrim.hidden = true; }, 320);
+    $("#helpBtn").focus();
+  }
+}
+$("#helpBtn").onclick = () => openHelp(true);
+$("#helpClose").onclick = () => openHelp(false);
+$("#scrim").onclick = () => openHelp(false);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#help").hidden) openHelp(false);
+  if (e.key === "?" && !/input|textarea/i.test(document.activeElement.tagName)) { e.preventDefault(); openHelp($("#help").hidden); }
+});
+$$("[data-explain]").forEach((b) => b.onclick = () => {
+  const box = document.getElementById(b.dataset.explain);
+  box.hidden = !box.hidden; b.setAttribute("aria-expanded", !box.hidden);
+});
+
+/* ---------------------------------------------------------------- first screen */
+$$(".seg button").forEach((b) => b.onclick = () => {
   currency = b.dataset.ccy;
-  document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  $$(".seg button").forEach((x) => x.setAttribute("aria-pressed", x === b));
   const req = $("#request");
   req.value = req.value.replace(/under [₹€][\d,.]+/, currency === "INR" ? "under ₹12,000" : "under €130");
 });
-document.querySelectorAll(".chip").forEach((c) => c.onclick = () => { $("#request").value = c.dataset.q; });
+$$(".chip").forEach((c) => c.onclick = () => { $("#request").value = c.dataset.q; $("#request").focus(); });
+
 // A link like /?q=Buy+me+a+kettle&ccy=EUR starts the demo straight away.
 const params = new URLSearchParams(location.search);
 if (params.get("ccy") === "EUR") document.querySelector('.seg button[data-ccy="EUR"]').click();
-if (params.get("s")) { sid = params.get("s"); $("#start").hidden = true; $("#board").hidden = false; startPolling(); }
+if (params.get("s")) { sid = params.get("s"); showBoard(); startPolling(); }
 else if (params.get("q")) { $("#request").value = params.get("q"); setTimeout(() => $("#ask").requestSubmit(), 50); }
+
+function showBoard() {
+  $("#start").hidden = true; $("#board").hidden = false;
+  window.scrollTo({ top: 0 });
+}
 
 $("#ask").onsubmit = async (e) => {
   e.preventDefault();
   const request = $("#request").value.trim();
   if (!request) return;
+  const go = $("#go");
+  go.disabled = true; go.setAttribute("aria-busy", "true");
   try {
     state = await api("/api/sessions", { request, currency });
-    sid = state.id; $("#start").hidden = true; $("#board").hidden = false;
-    render(); startPolling();
+    sid = state.id; showBoard(); render(); startPolling();
   } catch (err) { toast(err.message); }
+  finally { go.disabled = false; go.removeAttribute("aria-busy"); }
 };
 
 function startPolling() {
@@ -350,115 +774,81 @@ function startPolling() {
   }, 700);
 }
 
+/* ---------------------------------------------------------------- the board */
 function render() {
   if (!state) return;
-  $("#pills").innerHTML = `
-    <span class="pill">Agent: <b>${esc(state.model)}</b></span>
-    <span class="pill">Market: <b>1 USD = ${esc(state.rate)} ${esc(state.currency)}</b></span>`;
-  $("#state").hidden = state.status !== "working";
-  renderFeed(); renderApproval(); renderEdge(); renderReceipts();
+  $("#agentName").textContent = state.model;
+  $("#marketChip").hidden = false;
+  $("#marketRate").textContent = `1 USD = ${state.rate} ${state.currency}`;
+  const first = state.events.find((e) => e.kind === "shopper");
+  $("#reqLine").textContent = first ? `“${first.text}”` : "";
+  renderProgress(); renderFeed(); renderApproval(); renderEdge(); renderReceipts(); renderLevers();
 }
 
-function renderFeed() {
-  const ccy = state.currency;
-  const html = state.events.map((e) => {
-    switch (e.kind) {
-      case "shopper": return `<div class="msg shopper">${esc(e.text)}</div>`;
-      case "agent": return `<div class="msg agent">${esc(e.text)}</div>`;
-      case "tool": return `<div class="msg sys">${esc(e.text)}</div>`;
-      case "offer": return `<div class="msg sys">Merchant offer: ${fmt(e.data.offer.shopper_total, ccy)} (${fmt(e.data.offer.merchant_total, e.data.offer.merchant_currency)})</div>`;
-      case "approval": return `<div class="msg sys">Waiting for your approval</div>`;
-      case "approved": return `<div class="msg shopper">Approved, up to ${fmt(e.data.ceiling, ccy)}</div>`;
-      case "declined": return `<div class="msg shopper">No thanks</div>`;
-      case "decision": {
-        const o = e.data.decision.outcome;
-        const cls = o === "proceed" ? "go" : o === "reask" ? "ask" : "no";
-        const head = o === "proceed" ? `Countersigned. Order ${esc(e.data.decision.order_number)}` : o === "reask" ? "Merchant asked again" : "Merchant refused";
-        return `<div class="msg ${cls}">${head}<br><span style="font-weight:600">${esc(e.data.decision.reason)}</span></div>`;
-      }
-      case "market": return `<div class="msg market">${esc(e.text)}</div>`;
-      case "edge": return `<div class="msg no">${esc(e.text)}</div>`;
-      case "error": return `<div class="msg no">${esc(e.text)}</div>`;
-      default: return "";
-    }
-  }).join("");
-  const feed = $("#feed");
-  const stick = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 30;
-  feed.innerHTML = html + (state.status === "working" ? `<div class="typing">agent is working</div>` : "");
-  if (stick) feed.scrollTop = feed.scrollHeight;
-}
-
+const has = (kind) => state.events.some((e) => e.kind === kind);
 function lastDecision() {
   for (let i = state.events.length - 1; i >= 0; i--) if (state.events[i].kind === "decision") return state.events[i].data;
   return null;
 }
 
+function renderProgress() {
+  const d = lastDecision(), o = d && d.decision.outcome;
+  const steps = {
+    search: has("tool") || has("offer") ? "done" : "now",
+    offer: has("offer") ? "done" : has("tool") ? "now" : "",
+    approve: has("approved") ? "done" : state.pending ? "now" : "",
+    sign: o === "proceed" ? "done" : o === "reask" ? "stop" : o === "refuse" ? "fail" : has("approved") ? "now" : "",
+    receipt: state.receipts.length ? "done" : "",
+  };
+  if (state.status === "done" && !has("offer")) steps.search = steps.offer = "fail";
+  if (has("declined")) steps.approve = "fail";
+  $$("#progress li").forEach((li) => { li.className = steps[li.dataset.step] || ""; });
+}
+
+function feedItem(e) {
+  const ccy = state.currency;
+  switch (e.kind) {
+    case "shopper": return `<div class="msg shopper">${esc(e.text)}</div>`;
+    case "agent": return `<div class="msg agent">${esc(e.text)}</div>`;
+    case "tool": return `<div class="msg sys">${esc(e.text)}</div>`;
+    case "offer": return `<div class="msg sys">Merchant offered ${fmt(e.data.offer.shopper_total, ccy)} (${fmt(e.data.offer.merchant_total, e.data.offer.merchant_currency)})</div>`;
+    case "approval": return `<div class="msg sys">Waiting for your approval</div>`;
+    case "approved": return `<div class="msg shopper">Yes, up to ${fmt(e.data.ceiling, ccy)}</div>`;
+    case "declined": return `<div class="msg shopper">No thanks</div>`;
+    case "decision": {
+      const o = e.data.decision.outcome;
+      const cls = o === "proceed" ? "go" : o === "reask" ? "ask" : "no";
+      const head = o === "proceed" ? `Countersigned. Order ${esc(e.data.decision.order_number)}` : o === "reask" ? "The merchant asked again" : "The merchant refused";
+      return `<div class="msg ${cls}">${head}<span class="sub">${esc(cap(e.data.decision.reason))}.</span></div>`;
+    }
+    case "market": return `<div class="msg market">${esc(e.text)}</div>`;
+    case "edge": return `<div class="msg no">${esc(e.text)}</div>`;
+    case "error": return `<div class="msg no">${esc(e.text)}</div>`;
+    default: return "";
+  }
+}
+
+function renderFeed() {
+  const feed = $("#feed");
+  if (state.events.length < shown.feed) { feed.innerHTML = ""; shown.feed = 0; }
+  feed.querySelector(".typing")?.remove();
+  const stick = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 40;
+  const fresh = state.events.slice(shown.feed).map(feedItem).join("");
+  if (fresh) feed.insertAdjacentHTML("beforeend", fresh);
+  shown.feed = state.events.length;
+  if (state.status === "working") feed.insertAdjacentHTML("beforeend", `<div class="typing" aria-label="Your agent is working"><i></i><i></i><i></i></div>`);
+  if (stick || fresh) feed.scrollTop = feed.scrollHeight;
+}
+
 function countdown(iso) {
   const ms = new Date(iso) - new Date(state.now);
-  if (ms <= 0) return { text: "expired", low: true };
+  if (ms <= 0) return { text: "expired", low: true, frac: 0 };
   const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
-  return { text: `${m}:${String(s).padStart(2, "0")} left`, low: m < 5 };
+  return { text: `${m}:${String(s).padStart(2, "0")} left`, low: m < 5, frac: Math.min(1, ms / 3600000) };
 }
 
-function renderApproval() {
-  const box = $("#approval");
-  const ccy = state.currency;
-  const d = lastDecision();
-  const parts = [];
-
-  if (d && d.decision.outcome === "reask") {
-    const rows = d.decision.changes.map((c) => `<tr><td>${esc(labelOf(c.field))}</td><td>${esc(show(c.approved, c.field, ccy))}</td><td class="new">${esc(show(c.live, c.field, ccy))}</td></tr>`).join("");
-    parts.push(`<div class="card ask"><div class="label">Merchant asked again</div><div class="item">${esc(d.decision.reason)}</div>
-      <table class="diff"><tr><th>What</th><th>You approved</th><th>Now</th></tr>${rows}</table></div>`);
-  }
-  if (state.pending) {
-    const p = state.pending, o = p.offer;
-    const lock = o.rate_locked_until ? countdown(o.rate_locked_until) : null;
-    const items = o.items.map((i) => `${esc(i.title)}${i.quantity > 1 ? " × " + i.quantity : ""}`).join(", ");
-    parts.push(`<div class="card pending">
-      <div class="label">Your agent wants to buy</div>
-      <div class="item">${items}</div>
-      <div class="why">${esc(p.summary)}</div>
-      <div class="label">You pay</div>
-      <div class="big">${fmt(o.shopper_total, ccy)}</div>
-      <dl class="rows">
-        <dt>Merchant price</dt><dd>${fmt(o.merchant_total, o.merchant_currency)}</dd>
-        ${o.rate ? `<dt>Rate</dt><dd>1 ${esc(o.merchant_currency)} = ${esc(o.rate)} ${esc(ccy)}</dd>
-        <dt>Rate locked</dt><dd><span class="lock ${lock.low ? "low" : ""}">${lock.text}</span></dd>` : ""}
-        <dt>Delivery</dt><dd>${esc(o.delivery)}</dd>
-        <dt>Merchant</dt><dd>${esc(o.merchant_id)}</dd>
-      </dl>
-      <div class="label">The most you'll pay</div>
-      <div class="ceiling"><label class="field"><span>${ccy === "INR" ? "₹" : "€"}</span><input id="ceiling" inputmode="decimal" value="${esc(p.suggested_ceiling)}" aria-label="Maximum you will pay"></label><span class="hint">If the price in ${esc(ccy)} moves above this, or anything you chose changes, your agent asks you again.</span></div>
-      <div class="actions">
-        <button class="btn primary" id="approve" ${state.status === "working" ? "disabled" : ""}>Approve up to ${fmt(p.suggested_ceiling, ccy)}</button>
-        <button class="btn ghost" id="decline" ${state.status === "working" ? "disabled" : ""}>Decline</button>
-      </div></div>`);
-  } else if (d && d.decision.outcome === "proceed") {
-    parts.push(`<div class="card go"><div class="label">Paid</div><div class="item">Order ${esc(d.decision.order_number)}</div>
-      <div class="big" style="margin-top:8px">${fmt(...String(d.decision.charged).split(" "))}</div>
-      <div class="why" style="margin-top:10px">The merchant verified your agent, re-checked your approval against the live price and rate, and signed a receipt.</div></div>`);
-  } else if (d && d.decision.outcome === "refuse") {
-    parts.push(`<div class="card no"><div class="label">Refused</div><div class="item">${esc(d.decision.reason)}</div><div class="why">Nothing was charged.</div></div>`);
-  } else if (state.status === "done") {
-    parts.push(`<div class="empty">Nothing was bought.</div>`);
-  } else if (!parts.length) {
-    parts.push(`<div class="empty">Your agent is shopping. Exact terms will appear here for you to approve.</div>`);
-  }
-  if (state.status === "done" || state.status === "error") parts.push(`<button class="btn ghost" onclick="location.reload()">Start again</button>`);
-
-  const ceilingVal = $("#ceiling")?.value;
-  box.innerHTML = parts.join("");
-  if ($("#ceiling") && ceilingVal) $("#ceiling").value = ceilingVal;
-  $("#ceiling")?.addEventListener("input", (e) => { const v = Number(e.target.value); if ($("#approve") && v) $("#approve").textContent = "Approve up to " + fmt(v, ccy); });
-  if ($("#ceiling") && $("#approve") && Number($("#ceiling").value)) $("#approve").textContent = "Approve up to " + fmt($("#ceiling").value, ccy);
-  $("#approve")?.addEventListener("click", async () => {
-    try { state = await api(`/api/sessions/${sid}/approve`, { ceiling: $("#ceiling").value }); render(); } catch (e) { toast(e.message); }
-  });
-  $("#decline")?.addEventListener("click", async () => { try { state = await api(`/api/sessions/${sid}/decline`, {}); render(); } catch (e) { toast(e.message); } });
-}
-
-const labelOf = (f) => ({ shopper_total: "Price in your currency", items: "Items", merchant_total: "Merchant price", delivery: "Delivery", stock: "Stock", merchant_id: "Merchant", shopper_currency: "Currency" }[f] || f);
+const labelOf = (f) => ({ shopper_total: "Price in your currency", items: "Items", merchant_total: "Merchant price", delivery: "Delivery",
+                          stock: "Stock", merchant_id: "Merchant", shopper_currency: "Currency" }[f] || f);
 function show(v, field, ccy) {
   if (v == null) return "—";
   if (field === "shopper_total") return fmt(v, ccy);
@@ -467,10 +857,133 @@ function show(v, field, ccy) {
   return String(v);
 }
 
+function renderApproval() {
+  const box = $("#approval");
+  const ccy = state.currency;
+  const d = lastDecision();
+  const p = state.pending;
+  // Rebuild only when something the shopper reads changes; the countdown ticks in place.
+  const key = JSON.stringify([state.status === "working", p && [p.offer.offer_id, p.offer.shopper_total, p.suggested_ceiling], d && d.decision, state.status]);
+  if (key === shown.approvalKey) { tickLock(); return; }
+  shown.approvalKey = key;
+  const parts = [];
+
+  if (d && d.decision.outcome === "reask") {
+    const rows = d.decision.changes.map((c) => `<tr><td>${esc(labelOf(c.field))}</td><td>${esc(show(c.approved, c.field, ccy))}</td><td class="new">${esc(show(c.live, c.field, ccy))}</td></tr>`).join("");
+    parts.push(`<div class="card ask"><span class="stamp ask">${ICON.ask}Asked again</span>
+      <div class="item" style="margin-top:14px">${esc(cap(d.decision.reason))}</div>
+      <p class="why">Nothing was charged. The merchant re-priced your order and it no longer matched your yes, so your agent is getting fresh terms for you.</p>
+      <table class="diff"><tr><th>What</th><th>You approved</th><th>Now</th></tr>${rows}</table></div>`);
+  }
+  if (p) {
+    const o = p.offer;
+    const lock = o.rate_locked_until ? countdown(o.rate_locked_until) : null;
+    const items = o.items.map((i) => `${esc(i.title)}${i.quantity > 1 ? " × " + i.quantity : ""}`).join(", ");
+    const sym = ccy === "INR" ? "₹" : "€";
+    parts.push(`<div class="card pending">
+      <div class="label">Your agent wants to buy</div>
+      <div class="item">${items}</div>
+      <p class="why">${esc(p.summary)}</p>
+      <div class="label">You pay</div>
+      <div class="price"><span class="big" id="bigPrice" data-to="${esc(o.shopper_total)}">${fmt(o.shopper_total, ccy)}</span><span class="was">${fmt(o.merchant_total, o.merchant_currency)} at the merchant</span></div>
+      <dl class="rows">
+        ${o.rate ? `<dt>Exchange rate <span class="tip" tabindex="0" data-tip="The merchant prices you at this rate and promises to hold it until the countdown ends.">?</span></dt><dd>1 ${esc(o.merchant_currency)} = ${esc(o.rate)} ${esc(ccy)}</dd>
+        <dt>Rate locked</dt><dd><span class="lockbar ${lock.low ? "low" : ""}" id="lock" data-until="${esc(o.rate_locked_until)}"><span>${lock.text}</span><span class="bar"><i style="transform:scaleX(${lock.frac})"></i></span></span></dd>` : ""}
+        <dt>Delivery</dt><dd>${esc(o.delivery)}</dd>
+        <dt>Sold by</dt><dd>${esc(o.merchant_id)}</dd>
+      </dl>
+      <div class="ceiling-wrap">
+        <div class="label">The most you'll pay <span class="tip" tabindex="0" data-tip="Your ceiling. If the price in your currency moves above it, or anything you chose changes, nothing is charged and your agent asks you again.">?</span></div>
+        <div class="ceiling"><label class="field"><span>${sym}</span><input id="ceiling" inputmode="decimal" value="${esc(p.suggested_ceiling)}" aria-label="The most you will pay, in ${esc(ccy)}"></label>
+          <span class="quick" role="group" aria-label="Set the ceiling">
+            <button type="button" data-room="0">Exact price</button><button type="button" data-room="0.02">+2%</button><button type="button" data-room="0.05">+5%</button>
+          </span></div>
+        <span class="hint">Starts a little above the price so a small market move doesn't interrupt you.</span>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="approve" ${state.status === "working" ? "disabled" : ""}>${ICON.go.replace("<svg", '<svg aria-hidden="true"')}<span>Approve up to ${fmt(p.suggested_ceiling, ccy)}</span></button>
+        <button class="btn ghost" id="decline" ${state.status === "working" ? "disabled" : ""}>Decline</button>
+      </div></div>`);
+  } else if (d && d.decision.outcome === "proceed") {
+    parts.push(`<div class="card go"><span class="stamp go">${ICON.go}Countersigned</span>
+      <div class="label" style="margin-top:16px">Paid · order ${esc(d.decision.order_number)}</div>
+      <div class="big">${fmt(...String(d.decision.charged).split(" "))}</div>
+      <p class="why" style="margin:12px 0 0">The merchant verified your agent's signature, re-priced your order at the live rate, found it matched your yes, charged, and signed a receipt. You'll find it in the merchant's panel.</p></div>`);
+  } else if (d && d.decision.outcome === "refuse") {
+    parts.push(`<div class="card no"><span class="stamp no">${ICON.no}Refused</span><div class="item" style="margin-top:14px">${esc(cap(d.decision.reason))}</div><p class="why" style="margin-bottom:0">Nothing was charged.</p></div>`);
+  } else if (state.status === "done" || state.status === "error") {
+    parts.push(`<div class="empty">Nothing was bought. Read what your agent said on the left, then start again with something else.</div>`);
+  } else if (!parts.length) {
+    parts.push(`<div class="skel" aria-hidden="true"><i class="l"></i><i class="m"></i><i class="b"></i><i class="s"></i><i class="s"></i></div>
+      <p class="skel-note">Your agent is shopping. The exact terms will appear here for you to approve.</p>`);
+  }
+  if (state.status === "done" || state.status === "error") parts.push(`<a class="btn ghost block" href="/">Try another purchase</a>`);
+
+  const ceilingVal = $("#ceiling")?.value;
+  box.innerHTML = parts.join("");
+  if ($("#ceiling") && ceilingVal) $("#ceiling").value = ceilingVal;
+  wireApproval(ccy);
+  countUp($("#bigPrice"), ccy);
+}
+
+function wireApproval(ccy) {
+  const input = $("#ceiling"), approve = $("#approve");
+  if (!input) return;
+  const label = () => { const v = Number(input.value); if (approve && v) approve.querySelector("span").textContent = "Approve up to " + fmt(v, ccy); };
+  input.addEventListener("input", label); label();
+  $$(".quick button").forEach((b) => b.onclick = () => {
+    const total = Number(state.pending.offer.shopper_total);
+    input.value = (Math.ceil(total * (1 + Number(b.dataset.room)) * 100) / 100).toFixed(2); label();
+  });
+  approve?.addEventListener("click", async () => {
+    approve.disabled = true; approve.setAttribute("aria-busy", "true");
+    try { state = await api(`/api/sessions/${sid}/approve`, { ceiling: input.value }); render(); }
+    catch (e) { toast(e.message); approve.disabled = false; }
+  });
+  $("#decline")?.addEventListener("click", async () => { try { state = await api(`/api/sessions/${sid}/decline`, {}); render(); } catch (e) { toast(e.message); } });
+}
+
+function tickLock() {
+  const el = $("#lock");
+  if (!el) return;
+  const c = countdown(el.dataset.until);
+  el.classList.toggle("low", c.low);
+  el.firstElementChild.textContent = c.text;
+  el.querySelector("i").style.transform = `scaleX(${c.frac})`;
+}
+
+// The price counts up to its value once, when it first appears.
+function countUp(el, ccy) {
+  if (!el || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const to = Number(el.dataset.to), start = performance.now(), dur = 700;
+  const step = (t) => {
+    const k = Math.min(1, (t - start) / dur), eased = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(k < 1 ? to * eased : to, ccy);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function renderEdge() {
-  const rows = state.edge.slice().reverse().map((e) => `<div class="e ${e.ok ? "ok" : "bad"}"><span class="k">${e.ok ? "✓" : "✗"}</span>
-    <span>${e.ok ? "Verified agent " + esc(e.detail) : "Refused: " + esc(e.detail)}<small>${esc(e.tag === "agent-payer-auth" ? "pay" : "browse")} · ${esc(e.path)}</small></span></div>`).join("");
-  $("#edge").innerHTML = rows || `<div class="empty" style="padding:10px">No requests yet</div>`;
+  const log = $("#edge");
+  const entries = state.edge;
+  if (entries.length < shown.edge) { log.innerHTML = ""; shown.edge = 0; }
+  if (!entries.length) { log.innerHTML = `<div class="empty" style="padding:12px">No requests yet</div>`; return; }
+  if (shown.edge === 0) log.innerHTML = "";
+  const fresh = entries.slice(shown.edge).map((e) => `<div class="e ${e.ok ? "ok" : "bad"}"><span class="k">${e.ok ? "✓" : "✗"}</span>
+    <span>${e.ok ? "Verified agent " + esc(e.detail) : "Refused: " + esc(e.detail)}<small>${esc(e.tag === "agent-payer-auth" ? "pay" : "browse")} · ${esc(e.path)}</small></span></div>`).reverse().join("");
+  if (fresh) log.insertAdjacentHTML("afterbegin", fresh);
+  shown.edge = entries.length;
+  const bad = entries.filter((e) => !e.ok).length;
+  $("#edgeCount").textContent = `${entries.length} checked${bad ? ` · ${bad} refused` : ""}`;
+}
+
+function renderLevers() {
+  const open = !!state.pending && state.status !== "working";
+  const finished = state.status === "done" || state.status === "error";
+  $$("[data-lever]").forEach((b) => { b.disabled = b.dataset.lever === "bot" ? state.status === "working" : !open; });
+  $("#leverNote").textContent = open ? "Press one, then approve, and watch what the merchant does."
+    : finished ? "This purchase is over. Start again to try another button." : "These wake up when an approval is waiting.";
 }
 
 // /verify checks the receipt in the visitor's own browser. This visit's merchant has its own key,
@@ -487,16 +1000,20 @@ function checkLink(r) {
 
 function renderReceipts() {
   if (!state.receipts.length) return;
+  const key = JSON.stringify([state.receipts.length, verified]);
+  if (key === shown.receiptsKey) return;
+  shown.receiptsKey = key;
   $("#receipts").innerHTML = state.receipts.map((r, i) => {
     const b = r.body, v = verified[i];
-    return `<div class="receipt"><div class="rn">${esc(b.order_number)}</div>
-      <div>${fmt(b.charged.amount, b.charged.currency)} · ceiling ${fmt(b.approval.ceiling, b.approval.currency)}</div>
-      <div class="hint">Signed by ${esc(r.key_id)} · agent ${esc(b.agent ? b.agent.key_id : "unknown")}</div>
-      <div class="actions"><button class="btn small" data-verify="${i}">Verify</button><button class="btn ghost small" data-tamper="${i}">Tamper, then verify</button><a class="btn ghost small" target="_blank" rel="noopener" href="${checkLink(r)}">Check in your browser ↗</a></div>
-      ${v ? `<div class="verdict ${v.ok ? "ok" : "bad"}">${v.ok ? "Verified" : "Failed"}${v.tampered ? " (amount edited to 1.00)" : ""}</div><ul class="findings ${v.ok ? "" : "bad"}">${v.findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}</div>`;
+    return `<div class="receipt"><span class="stamp go">${ICON.go}Signed</span>
+      <div class="label">Order</div><div class="rn">${esc(b.order_number)}</div>
+      <div class="amt">${fmt(b.charged.amount, b.charged.currency)}</div>
+      <div class="hint">within your ceiling of ${fmt(b.approval.ceiling, b.approval.currency)} · signed with ${esc(r.key_id)} · agent ${esc(b.agent ? b.agent.key_id : "unknown")}</div>
+      <div class="actions"><button class="btn small" data-verify="${i}">Verify</button><button class="btn ghost small" data-tamper="${i}" title="Changes the charged amount to 1.00, then checks the signature">Tamper, then verify</button><a class="btn ghost small" target="_blank" rel="noopener" href="${checkLink(r)}">Check in your browser ↗</a></div>
+      ${v ? `<div class="verdict ${v.ok ? "ok" : "bad"}">${v.ok ? ICON.go.replace("<svg", '<svg width="18" height="18"') + "Genuine" : ICON.no.replace("<svg", '<svg width="18" height="18"') + "Fails the check"}${v.tampered ? " (amount edited to 1.00)" : ""}</div><ul class="findings ${v.ok ? "" : "bad"}">${v.findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}</div>`;
   }).join("");
-  document.querySelectorAll("[data-verify]").forEach((b) => b.onclick = () => verify(+b.dataset.verify, false));
-  document.querySelectorAll("[data-tamper]").forEach((b) => b.onclick = () => verify(+b.dataset.tamper, true));
+  $$("[data-verify]").forEach((b) => b.onclick = () => verify(+b.dataset.verify, false));
+  $$("[data-tamper]").forEach((b) => b.onclick = () => verify(+b.dataset.tamper, true));
 }
 
 async function verify(i, tamper) {
@@ -509,10 +1026,16 @@ async function verify(i, tamper) {
   } catch (e) { toast(e.message); }
 }
 
-document.querySelectorAll("[data-lever]").forEach((b) => b.onclick = async () => {
+$$("[data-lever]").forEach((b) => b.onclick = async () => {
   const lever = b.dataset.lever;
   const body = lever === "rate" ? { value: (Number(state.rate) * Number(b.dataset.pct || 1.05)).toFixed(4) } : {};
-  try { state = await api(`/api/sessions/${sid}/levers/${lever}`, body); render(); } catch (e) { toast(e.message); }
+  b.setAttribute("aria-busy", "true");
+  try {
+    state = await api(`/api/sessions/${sid}/levers/${lever}`, body);
+    b.classList.add("fired"); render();
+    toast(lever === "bot" ? "Bots sent. Watch the merchant's request log." : "Changed. Now approve and see what the merchant does.");
+  } catch (e) { toast(e.message); }
+  finally { b.removeAttribute("aria-busy"); }
 });
 </script>
 </body>
