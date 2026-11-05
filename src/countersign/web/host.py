@@ -279,8 +279,10 @@ def webhook_app(house: House) -> FastAPI:
         try:
             order = (await run_in_threadpool(house.merchant.confirm, intent_id)
                      if isinstance(house.merchant, AirwallexMerchant) else None)
-            settled = (await run_in_threadpool(house.settler.settle, intent_id)
-                       if order is None and house.settler is not None else None)
+            # Only the success event settles an MCP payment: the attempt events that follow name the same
+            # intent and must not run the check again (Varunika's review, 11-05).
+            settles = order is None and house.settler is not None and event.get("name") == "payment_intent.succeeded"
+            settled = await run_in_threadpool(house.settler.settle, intent_id) if settles else None
         except (AirwallexError, *UNREACHABLE) as err:
             log.warning("webhook for %s not settled yet: %s", intent_id, err)
             return JSONResponse({"error": "Airwallex could not be reached; retry"}, status_code=503)
@@ -319,6 +321,9 @@ def record_settlement(house: House, settled: Settlement) -> None:
                        order=settled.checkout_id)
     elif settled.status == "refunded":
         house.feed.add("payment", "no", f"Payment refunded: {settled.checkout_id}", "; ".join(settled.reasons),
+                       order=settled.checkout_id)
+    elif settled.status == "unverified":
+        house.feed.add("payment", "ask", f"Payment not checked: {settled.checkout_id}", "; ".join(settled.reasons),
                        order=settled.checkout_id)
 
 

@@ -17,8 +17,11 @@ create_checkout_session, a delegate token and complete_checkout_session):
 settle() treats the webhook as a nudge: it fetches the intent, finds the quote and
 checks every field. All match: paid, and the merchant signs a receipt for it. Any
 mismatch after money moved: refunded in full, no receipt. That includes an intent
-paid after its quote expired, and one whose quote we no longer hold (the service
-restarted): we cannot vouch for a charge we have no countersign for.
+paid after its quote expired, and a second payment for a checkout already paid.
+A quote we no longer hold is different (Varunika's review, 11-05): an intent made
+before this process started may hold the receipt the process before a restart
+signed, so it is logged and shown as unverified, never refunded blind. One made
+since, with no quote, is not a checkout we priced, so it is refunded.
 
 The receipt is C8's, with one addition. Its approval and `charged` are the quoted
 items, the terms the countersign priced; `fulfillment` is the shipping the shopper
@@ -31,7 +34,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
@@ -52,7 +55,7 @@ CHECKOUT_PREFIX = "chk_"  # every create_checkout id (edge/acp.py)
 class Settlement:
     checkout_id: str
     intent_id: str
-    status: str  # "paid", "refunded" or "pending" (not succeeded yet: nothing to check)
+    status: str  # "paid", "refunded", "unverified" (quote lost in a restart) or "pending" (not succeeded yet)
     amount: Decimal | None
     currency: str | None
     reasons: tuple[str, ...] = ()  # why it was refunded
@@ -126,12 +129,15 @@ class Settler:
     """Settles the intents Airwallex's MCP creates for our create_checkout quotes. Safe to repeat."""
 
     def __init__(self, client: Airwallex, quote_for: Callable[[str], QuoteRecord | None],
-                 signer: receipts.MerchantSigner, store: ReceiptStore) -> None:
+                 signer: receipts.MerchantSigner, store: ReceiptStore,
+                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
         self.client = client
         self.quote_for = quote_for
         self.signer = signer
         self.store = store
-        self.settled: dict[str, Settlement] = {}  # by intent id, once paid or refunded
+        self.started = clock()  # quotes made before this are gone after a restart
+        self.settled: dict[str, Settlement] = {}  # by intent id, once paid, refunded or unverified
+        self.paid: dict[str, str] = {}  # checkout id -> the one intent that paid it
         self._lock = threading.Lock()
 
     def settle(self, intent_id: str) -> Settlement | None:
@@ -149,8 +155,22 @@ class Settler:
             if intent.get("status") != SUCCEEDED:
                 return Settlement(checkout_id, intent_id, "pending", amount, currency)
             quote = self.quote_for(checkout_id)
-            reasons = (("no quote on record for this checkout; the service may have restarted since",)
-                       if quote is None else problems(intent, quote))
+            created = _when(intent.get("created_at"))
+            if quote is None and (created is None or created < self.started):
+                # Priced by the process before a restart, which may have receipted it: never refund it blind.
+                log.warning("cannot verify %s for %s: its quote is from before this process started", intent_id, checkout_id)
+                done = Settlement(checkout_id, intent_id, "unverified", amount, currency,
+                                  ("its quote was made before the service restarted, so it can't be checked; "
+                                   "nothing was refunded",))
+                self.settled[intent_id] = done
+                return done
+            first = self.paid.get(checkout_id)
+            if first is not None and first != intent_id:
+                reasons: tuple[str, ...] = (f"this checkout was already paid by {first}",)
+            elif quote is None:
+                reasons = ("no quote on record for this checkout",)
+            else:
+                reasons = problems(intent, quote)
             if reasons:
                 # Money moved that no countersign allowed: give it back, all of it.
                 self.client.post("/pa/refunds/create", {
@@ -163,6 +183,7 @@ class Settler:
             else:
                 signed = receipts.sign(receipt_body(intent, quote), self.signer)
                 self.store.put(checkout_id, signed)
+                self.paid[checkout_id] = intent_id
                 done = Settlement(checkout_id, intent_id, "paid", amount, currency, receipt=signed)
             self.settled[intent_id] = done
             return done
