@@ -105,7 +105,7 @@ Each starts from a fresh purchase (step 3, first message only), then a lever bef
 | Price change | `python scripts/change_event.py --sku KIT-265-0 --percent 12` | Not paid, nothing charged; the old and new totals in euros (€89.23 → €99.94 offline), over the €92 ceiling; Claude asks before doing anything |
 | ... then a new yes | Type: *"OK, I'll go up to €101. Pay the new price."* | Claude sends the new ceiling, then pays: €99.94 offline, an order number, a receipt. Completing again without a new ceiling charges nothing |
 | Out of stock | `python scripts/change_event.py --sku KIT-265-0 --stock 0` | Not bought, not charged; Claude says it sold out and asks what to do |
-| Declined card (our MCP, Drop-in) | Pay with `4646 4646 4646 4644` (any future expiry, any CVC), which Airwallex's risk engine declines at any amount (`risk_declined`, Airwallex's test-card page, checked 2026-11-05) | Not charged; Claude says the card was declined and the order stays open for another card. Built offline, not rehearsed live; whether it declines inside Drop-in with a quote attached is still open (PROGRESS Open questions) |
+| Declined card (our MCP, Drop-in) | Pay with a test card that declines (which one: PROGRESS Open questions) | Not charged; Claude says the card was declined and the order stays open for another card. Built offline, not rehearsed live |
 
 On Airwallex's MCP (not rehearsed):
 
@@ -113,7 +113,6 @@ On Airwallex's MCP (not rehearsed):
 | --- | --- | --- |
 | Out of stock | `python scripts/change_event.py --sku KIT-265-0 --stock 0` before the first message | Our `create_checkout` answers `available_quantity: 0`; how Claude words it is Airwallex's MCP |
 | Express shipping | The shopper picks Express | The paid total is ours plus Express: €98.42 offline |
-| Declined card | In Airwallex's card widget, pay with `4646 4646 4646 4644` (any future expiry, any CVC). Not the amount-triggered cards: they decline only at amounts like 80.05, which this take never reaches | Airwallex's risk engine declines it at any amount (`risk_declined`, "Declined by fraud risk engine"): no `payment_intent.succeeded`, so W3 signs no receipt and sends no refund, and nothing is charged. How Claude words the decline is Airwallex's MCP. Not documented whether the card declines the same way through the delegate token: rehearse once before filming. Backup if it does not: out of stock, above |
 | Price change after the last update | `--percent 12` after the shopper's last change to the session, before paying | Paid at the price already quoted, with a receipt: W3 checks the payment against its own quote, never today's price (run live 2026-11-05) |
 | Price change before an update | `--percent 12`, then the shopper changes the session (for example the shipping) | The update calls our `create_checkout` again and the total moves (₹8,794.23 → ₹9,673.75 on the 2026-11-05 live run, in rupees) with no message to the agent: only Claude can ask the shopper again. For the re-ask on screen, film it on our MCP (section 4, first table) |
 
