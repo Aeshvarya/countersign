@@ -4,7 +4,7 @@ The exact, repeatable steps the video is filmed from: connect Claude to the merc
 
 ## 1. Before the take
 
-**Host** (Render's settings, see `render.yaml`): `COUNTERSIGN_PUBLIC_URL`, `COUNTERSIGN_ACP_HMAC_SECRET`, `COUNTERSIGN_LEVER_TOKEN`, `COUNTERSIGN_MERCHANT_SIGNING_KEY`, and for the live take `COUNTERSIGN_MERCHANT=airwallex`, `AIRWALLEX_CLIENT_ID`, `AIRWALLEX_API_KEY`, `AIRWALLEX_WEBHOOK_SECRET`, `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1`, `COUNTERSIGN_SYNC_CATALOG=1`, and the OAuth server's signing key (C14; its name comes with `web/oauth.py`). On our fallback MCP also `COUNTERSIGN_MCP_TOKEN`.
+**Host** (Render's settings, see `render.yaml`): `COUNTERSIGN_PUBLIC_URL`, `COUNTERSIGN_ACP_HMAC_SECRET`, `COUNTERSIGN_LEVER_TOKEN`, `COUNTERSIGN_MERCHANT_SIGNING_KEY`, and for the live take `COUNTERSIGN_MERCHANT=airwallex`, `AIRWALLEX_CLIENT_ID`, `AIRWALLEX_API_KEY`, `AIRWALLEX_WEBHOOK_SECRET`, `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1`, `COUNTERSIGN_SYNC_CATALOG=1`, and the OAuth server's signing key `COUNTERSIGN_OAUTH_SIGNING_KEY` (C14). On our fallback MCP also `COUNTERSIGN_MCP_TOKEN`.
 
 **The host is awake.** A sleeping free instance took 22.6 s to answer its first call on 2026-11-03 and 33.2 s on 2026-11-04 (0.3 s once awake), long enough to time out Airwallex's `create_checkout`, and Claude's sign-in too: Airwallex fetches our JWKS to check the access token (whether it caches it is not said) and gave up after 500 ms until 2026-11-04 (raised since, the new limit not given). Run `python scripts/ac_onboard.py --check-host` a minute before the take: it must say "401 from the ACP door" with no "slow" warning, and the OAuth server must pass with no "sign-in may fail" warning.
 
@@ -37,11 +37,13 @@ Start every take from an empty folder, so no project instructions load either.
      "mcpServers": {
        "agentic-commerce": {
          "command": "npx",
-         "args": ["-y", "mcp-remote", "https://mcp.sandbox.airwallex.com/pa/ai/<merchantId>/acp/mcp"]
+         "args": ["-y", "mcp-remote@0.16.0", "https://mcp.sandbox.airwallex.com/pa/ai/<merchantId>/acp/mcp"]
        }
      }
    }
    ```
+
+   `mcp-remote` is pinned to 0.16.0, the version that ran live on 2026-11-04 and 11-05: without a version, `npx` fetches whatever is newest on the day of the take, and no newer one has been tried.
 
 4. Quit Claude Desktop fully (Cmd+Q; closing the window is not enough) and open it again.
 5. A browser opens on our sign-in page: sign in with the passkey. Shoppers are guests, so there are no saved cards or addresses. Be quick: Claude Desktop gives a server 60 seconds to start, and the first sign-in on 2026-11-05 ran past it, so it took one reconnect (quit and reopen; the saved sign-in is used).
