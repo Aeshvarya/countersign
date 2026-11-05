@@ -13,7 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-11-05_
+_Updated 2026-11-06_
+
+- **2026-11-06 (Varunika): the dispute record can carry the signed order, not only the PDF.** `scripts/dispute_demo.py --structured` (`7d15cb4`) adds the receipt's own fields to the challenge, chosen by the stage Airwallex reports (its challenge reference, read 2026-11-06: `order_info`, `seller_info` and `delivery_info` apply only at RFI; at CHARGEBACK the order goes in as `product_description` and `refund_refusal_reason`). Step 3 names the fields it added. Without the flag the body is exactly the one that won on 2026-11-05. **For Aeshvarya, on the next live dispute run:** add `--structured`. If Airwallex refuses a field, the run stops at `evidence` with its code and nothing else changes; if it passes, it can become the default. The two text fields are built from the receipt's values; reword them if you want.
 
 - **2026-11-05 evening (Varunika): W3 fix reviewed, both U3 asks closed, run book in euros.** Aeshvarya's W3 fix (`7db45cd`) clears both findings: the direct reproduction now gives `unverified` with no refund after a restart, and refunds a second payment for one checkout; eight Loadbearing probes clean; 632 tests. C14 stays frozen as built, with `typ` `JWT` (Decisions). `aeshvarya/dispute-upload-ua` reviewed and merged (`7d3678f`). `scripts/dispute_demo.py` opens at CHARGEBACK by default (`f144607`), because the sandbox cannot decide a dispute opened at RFI; `--stage RFI` still works. `docs/RUNBOOK.md` (`f532c7d`): the take in euros with totals from the code (€89.23, €99.94 after +12%, €98.42 with Express) and the live rates that keep both ceilings meaningful; the card goes into Airwallex's widget, never the chat (R5); W3 after a restart; `mcp-remote@0.16.0` pinned; claude.ai on the web cannot connect; the take asks Claude to show the options, so it calls `render_products` and the card widget appears (`fbf230d`). **For Aeshvarya to review:** `varunika/a16-decline-card`, one line in your `scripts/audit.py` allowing Airwallex's risk-declined test card (on its test-card page, declined at any amount) plus the run book's declined-card rows for both paths. It went to `main` once before the audit caught the card, failed CI, and was reverted (`62a5652`). **Next:** a rehearsal take on Airwallex's MCP from the clean profile, checking that Claude Desktop shows the widget; the ceiling wording (V7).
 
@@ -162,6 +164,9 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-11-06
+- **Dispute challenge, the order field by field** (Varunika, `7d15cb4`): `scripts/dispute_demo.py --structured` also sends the signed order in Airwallex's challenge fields for the dispute's stage: at CHARGEBACK `product_description` (items, unit prices, the charge) and `refund_refusal_reason` (the signed receipt and where to check it); at RFI `order_info`, `seller_info`, `delivery_info`. Only values from the signed receipt and the store's own address; no customer fields, since the merchant holds none. Off by default and not yet run live; 644 tests
 
 ### 2026-11-05
 - **U3 live, WON** (Aeshvarya, with `aeshvarya/dispute-upload-ua` for Varunika's review): a fresh €82.85 purchase through Airwallex's MCP (`int_sgpvtdh4nhnvgc5wtus`, receipt saved at once), then `dispute_demo.py --stage CHARGEBACK`: chargeback opened, receipt verified, PDF evidence challenged, decided for the merchant (`PRE_ARBITRATION` `WON`)
