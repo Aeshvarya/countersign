@@ -153,6 +153,9 @@ uv venv && uv pip install -e '.[dev]'
 
 Newest first.
 
+### 2026-11-05
+- **Claude Desktop connected** (Aeshvarya): Airwallex's ACP MCP added through `mcp-remote` 0.16.0; it found our OAuth server from Airwallex's resource metadata, the passkey sign-in returned a code, and `initialize` + `tools/list` answered. Desktop's 60 s start limit ran out during the first sign-in, so it took one reconnect; Airwallex's verifier (`Java/17`) fetched our JWKS 5 times
+
 ### 2026-11-04
 - **First live card payment** (Aeshvarya): `payment_spike.py --shopper INR` on the sandbox, paid with the test card in Drop-in; Airwallex's SUCCEEDED amount (12537.35 INR, quote `cvq_…`) equals ours to the paisa, so the rounding question is closed.
 - **W2, C14** (Aeshvarya, `1a3d4b8`): the OAuth server, tested offline (tokens checked by `kid` against the JWKS as Airwallex does, and `--check-host`'s OAuth check) and end to end in Chrome with a virtual passkey (register, sign in, code, token). `--check-host` passes on the live host. 604 tests. Keep-awake (`72b76d8`): the host GETs its own `/healthz` every 5 minutes (`COUNTERSIGN_KEEP_AWAKE`), so the free plan does not sleep; `/healthz` reports it and the OAuth server.
