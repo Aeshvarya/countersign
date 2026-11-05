@@ -88,6 +88,28 @@ class AgentFlowTest(unittest.TestCase):
         self.assertEqual(session2.status, "done")
         self.assertEqual(len(shop2.orders), 1)
 
+    def test_a_product_that_only_shares_a_word_is_not_offered(self):
+        # The catalogue has no monitors, only monitor arms: an arm is not what was asked for.
+        session, shop, *_ = build()
+        session.start("Buy me a monitor under ₹12,000")
+        self.assertEqual(session.status, "done")
+        self.assertIsNone(session.pending)
+        said = " ".join(e["text"] or "" for e in session.events)
+        self.assertIn("doesn't sell what you asked for", said)
+        self.assertIn("Monitor arm", said)
+        self.assertEqual(shop.orders, {})
+
+    def test_asking_for_the_arm_by_name_finds_it(self):
+        session, shop, *_ = build()
+        session.start("buy me a monitor arm")
+        self.assertEqual(session.status, "awaiting_approval")
+        self.assertEqual(session.offers[session.pending.offer_id].items[0].title, "Monitor arm Lite")
+
+    def test_plural_requests_match_singular_names(self):
+        session, *_ = build()
+        session.start("buy me headphones")
+        self.assertEqual(session.status, "awaiting_approval")
+
     def test_decline_charges_nothing(self):
         session, shop, *_ = build()
         session.start("buy me a kettle")

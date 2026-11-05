@@ -74,12 +74,37 @@ def _last_tool_exchange(messages: list[dict]) -> tuple[str | None, dict | None]:
     return call.name, json.loads(result["content"])
 
 
+VARIANTS = {"lite", "standard", "pro", "max"}  # the catalogue's tiers, after a product's name
+
+
+def _query(request: str) -> str:
+    """The words worth searching for: no verbs, articles, amounts or currencies."""
+    query = re.sub(r"[₹€$]", " ", request.lower())
+    query = re.sub(r"\b(buy|me|a|an|the|please|under|below|for|\d[\d,]*|inr|usd|eur)\b", " ", query)
+    return " ".join(query.split())
+
+
+def _singular(word: str) -> str:
+    return word[:-1] if len(word) > 3 and word.endswith("s") else word
+
+
+def _noun(title: str) -> str:
+    """What a product is: the last word of its name before the tier ("Monitor arm Pro" is an arm)."""
+    words = title.lower().split()
+    if len(words) > 1 and words[-1] in VARIANTS:
+        words = words[:-1]
+    return _singular(words[-1]) if words else ""
+
+
 class ScriptedModel:
     """A deterministic shopper's agent: search, pick, offer, ask, pay.
 
     It follows the same tools and rules a real model gets, which makes the
     loop testable and the demo runnable without a key. It picks the cheapest
-    in-stock result that matches the request's "under N" budget if one is given.
+    in-stock result that is the thing asked for: a search for "monitor" also
+    finds a "Monitor arm", which is not a monitor, so it says so and buys
+    nothing. An "under N" budget is noted for the approval screen, where the
+    price is shown in the shopper's currency.
     """
 
     def __init__(self) -> None:
@@ -98,9 +123,7 @@ class ScriptedModel:
         request = next(m["content"] for m in messages if m["role"] == "user")
         name, result = _last_tool_exchange(messages)
         if name is None:
-            query = re.sub(r"[₹€$]", " ", request.lower())
-            query = re.sub(r"\b(buy|me|a|an|the|please|under|below|for|\d[\d,]*|inr|usd|eur)\b", " ", query)
-            return self._tool("search_products", {"query": " ".join(query.split()) or request, "limit": 5},
+            return self._tool("search_products", {"query": _query(request) or request, "limit": 5},
                               "Looking through the merchant's catalogue.")
         if result is not None and "error" in result and name != "get_offer":
             return self._say(f"I couldn't continue: {result['error']}. Nothing was charged.")
@@ -108,7 +131,14 @@ class ScriptedModel:
             if not result["products"]:
                 return self._say("I couldn't find anything matching that.")
             budget = re.search(r"under\s*[₹$]?\s*([\d,]+)", request.lower())
-            pick = sorted(result["products"], key=lambda p: float(p["price"]))[0]
+            wanted = {_singular(w) for w in _query(request).split()}
+            matches = [p for p in result["products"] if _noun(p["title"]) in wanted]
+            if not matches:
+                nearest = result["products"][0]["title"]
+                return self._say(f"This shop doesn't sell what you asked for. The nearest thing it has is {nearest}, "
+                                 "which is a different product, so I haven't picked anything. Ask for it by name if "
+                                 "you want it. Nothing was charged.")
+            pick = sorted(matches, key=lambda p: float(p["price"]))[0]
             note = f"Cheapest match: {pick['title']}."
             if budget:
                 note += f" (Budget {budget.group(1)} noted; I'll check the price in your currency.)"
