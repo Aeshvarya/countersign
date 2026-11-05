@@ -114,7 +114,7 @@ After every exception: `python scripts/change_event.py --reset`.
 
 ## 5. Between takes
 
-- Never redeploy during a session: open checkouts, the order counter, Airwallex's quotes and the receipts at `/receipts/<checkout id>` live in memory (order numbers restart at `ORD-1001`). Every push to `main` redeploys the host (`autoDeploy` in `render.yaml`), a PROGRESS line included: the receipt from the 2026-11-05 live run answered 404 at 13:10 IST, after the 12:55 merge.
+- Never redeploy during a session: open checkouts, the order counter, Airwallex's quotes and the receipts at `/receipts/<checkout id>` live in memory (order numbers restart at `ORD-1001`). Every push to `main` redeploys the host (`autoDeploy` in `render.yaml`), a PROGRESS line included: the receipt from the 2026-11-05 live run answered 404 a few minutes after the 12:55 IST merge.
 - Offline, the payment id contains `fake` and Claude may say so; live, it is Airwallex's intent id.
 - If Claude completes again on its own after "asked again", stop the take and re-record that beat.
 
