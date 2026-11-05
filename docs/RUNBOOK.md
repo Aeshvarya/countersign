@@ -53,6 +53,8 @@ Before a take, the host's `/healthz` must say `"oauth": true` and `"keep_awake":
 
 **Sign in again from scratch** (a take that must show the sign-in, or a stuck one): quit Claude Desktop, delete `mcp-remote`'s saved sign-in in `~/.mcp-auth` (its documented default; not checked on the recording machine), and open Claude Desktop again.
 
+**Not claude.ai on the web:** its connector check got 404 from Airwallex's MCP on 2026-11-05, and no request reached our OAuth server. Claude Desktop with `mcp-remote` is the guide's path and works.
+
 **Our fallback MCP** in Claude Code (say so on screen):
 
 ```bash
@@ -88,7 +90,8 @@ Yes, go ahead and pay.
 - **Expect first:** the total in euros and two shipping options, Standard (5-7 business days, free) and Express (2 business days, €9.19 offline at 0.92). Our total never includes shipping: Airwallex adds the option the shopper picks (€98.42 offline with Express).
 - **The ceiling stays with Claude:** `create_checkout` carries no ceiling, so on this path the €92 never reaches the merchant. Airwallex also has no way for `create_checkout` to tell the agent that an order needs someone's approval (#commerce-kits-9-and-10, 2026-11-05), so this path cannot ask again either.
 - **Then:** the live runs went create, choose shipping, delegate the test card's token, complete. Sandbox test cards take any future expiry and any three-digit CVV (Airwallex, 2026-11-05). The order id Claude is given is our checkout id (`chk_…`).
-- **After the payment:** Airwallex's webhook reaches us and W3 checks the paid intent against the quote it belongs to: the currency, the shipping option, the amount to the cent, and that it was created before the quote expired. All hold: the merchant signs the receipt and serves it at `https://<host>/receipts/<checkout id>`. Anything else: a full refund with the reason, and no receipt. W3 does not check a shopper passkey on this path.
+- **The card goes into Airwallex's widget, never the chat** (Kit 10 R5). `render_products` returns Airwallex's checkout widget (`ui://widget/native-checkout.html`, MCP Apps), which has its own card form and calls `create_delegate_payment_token` and `complete_checkout_session` itself (PROGRESS Open questions, 2026-11-05). Never type the card number into the conversation, and never film a take where Claude asks for it. Whether Claude Desktop shows the widget is not confirmed yet: check it in the first rehearsal, and if it does not appear, stop before paying and tell Aeshvarya.
+- **After the payment:** Airwallex's webhook reaches us and W3 checks the paid intent against the quote it belongs to: the currency, the shipping option, the amount to the cent, and that it was created before the quote expired. All hold: the merchant signs the receipt and serves it at `https://<host>/receipts/<checkout id>`. Anything else, including a second payment for a checkout already paid: a full refund with the reason, and no receipt (the first receipt stays). Only `payment_intent.succeeded` settles. A payment whose quote was lost in a restart is not refunded: the console shows **Payment not checked** and there is no receipt (fixed 2026-11-05, `7db45cd`). W3 does not check a shopper passkey on this path.
 - **Save the receipt at once** (it lives in memory, and a redeploy loses it): `curl -s https://<host>/receipts/<checkout id> -o countersign-receipt-<checkout id>.json`. That file is what `scripts/dispute_demo.py --receipt` takes for the dispute ending.
 
 ## 4. The exceptions
@@ -115,7 +118,7 @@ After every exception: `python scripts/change_event.py --reset`.
 
 ## 5. Between takes
 
-- Never redeploy during a session: open checkouts, the order counter, Airwallex's quotes and the receipts at `/receipts/<checkout id>` live in memory (order numbers restart at `ORD-1001`). Every push to `main` redeploys the host (`autoDeploy` in `render.yaml`), a PROGRESS line included: the receipt from the 2026-11-05 live run answered 404 a few minutes after the 12:55 IST merge.
+- Never redeploy during a session: open checkouts, the order counter, Airwallex's quotes and the receipts at `/receipts/<checkout id>` live in memory (order numbers restart at `ORD-1001`). A payment made after a quote but across a redeploy gets no receipt: refunded if it was paid after the restart, **Payment not checked** if before. Every push to `main` redeploys the host (`autoDeploy` in `render.yaml`), a PROGRESS line included: the receipt from the 2026-11-05 live run answered 404 a few minutes after the 12:55 IST merge.
 - Offline, the payment id contains `fake` and Claude may say so; live, it is Airwallex's intent id.
 - If Claude completes again on its own after "asked again", stop the take and re-record that beat.
 
