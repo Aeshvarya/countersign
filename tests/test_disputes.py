@@ -338,6 +338,28 @@ class DisputeDemoTest(unittest.TestCase):
         self.assertEqual(self.api.posts[0][1]["stage"], "RFI")
         self.assertNotIn("product_type", self.api.posts[1][1])
 
+    def test_without_the_flag_the_challenge_is_the_one_that_won_live(self):
+        self.run_demo(signed_receipt(), "--base-url", "https://shop.example")
+        self.assertNotIn("refund_refusal_reason", self.api.posts[1][1])
+        self.assertTrue(self.lines[-2].endswith("bytes)"))
+
+    def test_structured_adds_the_chargeback_fields_and_says_which(self):
+        self.assertEqual(self.run_demo(signed_receipt(), "--structured", "--base-url", "https://shop.example/"), 0)
+        body = self.api.posts[1][1]
+        self.assertIn("ORD-1001", body["refund_refusal_reason"])
+        self.assertIn("check it at https://shop.example/verify", body["refund_refusal_reason"])
+        self.assertIn("charged 8283.85 INR", body["product_description"])
+        self.assertIn("plus product_description, refund_refusal_reason)", self.lines[-2])
+
+    def test_structured_at_rfi_sends_the_order(self):
+        self.assertEqual(self.run_demo(signed_receipt(), "--stage", "RFI", "--structured",
+                                       "--base-url", "https://shop.example"), 0)
+        body = self.api.posts[1][1]
+        self.assertEqual(body["order_info"]["id"], "ORD-1001")
+        self.assertEqual(body["order_info"]["products"][0]["url"], "https://shop.example/p/KIT-265-0")
+        self.assertNotIn("product_type", body)
+        self.assertIn("plus delivery_info, order_info, seller_info)", self.lines[-2])
+
     def test_a_dispute_not_decided_for_the_merchant_says_so(self):
         api = FakeAirwallex(decided="LOST")
         self.assertEqual(self.run_demo(signed_receipt(), api=api), 2)
