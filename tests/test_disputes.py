@@ -120,6 +120,7 @@ class DisputeCallsTest(unittest.TestCase):
         self.assertEqual(req.full_url, "https://files.sandbox.airwallex.com/api/v1/files/upload")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(req.get_header("Authorization"), "Bearer token-SECRET")
+        self.assertEqual(req.get_header("User-agent"), "countersign/1.0")  # Cloudflare 1010 refuses Python-urllib
         boundary = re.fullmatch(r"multipart/form-data; boundary=(\w+)", req.get_header("Content-type")).group(1)
         self.assertIn(b'name="file"; filename="receipt-ORD-1001.pdf"\r\nContent-Type: application/pdf\r\n\r\n'
                       b"%PDF-1.4 x\r\n", req.data)

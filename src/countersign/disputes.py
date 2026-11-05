@@ -63,6 +63,9 @@ def open_dispute(client: Any, payment_intent_id: str, now: datetime, *, reason_c
     return _dispute(client.post("/simulation/pa/payment_disputes/create", body))
 
 
+USER_AGENT = "countersign/1.0"
+
+
 def files_url(base_url: str) -> str:
     """Airwallex serves uploads from its own host: api.sandbox.airwallex.com -> files.sandbox.airwallex.com."""
     scheme, sep, host = base_url.rstrip("/").partition("://")
@@ -92,6 +95,8 @@ def upload_file(client: Any, data: bytes, filename: str, notes: str = "", conten
                                  data=b"".join(parts) + f"--{boundary}--\r\n".encode(), method="POST")
     req.add_header("Authorization", f"Bearer {client.token()}")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    # The file host's Cloudflare refuses Python's default User-Agent (403, error 1010; live 2026-11-05).
+    req.add_header("User-Agent", USER_AGENT)
     try:
         with opener(req, timeout=client.timeout) as resp:
             return json.loads(resp.read())["file_id"]
