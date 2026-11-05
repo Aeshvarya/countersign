@@ -44,10 +44,12 @@ Start every take from an empty folder, so no project instructions load either.
    ```
 
 4. Quit Claude Desktop fully (Cmd+Q; closing the window is not enough) and open it again.
-5. A browser opens on our sign-in page: sign in with the passkey. Shoppers are guests, so there are no saved cards or addresses.
+5. A browser opens on our sign-in page: sign in with the passkey. Shoppers are guests, so there are no saved cards or addresses. Be quick: Claude Desktop gives a server 60 seconds to start, and the first sign-in on 2026-11-05 ran past it, so it took one reconnect (quit and reopen; the saved sign-in is used).
 6. Start a new chat and check that the `agentic-commerce` tools are listed.
 
-**It does not connect:** `tail -f ~/Library/Logs/Claude/mcp-server-agentic-commerce.log`, and `python scripts/ac_onboard.py --check-host` (the OAuth server must pass). A 401 in the log after a good sign-in is the access token. First rule out a slow JWKS: `--check-host` prints how long it took, and a JWKS slower than Airwallex's timeout was the whole cause of another team's 401s (#commerce-kits-9-and-10, 2026-11-04). Beyond that, which claims Airwallex's MCP checks is not documented yet (PROGRESS Open questions).
+Before a take, the host's `/healthz` must say `"oauth": true` and `"keep_awake": true`. The OAuth server's key is `COUNTERSIGN_OAUTH_SIGNING_KEY` on the host; without it every restart makes a new key and signs everyone out.
+
+**It does not connect:** `tail -f ~/Library/Logs/Claude/mcp-server-agentic-commerce.log`, and `python scripts/ac_onboard.py --check-host` (the OAuth server must pass). A 401 in the log after a good sign-in is the access token. First rule out a slow JWKS: `--check-host` prints how long it took, and a JWKS slower than Airwallex's timeout was the whole cause of another team's 401s (#commerce-kits-9-and-10, 2026-11-04). Airwallex's MCP accepted our tokens live on 2026-11-04 with header `typ` `JWT` (it refused `at+jwt`), `alg` ES256 and a `kid` in our JWKS, and `aud` the ACP MCP URL that `mcp-remote` sends as its `resource`. Its verifier fetches our JWKS several times per sign-in (user agent `Java/17`); `/healthz` lists the last five fetches under `jwks_fetches`, so an empty list after a 401 means Airwallex never reached our key.
 
 **Sign in again from scratch** (a take that must show the sign-in, or a stuck one): quit Claude Desktop, delete `mcp-remote`'s saved sign-in in `~/.mcp-auth` (its documented default; not checked on the recording machine), and open Claude Desktop again.
 
