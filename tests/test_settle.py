@@ -90,7 +90,7 @@ class SettleTest(unittest.TestCase):
         self.api = app.state.acp
         self.store = MemoryReceiptStore()
         self.airwallex = FakeAirwallex()
-        self.settler = Settler(self.airwallex, self.api.quote_for, self.signer, self.store)
+        self.settler = Settler(self.airwallex, self.api.quote_for, self.signer, self.store, clock=lambda: NOW)
         self.sku = list(self.merchant.catalog)[0]
 
     def quote(self, quantity=1, currency="INR"):
@@ -177,6 +177,26 @@ class SettleTest(unittest.TestCase):
         self.airwallex.intents["int_9"] = intent("int_9", "chk_" + "0" * 24, "100.00")
         self.assert_refunded("int_9", "no quote on record")
 
+    def test_after_a_restart_an_older_payment_is_left_alone_not_refunded(self):
+        # Varunika's 11-05 finding: the process before the restart may already have receipted it.
+        self.airwallex.intents["int_old"] = intent("int_old", "chk_" + "1" * 24, "100.00", created=NOW - timedelta(minutes=5))
+        done = self.settler.settle("int_old")
+        self.assertEqual(done.status, "unverified")
+        self.assertIn("before the service restarted", done.reasons[0])
+        self.assertEqual(self.airwallex.refunds, [])
+        self.assertIs(self.settler.settle("int_old"), done)  # Airwallex resending it changes nothing
+        self.assertEqual(self.airwallex.gets, 1)
+
+    def test_a_second_payment_for_a_paid_checkout_is_refunded_and_the_first_receipt_kept(self):
+        q = self.quote()
+        first = self.settler.settle(self.pays(q, intent_id="int_1"))
+        self.assertEqual(first.status, "paid")
+        second = self.settler.settle(self.pays(q, intent_id="int_2"))
+        self.assertEqual(second.status, "refunded")
+        self.assertEqual(second.reasons, ("this checkout was already paid by int_1",))
+        self.assertEqual([r["payment_intent_id"] for r in self.airwallex.refunds], ["int_2"])
+        self.assertIs(self.store.get(q.checkout_id), first.receipt)
+
     def test_a_quote_with_nothing_available_is_refunded(self):
         self.merchant.set_stock(self.sku, 0)
         q = self.quote()
@@ -257,6 +277,21 @@ class HostSettleTest(unittest.TestCase):
         self.assertTrue(self.client.get("/healthz").json()["mcp_payments"])
         line = [e for e in self.house.feed._events if e["kind"] == "payment"][-1]
         self.assertEqual((line["level"], line["order"]), ("go", q.checkout_id))
+
+    def test_only_the_success_event_settles_an_mcp_payment(self):
+        # An attempt event names the same intent later; it must not run the check again.
+        api = self.house.edge.state.acp
+        sku = list(self.house.merchant.catalog)[0]
+        _, out = api.create_checkout({"line_items": [{"id": "line-1", "item_id": sku, "requested_quantity": 1}],
+                                      "currency": "EUR"})
+        q = api.quote_for(out["id"])
+        self.airwallex.intents["int_a"] = intent("int_a", q.checkout_id, "1.00", currency="EUR",
+                                                 created=q.created + timedelta(minutes=1))
+        raw = json.dumps({"name": "payment_attempt.authorization_failed",
+                          "data": {"object": {"payment_intent_id": "int_a"}}}).encode()
+        headers = {"content-type": "application/json", **hmac_auth.sign(raw, WEBHOOK_SECRET.encode())}
+        self.assertEqual(self.client.post(WEBHOOK_PATH, content=raw, headers=headers).json(), {"ignored": True})
+        self.assertEqual((self.airwallex.gets, self.airwallex.refunds), (0, []))
 
     def test_without_airwallex_keys_there_is_no_settler(self):
         house = house_from_env({"COUNTERSIGN_ACP_HMAC_SECRET": SECRET.decode()})
