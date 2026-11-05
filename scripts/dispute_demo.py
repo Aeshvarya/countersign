@@ -4,13 +4,14 @@
     python scripts/dispute_demo.py --receipt receipt.json
     python scripts/dispute_demo.py --receipt receipt.json --intent int_...   the intent, if you name it, must be the receipt's
     python scripts/dispute_demo.py --receipt receipt.json --merchant-key <base64>          offline key, no host
-    python scripts/dispute_demo.py --receipt receipt.json --stage CHARGEBACK              if the sandbox refuses RFI
+    python scripts/dispute_demo.py --receipt receipt.json --stage RFI                     opens earlier; the sandbox cannot decide it
 
 The receipt is the signed JSON the shopper page keeps (body, key_id, alg, signature).
 
 1. The cardholder's bank opens a dispute on the paid intent: Airwallex's simulation API,
-   Visa reason 10.4 (card-absent fraud), the whole payment, at RFI as the builder guide's
-   dispute kit opens a case the merchant challenges.
+   Visa reason 10.4 (card-absent fraud), the whole payment, at CHARGEBACK. At RFI the
+   sandbox takes the challenge but refuses the resolve ("Dispute transition is not
+   supported", live 2026-11-05); from CHARGEBACK the live run ended WON.
 2. receipt.verify checks the receipt against the merchant's public key, read from the host
    (COUNTERSIGN_PUBLIC_URL + /.well-known/countersign-merchant-key) or given with
    --merchant-key. If it does not verify, the script stops: the merchant has no answer, and
@@ -104,7 +105,7 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
     parser.add_argument("--intent", help="the paid payment intent; defaults to the receipt's payment_id")
     parser.add_argument("--merchant-key", help="base64 of the merchant's Ed25519 public key, instead of the host's")
     parser.add_argument("--base-url", default=environ.get("COUNTERSIGN_PUBLIC_URL"), help="the host, for its key")
-    parser.add_argument("--stage", choices=("RFI", "CHARGEBACK"), default="RFI", help="where the dispute opens")
+    parser.add_argument("--stage", choices=("RFI", "CHARGEBACK"), default="CHARGEBACK", help="where the dispute opens")
     args = parser.parse_args(argv)
 
     with open(args.receipt) as fh:
