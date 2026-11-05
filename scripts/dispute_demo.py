@@ -5,6 +5,7 @@
     python scripts/dispute_demo.py --receipt receipt.json --intent int_...   the intent, if you name it, must be the receipt's
     python scripts/dispute_demo.py --receipt receipt.json --merchant-key <base64>          offline key, no host
     python scripts/dispute_demo.py --receipt receipt.json --stage RFI                     opens earlier; the sandbox cannot decide it
+    python scripts/dispute_demo.py --receipt receipt.json --structured                    also the order field by field (not yet run live)
 
 The receipt is the signed JSON the shopper page keeps (body, key_id, alg, signature).
 
@@ -16,7 +17,9 @@ The receipt is the signed JSON the shopper page keeps (body, key_id, alg, signat
    (COUNTERSIGN_PUBLIC_URL + /.well-known/countersign-merchant-key) or given with
    --merchant-key. If it does not verify, the script stops: the merchant has no answer, and
    the dispute stays open.
-3. The receipt goes up as a PDF and the dispute is challenged with it.
+3. The receipt goes up as a PDF and the dispute is challenged with it. With --structured
+   the challenge also carries the signed order in Airwallex's own fields for that stage
+   (disputes.challenge_details); the line names the fields it added.
 4. The bank decides for the merchant (simulation API).
 
 Prints the dispute id and its status after each step, and what receipt.verify found. Never
@@ -53,7 +56,8 @@ def host_key(base_url: str) -> str:
 
 
 def run(client: Any, signed: dict[str, Any], public_key: str, now: datetime, *, intent: str, stage: str,
-        verify_url: str | None, out: Callable[[str], None], opener: Callable[..., Any] | None = None) -> int:
+        verify_url: str | None, out: Callable[[str], None], opener: Callable[..., Any] | None = None,
+        store_url: str | None = None, structured: bool = False) -> int:
     try:
         key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key, validate=True))
     except (ValueError, TypeError):
@@ -75,10 +79,14 @@ def run(client: Any, signed: dict[str, Any], public_key: str, now: datetime, *, 
         step = "evidence"
         pdf = disputes.evidence_pdf(signed, check.findings, public_key, verify_url)
         extra = {} if opener is None else {"opener": opener}
+        details = (disputes.challenge_details(signed, opened.stage, store_url=store_url, verify_url=verify_url)
+                   if structured else None)
         answered = disputes.submit_evidence(client, opened, pdf, filename=disputes.evidence_filename(signed),
                                             description=disputes.evidence_description(signed, check.findings),
-                                            product_description=disputes.product_description(signed), **extra)
-        out(f"3 evidence sent    {answered.id}  {answered.stage} {answered.status}  (receipt PDF, {len(pdf)} bytes)")
+                                            product_description=disputes.product_description(signed),
+                                            details=details, **extra)
+        added = f", plus {', '.join(sorted(details))}" if details else ""
+        out(f"3 evidence sent    {answered.id}  {answered.stage} {answered.status}  (receipt PDF, {len(pdf)} bytes{added})")
 
         step = "resolve"
         resolved = disputes.resolve_for_merchant(client, opened.id)
@@ -106,6 +114,8 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
     parser.add_argument("--merchant-key", help="base64 of the merchant's Ed25519 public key, instead of the host's")
     parser.add_argument("--base-url", default=environ.get("COUNTERSIGN_PUBLIC_URL"), help="the host, for its key")
     parser.add_argument("--stage", choices=("RFI", "CHARGEBACK"), default="CHARGEBACK", help="where the dispute opens")
+    parser.add_argument("--structured", action="store_true",
+                        help="also send the signed order in the challenge's own fields (not yet run live)")
     args = parser.parse_args(argv)
 
     with open(args.receipt) as fh:
@@ -131,7 +141,8 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
             return 2
     else:
         parser.error("--merchant-key, --base-url or COUNTERSIGN_PUBLIC_URL is required")
-    verify_url = f"{args.base_url.rstrip('/')}/verify" if args.base_url else None
+    store_url = args.base_url.rstrip("/") if args.base_url else None
+    verify_url = f"{store_url}/verify" if store_url else None
 
     if client is None:
         try:
@@ -139,7 +150,7 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
         except RuntimeError as err:
             parser.error(str(err))
     return run(client, signed, public_key, now or datetime.now(timezone.utc), intent=intent, stage=args.stage,
-               verify_url=verify_url, out=out, opener=opener)
+               verify_url=verify_url, out=out, opener=opener, store_url=store_url, structured=args.structured)
 
 
 if __name__ == "__main__":

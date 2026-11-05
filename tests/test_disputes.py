@@ -176,6 +176,94 @@ class DisputeCallsTest(unittest.TestCase):
         self.assertEqual(resolved.status, "WON")
 
 
+class ChallengeDetailsTest(unittest.TestCase):
+    """The signed order in the challenge's own fields, by stage, as Airwallex's reference lists them."""
+
+    def setUp(self):
+        self.api = FakeAirwallex()
+
+    def sent(self, stage, details):
+        disputes.challenge(self.api, disputes.Dispute("dst_1", stage, "REQUIRES_RESPONSE", "int_paid"), "file_1",
+                           description="d", product_description="1 x KIT-265-0", request_id="req-1", details=details)
+        return self.api.posts[-1][1]
+
+    def test_without_details_a_chargeback_body_is_the_one_that_won_live(self):
+        self.assertEqual(set(self.sent("CHARGEBACK", None)), {"request_id", "challenge_method", "reason",
+                                                              "supporting_documents", "product_type",
+                                                              "product_description"})
+
+    def test_at_chargeback_the_receipt_says_what_was_sold_and_why_no_refund(self):
+        details = disputes.challenge_details(signed_receipt(), "CHARGEBACK",
+                                             verify_url="https://shop.example/verify")
+        body = self.sent("CHARGEBACK", details)
+        self.assertEqual(body["product_type"], "PHYSICAL_GOODS")
+        self.assertEqual(body["product_description"], "1 x KIT-265-0 at 98.50 USD; order ORD-1001, charged 8283.85 INR")
+        self.assertEqual(body["refund_refusal_reason"],
+                         "The receipt the merchant signed for order ORD-1001 records this charge, 8283.85 INR "
+                         "(ed25519 key merchant-key-1); check it at https://shop.example/verify.")
+        for rfi_only in ("order_info", "seller_info", "delivery_info"):
+            self.assertNotIn(rfi_only, body)
+
+    def test_at_rfi_the_order_goes_field_by_field(self):
+        details = disputes.challenge_details(signed_receipt(), "RFI", store_url="https://shop.example/")
+        body = self.sent("RFI", details)
+        self.assertEqual(body["order_info"], {
+            "id": "ORD-1001", "created_at": "2026-11-02T10:00:00+00:00",
+            "products": [{"sku": "KIT-265-0", "code": "KIT-265-0", "type": "physical_good", "quantity": 1,
+                          "desc": "98.50 USD each; the order was charged in INR at 84.10 INR per USD",
+                          "url": "https://shop.example/p/KIT-265-0"}],
+            "total_amount": 8283.85, "total_currency": "INR"})
+        self.assertEqual(body["seller_info"], {"store_url": "https://shop.example"})
+        self.assertEqual(body["delivery_info"], {"shipping_method": "standard"})
+        for chargeback_only in ("product_type", "product_description", "refund_refusal_reason"):
+            self.assertNotIn(chargeback_only, body)
+        json.dumps(body, allow_nan=False)  # what the client sends: amounts are plain numbers
+
+    def test_a_unit_price_is_a_number_only_in_the_currency_charged(self):
+        same = signed_receipt(amount="98.50", currency="USD")
+        product = disputes.challenge_details(same, "RFI")["order_info"]["products"][0]
+        self.assertEqual(product["unit_price"], 98.5)
+        self.assertNotIn("desc", product)
+        other = disputes.challenge_details(signed_receipt(), "RFI")["order_info"]["products"][0]
+        self.assertNotIn("unit_price", other)  # 98.50 is USD; a bare number would read as INR
+
+    def test_without_a_host_there_is_no_link_and_no_seller(self):
+        details = disputes.challenge_details(signed_receipt(), "RFI")
+        self.assertNotIn("url", details["order_info"]["products"][0])
+        self.assertNotIn("seller_info", details)
+        reason = disputes.challenge_details(signed_receipt(), "CHARGEBACK")["refund_refusal_reason"]
+        self.assertNotIn("check it at", reason)
+
+    def test_details_cannot_replace_the_evidence_or_the_request(self):
+        body = self.sent("RFI", {"request_id": "x", "reason": "x", "challenge_method": "x",
+                                 "supporting_documents": {"documents": []}, "customer_info": {"name": "x"},
+                                 "seller_info": {"store_url": "https://shop.example"}})
+        self.assertEqual((body["request_id"], body["reason"], body["challenge_method"]),
+                         ("req-1", "OTHER_REASONS", "STANDARD"))
+        self.assertEqual(body["supporting_documents"]["documents"][0]["file_ids"], ["file_1"])
+        self.assertNotIn("customer_info", body)  # the merchant holds no customer details to send
+        self.assertEqual(body["seller_info"], {"store_url": "https://shop.example"})
+
+    def test_another_stage_gets_nothing_extra(self):
+        self.assertEqual(disputes.challenge_details(signed_receipt(), "PRE_ARBITRATION"), {})
+
+    def test_long_values_are_cut_to_airwallexs_limits(self):
+        signed = signed_receipt()
+        signed["body"]["items"] = [{"sku": "S" * 200, "quantity": 1, "unit_price": "1.00"}]
+        product = disputes.challenge_details(signed, "RFI", store_url="https://shop.example")["order_info"]["products"][0]
+        self.assertEqual(len(product["sku"]), disputes.MAX_SKU)
+        self.assertTrue(product["url"].endswith("/p/" + "S" * disputes.MAX_SKU))
+        signed["body"]["items"] = [{"sku": "S", "quantity": 1, "unit_price": "1.00"}] * 40
+        details = disputes.challenge_details(signed, "CHARGEBACK")
+        self.assertEqual(len(details["product_description"]), disputes.MAX_TEXT)
+
+    def test_an_odd_sku_cannot_change_the_link(self):
+        signed = signed_receipt()
+        signed["body"]["items"] = [{"sku": "../admin?x=1", "quantity": 1, "unit_price": "1.00"}]
+        product = disputes.challenge_details(signed, "RFI", store_url="https://shop.example")["order_info"]["products"][0]
+        self.assertEqual(product["url"], "https://shop.example/p/..%2Fadmin%3Fx%3D1")
+
+
 class EvidencePdfTest(unittest.TestCase):
     def test_the_pdf_is_well_formed_and_carries_the_receipt(self):
         signed = signed_receipt()
@@ -249,6 +337,28 @@ class DisputeDemoTest(unittest.TestCase):
         self.assertEqual(self.run_demo(signed_receipt(), "--stage", "RFI"), 0)
         self.assertEqual(self.api.posts[0][1]["stage"], "RFI")
         self.assertNotIn("product_type", self.api.posts[1][1])
+
+    def test_without_the_flag_the_challenge_is_the_one_that_won_live(self):
+        self.run_demo(signed_receipt(), "--base-url", "https://shop.example")
+        self.assertNotIn("refund_refusal_reason", self.api.posts[1][1])
+        self.assertTrue(self.lines[-2].endswith("bytes)"))
+
+    def test_structured_adds_the_chargeback_fields_and_says_which(self):
+        self.assertEqual(self.run_demo(signed_receipt(), "--structured", "--base-url", "https://shop.example/"), 0)
+        body = self.api.posts[1][1]
+        self.assertIn("ORD-1001", body["refund_refusal_reason"])
+        self.assertIn("check it at https://shop.example/verify", body["refund_refusal_reason"])
+        self.assertIn("charged 8283.85 INR", body["product_description"])
+        self.assertIn("plus product_description, refund_refusal_reason)", self.lines[-2])
+
+    def test_structured_at_rfi_sends_the_order(self):
+        self.assertEqual(self.run_demo(signed_receipt(), "--stage", "RFI", "--structured",
+                                       "--base-url", "https://shop.example"), 0)
+        body = self.api.posts[1][1]
+        self.assertEqual(body["order_info"]["id"], "ORD-1001")
+        self.assertEqual(body["order_info"]["products"][0]["url"], "https://shop.example/p/KIT-265-0")
+        self.assertNotIn("product_type", body)
+        self.assertIn("plus delivery_info, order_info, seller_info)", self.lines[-2])
 
     def test_a_dispute_not_decided_for_the_merchant_says_so(self):
         api = FakeAirwallex(decided="LOST")
