@@ -4,6 +4,8 @@
     /.well-known/countersign-merchant-key  the key that verifies the house merchant's receipts
     /approve/<id>, /pay/<id>               the shopper's page: passkey approval, card payment, receipt
     /verify                                anyone checks a receipt in their own browser
+    /receipts/<checkout id>                the signed receipt for a payment Airwallex's MCP made (W3); the
+                                           id (chk_ and 96 random bits) is the capability, as a session id is
     /console                               the merchant console (its API needs COUNTERSIGN_LEVER_TOKEN)
     /static/<script>                       those pages' scripts
     /api/checkout/...                      the shopper page's API (web.shopper)
@@ -21,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from . import console, shopper
 from .host import KEY_PATH
@@ -57,7 +59,8 @@ def router(house: Any) -> APIRouter:
                 "card_payments": hasattr(house.merchant, "confirm"),
                 "fallback_mcp": bool(house.mcp_token), "console": bool(house.lever_token),
                 "oauth": getattr(house, "oauth", None) is not None, "keep_awake": bool(getattr(house, "keep_awake", False)),
-                "jwks_fetches": list(house.oauth.jwks_fetches) if getattr(house, "oauth", None) else []}
+                "jwks_fetches": list(house.oauth.jwks_fetches) if getattr(house, "oauth", None) else [],
+                "mcp_payments": getattr(house, "settler", None) is not None}
 
     @r.get(KEY_PATH)
     def merchant_key() -> dict[str, str]:
@@ -75,6 +78,14 @@ def router(house: Any) -> APIRouter:
     def verify_page() -> FileResponse:
         """Anyone with a receipt (the shopper, their bank, a dispute team) checks it in their own browser."""
         return FileResponse(STATIC / "verify.html", headers=PLAIN_PAGE_HEADERS)
+
+    @r.get("/receipts/{checkout_id}")
+    def mcp_receipt(checkout_id: str) -> Any:
+        """The receipt the merchant signed when a payment Airwallex's MCP made matched its quote (W3)."""
+        found = house.store.get(checkout_id) if checkout_id.startswith("chk_") else None
+        if found is None:
+            raise HTTPException(404, "no signed receipt for this checkout")
+        return JSONResponse(found, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
     @r.get("/console")
     def console_page() -> FileResponse:
