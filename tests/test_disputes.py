@@ -239,14 +239,16 @@ class DisputeDemoTest(unittest.TestCase):
         self.assertEqual(len(self.files.requests), 1)
         self.assertIn(b"%PDF-1.4", self.files.requests[0].data)
         text = "\n".join(self.lines)
-        for expected in ("dst_1  RFI REQUIRES_RESPONSE", "VERIFIED", "within the approved 8400.00",
-                         "RFI CHALLENGED", "RFI WON"):
+        for expected in ("dst_1  CHARGEBACK REQUIRES_RESPONSE", "VERIFIED", "within the approved 8400.00",
+                         "CHARGEBACK CHALLENGED", "CHARGEBACK WON"):
             self.assertIn(expected, text)
-
-    def test_the_stage_can_be_chargeback(self):
-        self.assertEqual(self.run_demo(signed_receipt(), "--stage", "CHARGEBACK"), 0)
-        self.assertEqual(self.api.posts[0][1]["stage"], "CHARGEBACK")
+        self.assertEqual(self.api.posts[0][1]["stage"], "CHARGEBACK")  # the sandbox decides only from here
         self.assertEqual(self.api.posts[1][1]["product_type"], "PHYSICAL_GOODS")
+
+    def test_the_stage_can_be_rfi(self):
+        self.assertEqual(self.run_demo(signed_receipt(), "--stage", "RFI"), 0)
+        self.assertEqual(self.api.posts[0][1]["stage"], "RFI")
+        self.assertNotIn("product_type", self.api.posts[1][1])
 
     def test_a_dispute_not_decided_for_the_merchant_says_so(self):
         api = FakeAirwallex(decided="LOST")
