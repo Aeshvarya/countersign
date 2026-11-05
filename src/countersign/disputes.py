@@ -16,6 +16,10 @@ The builder guide's dispute kit opens a case the merchant will challenge at `RFI
 `CHARGEBACK` the challenge also needs a product type. Visa takes evidence as PDF, TIFF or
 JPEG (a PDF at most 2 MB), not PNG, so the receipt goes in as a PDF written here with the
 standard library: the signed JSON and what `receipt.verify` found in it.
+
+`challenge_details` can also put the signed order into the challenge's own fields, so the
+dispute record carries it field by field and not only inside the PDF. Which fields apply
+depends on the stage (Airwallex's challenge reference, read 2026-11-06).
 """
 
 from __future__ import annotations
@@ -23,10 +27,12 @@ from __future__ import annotations
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from .airwallex import AirwallexError
@@ -109,9 +115,17 @@ def upload_file(client: Any, data: bytes, filename: str, notes: str = "", conten
         raise AirwallexError(err.code, body) from None
 
 
+DETAIL_FIELDS = frozenset({"order_info", "seller_info", "delivery_info", "product_description",
+                           "refund_refusal_reason"})  # all challenge_details may set; never the evidence or the ids
+
+
 def challenge(client: Any, dispute: Dispute, file_id: str, *, description: str, product_description: str,
-              request_id: str) -> Dispute:
-    """The merchant's answer: the receipt as the primary document, through the standard flow."""
+              request_id: str, details: dict[str, Any] | None = None) -> Dispute:
+    """The merchant's answer: the receipt as the primary document, through the standard flow.
+
+    `details` (from challenge_details) adds the order field by field; without it the body is
+    the one that won live on 2026-11-05.
+    """
     body: dict[str, Any] = {
         "request_id": request_id,
         "challenge_method": "STANDARD",
@@ -121,17 +135,19 @@ def challenge(client: Any, dispute: Dispute, file_id: str, *, description: str, 
     }
     if dispute.stage == "CHARGEBACK":  # required there, and only applicable there
         body.update(product_type="PHYSICAL_GOODS", product_description=product_description)
+    body.update({k: v for k, v in (details or {}).items() if k in DETAIL_FIELDS})
     return _dispute(client.post(f"/pa/payment_disputes/{dispute.id}/challenge", body))
 
 
 def submit_evidence(client: Any, dispute: Dispute, pdf: bytes, *, filename: str, description: str,
-                    product_description: str, opener: Callable[..., Any] = urllib.request.urlopen) -> Dispute:
+                    product_description: str, details: dict[str, Any] | None = None,
+                    opener: Callable[..., Any] = urllib.request.urlopen) -> Dispute:
     """Upload the receipt, then challenge the dispute with it."""
     if len(pdf) > MAX_PDF:
         raise ValueError(f"the evidence is {len(pdf)} bytes; Visa takes a PDF of at most {MAX_PDF}")
     file_id = upload_file(client, pdf, filename, notes=f"dispute {dispute.id}", opener=opener)
     return challenge(client, dispute, file_id, description=description,
-                     product_description=product_description, request_id=client.request_id())
+                     product_description=product_description, request_id=client.request_id(), details=details)
 
 
 def resolve_for_merchant(client: Any, dispute_id: str, comment: str | None = None) -> Dispute:
@@ -258,3 +274,74 @@ def evidence_description(signed: dict[str, Any], findings: tuple[str, ...]) -> s
 def product_description(signed: dict[str, Any]) -> str:
     items = signed["body"].get("items") or []
     return ", ".join(f"{i.get('quantity')} x {i.get('sku')}" for i in items) or "see the receipt"
+
+
+# The order, field by field ------------------------------------------------------------------
+
+MAX_SKU, MAX_DESC = 128, 500  # Airwallex's limits for a product's sku and desc
+MAX_TEXT = 500  # Airwallex states none for product_description or refund_refusal_reason; kept to desc's
+
+
+def _number(value: Any) -> float | None:
+    """An amount as the challenge takes it: a JSON number, in major units like the dispute's own."""
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return float(d) if d.is_finite() else None
+
+
+def challenge_details(signed: dict[str, Any], stage: str, *, store_url: str | None = None,
+                      verify_url: str | None = None) -> dict[str, Any]:
+    """The signed order, field by field, in the challenge sections Airwallex applies at this stage.
+
+    Only what the receipt signed, plus the store's own address. The merchant holds no name,
+    email or postal address for the shopper, so none is sent. At RFI: order_info, seller_info
+    and delivery_info. At CHARGEBACK, where those do not apply: what was sold and why no
+    refund is due. Any other stage: nothing. Not yet run against the sandbox (2026-11-06).
+    """
+    body = signed["body"]
+    charged = body.get("charged") or {}
+    amount, currency, merchant_currency = charged.get("amount"), charged.get("currency"), charged.get("merchant_currency")
+    items = [i for i in body.get("items") or [] if isinstance(i, dict)]
+    order = body.get("order_number")
+    store = store_url.rstrip("/") if store_url else None
+
+    if stage == "CHARGEBACK":
+        sold = "; ".join(f"{i.get('quantity')} x {i.get('sku')} at {i.get('unit_price')} {merchant_currency}"
+                         for i in items) or "see the receipt"
+        reason = (f"The receipt the merchant signed for order {order} records this charge, {amount} {currency} "
+                  f"({signed.get('alg')} key {signed.get('key_id')})")
+        if verify_url:
+            reason += f"; check it at {verify_url}"
+        return {"product_description": f"{sold}; order {order}, charged {amount} {currency}"[:MAX_TEXT],
+                "refund_refusal_reason": f"{reason}."[:MAX_TEXT]}
+    if stage != "RFI":
+        return {}
+
+    products = []
+    for item in items:
+        sku = str(item.get("sku") or "")[:MAX_SKU]
+        product: dict[str, Any] = {"sku": sku, "code": sku, "type": "physical_good"}
+        if isinstance(item.get("quantity"), int) and not isinstance(item.get("quantity"), bool):
+            product["quantity"] = item["quantity"]
+        unit_price = _number(item.get("unit_price"))
+        if currency == merchant_currency and unit_price is not None:
+            product["unit_price"] = unit_price
+        else:  # charged in another currency, and a product has no currency field: say it in words
+            desc = f"{item.get('unit_price')} {merchant_currency} each"
+            if charged.get("rate"):
+                desc += f"; the order was charged in {currency} at {charged['rate']} {currency} per {merchant_currency}"
+            product["desc"] = desc[:MAX_DESC]
+        if store and sku:
+            product["url"] = f"{store}/p/{urllib.parse.quote(sku, safe='')}"
+        products.append(product)
+    order_info: dict[str, Any] = {"id": order, "created_at": body.get("decided_at"), "products": products}
+    if _number(amount) is not None and currency:
+        order_info.update(total_amount=_number(amount), total_currency=currency)
+    details: dict[str, Any] = {"order_info": {k: v for k, v in order_info.items() if v is not None}}
+    if store:
+        details["seller_info"] = {"store_url": store}
+    if body.get("delivery"):
+        details["delivery_info"] = {"shipping_method": str(body["delivery"])}
+    return details
