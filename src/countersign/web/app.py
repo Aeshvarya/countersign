@@ -43,6 +43,9 @@ STATIC = Path(__file__).parent / "static"
 AGENT_DIRECTORY = "https://agents.countersign.dev"
 MERCHANT_HOST = "shop.countersign.dev"
 MAX_WORLDS = 200
+# The demo market: what one US dollar costs in each currency a visitor can pay in. The merchant prices
+# in USD, so any of these but USD itself shows a rate lock; INR stays for old links.
+DEMO_RATES = {"EUR": "0.92", "GBP": "0.78", "AUD": "1.52", "SGD": "1.34", "USD": "1", "INR": "84.10"}
 
 
 class Clock:
@@ -60,7 +63,7 @@ class World:
 
     def __init__(self, request: str, currency: str, model_name: str | None) -> None:
         self.clock = Clock()
-        self.fx = FakeFx("84.10" if currency == "INR" else "0.92")
+        self.fx = FakeFx(DEMO_RATES[currency])
         self.merchant = FakeMerchant(self.fx)
         self.agent_key = AgentKey(Ed25519PrivateKey.generate(), "agent-key-1", AGENT_DIRECTORY)
         self.merchant_key = Ed25519PrivateKey.generate()
@@ -136,7 +139,7 @@ def world(session_id: str) -> World:
 
 class Start(BaseModel):
     request: str
-    currency: str = "INR"
+    currency: str = "EUR"
     model: str | None = None
 
 
@@ -158,8 +161,8 @@ demo.include_router(public.router(HOUSE))
 
 @demo.post("/api/sessions")
 def start(body: Start) -> dict[str, Any]:
-    if body.currency not in ("INR", "EUR"):
-        raise HTTPException(400, "currency must be INR or EUR")
+    if body.currency not in DEMO_RATES:
+        raise HTTPException(400, f"currency must be one of {', '.join(DEMO_RATES)}")
     # COUNTERSIGN_MODEL=scripted on the host is a spend guard: a visitor's request cannot turn Claude on.
     configured = os.environ.get("COUNTERSIGN_MODEL", "").strip().lower()
     model = "scripted" if configured == "scripted" else (body.model or configured or None)

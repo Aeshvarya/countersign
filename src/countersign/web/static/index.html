@@ -198,7 +198,7 @@ kbd { font-family: var(--font-mono); font-size: 0.75rem; padding: 1px 6px; borde
 @media (max-width: 560px) { .ask-box { flex-wrap: wrap; padding: 6px; } .ask-box input { flex-basis: 100%; padding: 10px 12px; }
                             .ask-box .btn { width: 100%; } }
 .ask-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
-.seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--soft); }
+.seg { display: inline-flex; flex-wrap: wrap; padding: 3px; border-radius: 12px; background: var(--soft); }
 .seg button { border: 0; background: transparent; padding: 6px 14px; border-radius: 9px; font-weight: 650; cursor: pointer; font-size: var(--step--1); color: var(--ink-2); }
 .seg button[aria-pressed=true] { background: var(--panel); color: var(--ink); outline: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
 .seg-label { font-size: var(--step--1); color: var(--ink-3); font-weight: 600; margin-right: 6px; }
@@ -488,7 +488,7 @@ input:focus-visible { outline: none; }
         <form class="ask-form" id="ask">
           <label class="sr" for="request">What should your agent buy?</label>
           <div class="ask-box">
-            <input type="text" id="request" value="Buy me a mechanical keyboard under ₹12,000" autocomplete="off" spellcheck="false">
+            <input type="text" id="request" value="Buy me a mechanical keyboard under €130" autocomplete="off" spellcheck="false">
             <button class="btn primary" type="submit" id="go">
               Send my agent
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
@@ -500,21 +500,24 @@ input:focus-visible { outline: none; }
               <button type="button" class="chip" data-q="Buy me packing cubes for a trip">Packing cubes</button>
               <button type="button" class="chip" data-q="Buy me wireless earbuds">Wireless earbuds</button>
             </div>
-            <div><span class="seg-label">Pay in</span><span class="seg" role="group" aria-label="Your currency">
-              <button type="button" data-ccy="INR" aria-pressed="true">₹ INR</button>
-              <button type="button" data-ccy="EUR" aria-pressed="false">€ EUR</button>
+            <div><span class="seg-label">Pay in</span><span class="seg" role="group" aria-label="The currency you pay in">
+              <button type="button" data-ccy="EUR" aria-pressed="true">€ EUR</button>
+              <button type="button" data-ccy="GBP" aria-pressed="false">£ GBP</button>
+              <button type="button" data-ccy="AUD" aria-pressed="false">A$ AUD</button>
+              <button type="button" data-ccy="SGD" aria-pressed="false">S$ SGD</button>
+              <button type="button" data-ccy="USD" aria-pressed="false">$ USD</button>
             </span></div>
           </div>
-          <p class="fine">The shop sells 25 kinds of everyday things: keyboards, kettles, earbuds, desk lamps, yoga mats and more. Prices are in US dollars; you pay in your currency.</p>
+          <p class="fine">The shop sells 25 kinds of everyday things: keyboards, kettles, earbuds, desk lamps, yoga mats and more. The merchant prices in US dollars and you pay in your own currency, at a rate it locks for an hour. Pick USD and there's no exchange at all, so the rate buttons have nothing to move.</p>
         </form>
       </div>
 
       <div class="film" aria-hidden="true">
         <div class="film-head"><span>What happens next</span><span class="rec">live</span></div>
         <div class="film-row"><span class="who you">You</span><div class="film-card"><div class="t">You ask</div><div class="v">“Buy me wireless earbuds”</div></div></div>
-        <div class="film-row"><span class="who agent">AI</span><div class="film-card"><div class="t">Your agent finds, and asks you</div><div class="v">Wireless earbuds Lite · ₹7,568.16 · approve up to ₹7,720?</div></div></div>
-        <div class="film-row"><span class="who you">You</span><div class="film-card"><div class="t">You say yes, with a ceiling</div><div class="v">Approved up to ₹7,720.00</div></div></div>
-        <div class="film-row"><span class="who check">✓</span><div class="film-card go"><div class="t">The merchant countersigns</div><div class="v">Same terms, rate still locked · charged ₹7,568.16 · receipt signed</div></div></div>
+        <div class="film-row"><span class="who agent">AI</span><div class="film-card"><div class="t">Your agent finds, and asks you</div><div class="v">Wireless earbuds Lite · €82.79 ($89.99) · approve up to €85.00?</div></div></div>
+        <div class="film-row"><span class="who you">You</span><div class="film-card"><div class="t">You say yes, with a ceiling</div><div class="v">Approved up to €85.00</div></div></div>
+        <div class="film-row"><span class="who check">✓</span><div class="film-card go"><div class="t">The merchant countersigns</div><div class="v">Same terms, rate still locked · charged €82.79 · receipt signed</div></div></div>
       </div>
     </section>
 
@@ -671,7 +674,7 @@ input:focus-visible { outline: none; }
 <script>
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
-let currency = "INR", sid = null, state = null, poll = null, verified = {};
+let currency = "EUR", sid = null, state = null, poll = null, verified = {};
 let shown = { feed: 0, edge: 0, approvalKey: "", receiptsKey: "", decision: null };
 
 /* ---------------------------------------------------------------- theme: the device's, until you pick */
@@ -689,7 +692,7 @@ $("#themeBtn").onclick = () => {
 /* ---------------------------------------------------------------- helpers */
 const fmt = (amount, ccy) => {
   if (amount == null) return "—";
-  const locale = ccy === "INR" ? "en-IN" : ccy === "EUR" ? "de-DE" : "en-US";
+  const locale = ccy === "INR" ? "en-IN" : "en-US";
   return new Intl.NumberFormat(locale, { style: "currency", currency: ccy, maximumFractionDigits: 2 }).format(Number(amount));
 };
 const cap = (s) => { s = String(s ?? ""); return s.charAt(0).toUpperCase() + s.slice(1); };
@@ -735,17 +738,23 @@ $$("[data-explain]").forEach((b) => b.onclick = () => {
 });
 
 /* ---------------------------------------------------------------- first screen */
-$$(".seg button").forEach((b) => b.onclick = () => {
-  currency = b.dataset.ccy;
-  $$(".seg button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+// A keyboard budget in each currency, a little above its price there.
+const BUDGET = { EUR: "€130", GBP: "£110", AUD: "A$210", SGD: "S$190", USD: "$140" };
+function pickCurrency(code) {
+  if (!BUDGET[code]) return;
+  currency = code;
+  $$(".seg button").forEach((x) => x.setAttribute("aria-pressed", x.dataset.ccy === code));
   const req = $("#request");
-  req.value = req.value.replace(/under [₹€][\d,.]+/, currency === "INR" ? "under ₹12,000" : "under €130");
-});
+  req.value = req.value.replace(/under (?:[AS]?\$|[₹€£])[\d,.]+/, "under " + BUDGET[code]);
+}
+$$(".seg button").forEach((b) => b.onclick = () => pickCurrency(b.dataset.ccy));
+// Start in the visitor's own currency where we have it (en-GB, en-AU, en-SG); euros otherwise.
+pickCurrency({ GB: "GBP", AU: "AUD", SG: "SGD" }[(navigator.language || "").split("-")[1]] || "EUR");
 $$(".chip").forEach((c) => c.onclick = () => { $("#request").value = c.dataset.q; $("#request").focus(); });
 
 // A link like /?q=Buy+me+a+kettle&ccy=EUR starts the demo straight away.
 const params = new URLSearchParams(location.search);
-if (params.get("ccy") === "EUR") document.querySelector('.seg button[data-ccy="EUR"]').click();
+if (params.get("ccy")) pickCurrency(params.get("ccy").toUpperCase());
 if (params.get("s")) { sid = params.get("s"); showBoard(); startPolling(); }
 else if (params.get("q")) { $("#request").value = params.get("q"); setTimeout(() => $("#ask").requestSubmit(), 50); }
 
@@ -879,7 +888,7 @@ function renderApproval() {
     const o = p.offer;
     const lock = o.rate_locked_until ? countdown(o.rate_locked_until) : null;
     const items = o.items.map((i) => `${esc(i.title)}${i.quantity > 1 ? " × " + i.quantity : ""}`).join(", ");
-    const sym = ccy === "INR" ? "₹" : "€";
+    const sym = { EUR: "€", GBP: "£", AUD: "A$", SGD: "S$", USD: "$", INR: "₹" }[ccy] || ccy;
     parts.push(`<div class="card pending">
       <div class="label">Your agent wants to buy</div>
       <div class="item">${items}</div>
@@ -981,8 +990,12 @@ function renderEdge() {
 function renderLevers() {
   const open = !!state.pending && state.status !== "working";
   const finished = state.status === "done" || state.status === "error";
-  $$("[data-lever]").forEach((b) => { b.disabled = b.dataset.lever === "bot" ? state.status === "working" : !open; });
-  $("#leverNote").textContent = open ? "Press one, then approve, and watch what the merchant does."
+  const noRate = open && !state.pending.offer.rate;  // paying in the merchant's own currency: nothing to move
+  $$("[data-lever]").forEach((b) => {
+    b.disabled = b.dataset.lever === "bot" ? state.status === "working" : !open || (b.dataset.lever === "rate" && noRate);
+  });
+  $("#leverNote").textContent = noRate ? "You're paying in US dollars, the merchant's own currency, so there's no rate to move. The other buttons still work."
+    : open ? "Press one, then approve, and watch what the merchant does."
     : finished ? "This purchase is over. Start again to try another button." : "These wake up when an approval is waiting.";
 }
 
