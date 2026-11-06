@@ -272,6 +272,7 @@ class HostSettleTest(unittest.TestCase):
         served = self.client.get(f"/receipts/{q.checkout_id}")
         self.assertEqual(served.status_code, 200)
         self.assertTrue(receipt.verify(served.json(), self.house.signer.key.public_key(), q.approval).ok)
+        self.assertEqual(out["permalink_url"], f"https://shop.example/receipt/{q.checkout_id}")  # what the agent gets
         page = self.client.get(f"/receipt/{q.checkout_id}")
         self.assertEqual(page.status_code, 200)  # the shopper's page, which fetches and checks that receipt
         self.assertIn('id="save"', page.text)

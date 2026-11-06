@@ -50,7 +50,9 @@ Airwallex's create_checkout (guide of 2026-11-03, airwallexdev.com/agentic-comme
 is one signed POST that only prices: POST /acp/create_checkout takes the cart
 and a currency and answers line items with what is available, one SHIPPING
 method (standard and express), the totals in minor units without shipping, and
-a permalink. Every call is a fresh quote under a new checkout
+a permalink: the shopper's page for this order, /receipt/<checkout id>, where
+the signed receipt appears once the payment settles (Airwallex hands it to the
+agent as the completed session's order.permalink_url). Every call is a fresh quote under a new checkout
 id, priced from the live catalogue with a fresh rate lock, and kept as a
 QuoteRecord: Airwallex's MCP creates and charges the payment intent itself, so
 the payment webhook (C9) finds the quote an intent belongs to with quote_for().
@@ -71,7 +73,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
-from urllib.parse import quote as url_quote, urlsplit
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -901,7 +903,7 @@ class AcpApi:
             }]}
         out["totals"] = [{"type": "subtotal", "amount": total, "display_text": "Subtotal"},
                          {"type": "total", "amount": total, "display_text": "Total"}]
-        link = self._permalink(lines)
+        link = self._permalink(checkout_id, lines)
         if link is not None:
             out["permalink_url"] = link
         self.quotes.setdefault(checkout_id, []).append(QuoteRecord(
@@ -936,12 +938,12 @@ class AcpApi:
             out.append({**line, "available_quantity": n})
         return out, cart
 
-    def _permalink(self, lines: list[dict[str, Any]]) -> str | None:
-        """The first known product's page, until the shopper page has a checkout view for this path."""
-        sku = next((line["item_id"] for line in lines if line["item_id"] in self.merchant.catalog), None)
-        if sku is None or not self.config.public_url:
+    def _permalink(self, checkout_id: str, lines: list[dict[str, Any]]) -> str | None:
+        """The shopper's page for this order, where its signed receipt appears once paid. None if nothing
+        in the cart is ours to sell."""
+        if not self.config.public_url or not any(line["item_id"] in self.merchant.catalog for line in lines):
             return None
-        return f"{self.config.public_url.rstrip('/')}/p/{url_quote(sku, safe='')}"
+        return f"{self.config.public_url.rstrip('/')}/receipt/{checkout_id}"
 
     def cancel(self, session_id: str) -> tuple[int, dict[str, Any]]:
         s = self._session(session_id)
