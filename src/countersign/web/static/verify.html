@@ -210,6 +210,12 @@ textarea:focus, input[type=text]:focus { outline: 3px solid color-mix(in srgb, v
 .verdict { margin: 22px 0 0; padding: 16px 18px; border-radius: 16px; font-weight: 800; font-size: var(--step-1); display: flex; align-items: center; gap: 10px;
            animation: pop 460ms var(--ease) both; }
 .verdict:empty { display: none; }
+.paid { margin: 0 0 var(--space-4); padding: 16px 18px; border-radius: 16px; background: var(--soft); display: grid; gap: 4px; }
+.paid:empty { display: none; }
+.paid strong { font-size: var(--step-2); font-variant-numeric: tabular-nums; }
+.paid span { color: var(--ink-2); }
+details.raw { margin-top: var(--space-5); border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); padding-top: 14px; }
+details.raw summary { cursor: pointer; font-weight: 750; color: var(--ink-2); }
 .verdict.ok { background: var(--go-bg); color: var(--go); border: 1px solid color-mix(in srgb, var(--go) 45%, transparent); }
 .verdict.bad { background: var(--no-bg); color: var(--no); border: 1px solid color-mix(in srgb, var(--no) 45%, transparent); }
 .verdict.unknown { background: var(--ask-bg); color: var(--ask); border: 1px solid color-mix(in srgb, var(--ask) 45%, transparent); }
@@ -229,6 +235,7 @@ textarea:focus, input[type=text]:focus { outline: 3px solid color-mix(in srgb, v
       <li>Keep this merchant's key, or paste one you trust</li>
       <li>Press check and read each finding</li>
     </ol>
+    <div class="paid" id="paid" aria-live="polite"></div>
     <label for="receipt">Receipt (JSON)</label>
     <textarea id="receipt" spellcheck="false" placeholder='{"body": {...}, "key_id": "...", "alg": "ed25519", "signature": "..."}'></textarea>
     <p class="hint"><input type="file" id="file" accept="application/json,.json" class="file" aria-label="Open a receipt file"></p>
