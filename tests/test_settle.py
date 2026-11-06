@@ -293,6 +293,26 @@ class HostSettleTest(unittest.TestCase):
         self.assertEqual(self.client.post(WEBHOOK_PATH, content=raw, headers=headers).json(), {"ignored": True})
         self.assertEqual((self.airwallex.gets, self.airwallex.refunds), (0, []))
 
+    def test_a_success_event_ahead_of_airwallexs_record_is_retried(self):
+        # Attempt events no longer settle, so a 200 here would leave the payment unchecked for good.
+        api = self.house.edge.state.acp
+        sku = list(self.house.merchant.catalog)[0]
+        _, out = api.create_checkout({"line_items": [{"id": "line-1", "item_id": sku, "requested_quantity": 1}],
+                                      "currency": "EUR"})
+        q = api.quote_for(out["id"])
+        amount = format(from_minor(q.total_minor, "EUR"), "f")
+        created = q.created + timedelta(minutes=1)
+        self.airwallex.intents["int_slow"] = intent("int_slow", q.checkout_id, amount, currency="EUR",
+                                                    status="REQUIRES_CAPTURE", created=created)
+        self.assertEqual(self.event("int_slow").status_code, 503)
+        self.assertEqual(self.client.get(f"/receipts/{q.checkout_id}").status_code, 404)
+        self.airwallex.intents["int_slow"] = intent("int_slow", q.checkout_id, amount, currency="EUR", created=created)
+        self.assertEqual(self.event("int_slow").json()["status"], "paid")
+        checked = receipt.verify(self.client.get(f"/receipts/{q.checkout_id}").json(),
+                                 self.house.signer.key.public_key(), q.approval)
+        self.assertTrue(checked.ok)
+        self.assertIn("not above the price the merchant quoted", " ".join(checked.findings))
+
     def test_without_airwallex_keys_there_is_no_settler(self):
         house = house_from_env({"COUNTERSIGN_ACP_HMAC_SECRET": SECRET.decode()})
         self.assertIsNone(house.settler)

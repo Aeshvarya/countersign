@@ -239,7 +239,7 @@ textarea:focus, input[type=text]:focus { outline: 3px solid color-mix(in srgb, v
     <p class="verdict" id="verdict" role="status" aria-live="polite"></p>
     <ul class="checks" id="checks"></ul>
   </section>
-  <p class="note">Same checks as <code>python -m countersign verify-receipt</code>: the merchant's signature over the exact receipt, the charge within the shopper's approved ceiling in their currency, and the passkey signature over the approval when the receipt carries one.</p>
+  <p class="note">Same checks as <code>python -m countersign verify-receipt</code>: the merchant's signature over the exact receipt, the charge within the shopper's approved ceiling in their currency (for a payment made in Airwallex's checkout, within the price the merchant quoted), and the passkey signature over the approval when the receipt carries one.</p>
 </main>
 <script src="/static/receipt.js"></script>
 <script src="/static/verify.js"></script>

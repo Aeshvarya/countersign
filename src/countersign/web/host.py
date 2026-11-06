@@ -110,10 +110,14 @@ def signing_key_from(environ: Mapping[str, str]) -> Ed25519PrivateKey:
     return Ed25519PrivateKey.from_private_bytes(raw)
 
 
+# One table of offline rates, 1 USD = this much, shared by the demo page and the house (Varunika's review, 11-05).
+DEMO_RATES = {"EUR": "0.92", "GBP": "0.78", "AUD": "1.52", "SGD": "1.34", "USD": "1", "INR": "84.10"}
+
+
 class TableFx:
     """Offline rate locks per shopper currency, for the house before sandbox keys exist."""
 
-    RATES = {"INR": "84.10", "EUR": "0.92", "GBP": "0.79", "SGD": "1.30", "AUD": "1.52"}
+    RATES = {ccy: rate for ccy, rate in DEMO_RATES.items() if ccy != "USD"}
 
     def __init__(self) -> None:
         self.fakes = {ccy: FakeFx(rate) for ccy, rate in self.RATES.items()}
@@ -286,6 +290,11 @@ def webhook_app(house: House) -> FastAPI:
         except (AirwallexError, *UNREACHABLE) as err:
             log.warning("webhook for %s not settled yet: %s", intent_id, err)
             return JSONResponse({"error": "Airwallex could not be reached; retry"}, status_code=503)
+        if settled is not None and settled.status == "pending":
+            # The success event arrived before Airwallex's own record says SUCCEEDED. Attempt events no
+            # longer settle, so nothing else would retry it: a non-2xx makes Airwallex send it again.
+            log.warning("%s: success event, but the intent is not SUCCEEDED yet; asking Airwallex to retry", intent_id)
+            return JSONResponse({"error": "the intent is not SUCCEEDED yet; retry"}, status_code=503)
         if settled is not None:
             record_settlement(house, settled)
             return {"order_number": settled.checkout_id, "status": settled.status,

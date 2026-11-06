@@ -37,7 +37,7 @@ from ..edge import create_app as create_edge
 from ..fx import FakeFx
 from ..merchant import FakeMerchant
 from . import public
-from .host import Host, house_from_env
+from .host import DEMO_RATES, Host, house_from_env
 
 STATIC = Path(__file__).parent / "static"
 AGENT_DIRECTORY = "https://agents.countersign.dev"
@@ -45,7 +45,6 @@ MERCHANT_HOST = "shop.countersign.dev"
 MAX_WORLDS = 200
 # The demo market: what one US dollar costs in each currency a visitor can pay in. The merchant prices
 # in USD, so any of these but USD itself shows a rate lock; INR stays for old links.
-DEMO_RATES = {"EUR": "0.92", "GBP": "0.78", "AUD": "1.52", "SGD": "1.34", "USD": "1", "INR": "84.10"}
 
 
 class Clock:

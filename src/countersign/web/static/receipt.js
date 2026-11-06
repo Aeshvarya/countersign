@@ -159,7 +159,11 @@ window.CountersignReceipt = (function () {
       checks.push({ ok: false, text: "charged " + charged.amount + " above the approved ceiling " + approved.ceiling });
       return { ok: false, merchant, checks };
     }
-    checks.push({ ok: true, text: "charged " + charged.amount + " " + charged.currency + ", within the approved " + approved.ceiling });
+    // A receipt from Airwallex's MCP checkout (it carries the shipping chosen) has no shopper ceiling: what
+    // it was held to is the price the merchant quoted (Varunika's review, 11-05).
+    checks.push({ ok: true, text: body.fulfillment
+      ? "charged " + charged.amount + " " + charged.currency + ", not above the price the merchant quoted (" + approved.ceiling + ")"
+      : "charged " + charged.amount + " " + charged.currency + ", within the approved " + approved.ceiling });
     if (approved.shopper_assertion) {
       const result = await shopperSignature(approved.shopper_assertion, approved.hash, approved.expires_at);
       if (typeof result === "string") {
