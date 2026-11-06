@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -49,6 +50,7 @@ from .payments import SUCCEEDED
 log = logging.getLogger("countersign.settle")
 
 CHECKOUT_PREFIX = "chk_"  # every create_checkout id (edge/acp.py)
+PULL_EVERY = 5.0  # seconds between two lookups of one checkout's payments from the receipt page
 
 
 @dataclass(frozen=True)
@@ -138,7 +140,36 @@ class Settler:
         self.started = clock()  # quotes made before this are gone after a restart
         self.settled: dict[str, Settlement] = {}  # by intent id, once paid, refunded or unverified
         self.paid: dict[str, str] = {}  # checkout id -> the one intent that paid it
+        self._looked: dict[str, float] = {}  # checkout id -> when settle_checkout last asked Airwallex
         self._lock = threading.Lock()
+
+    def settle_checkout(self, checkout_id: str) -> list[Settlement]:
+        """Pull, not push: settle the payments Airwallex holds for one of our checkouts.
+
+        The webhook can be late, retried with backoff, or lost (one went to an instance a deploy was
+        replacing, 11-06), so the shopper's receipt page asks here while it waits. Airwallex lists
+        intents by merchant_order_id, which is our checkout id. Only a checkout this process priced is
+        looked up, at most once every PULL_EVERY seconds. Returns the settlements made by this call.
+        """
+        if self.store.get(checkout_id) is not None or self.quote_for(checkout_id) is None:
+            return []
+        now = time.monotonic()
+        with self._lock:
+            if now - self._looked.get(checkout_id, now - PULL_EVERY) < PULL_EVERY:
+                return []
+            self._looked[checkout_id] = now
+        found = self.client.get("/pa/payment_intents", {"merchant_order_id": checkout_id})
+        paid = sorted((i for i in found.get("items") or []
+                       if i.get("merchant_order_id") == checkout_id and i.get("status") == SUCCEEDED),
+                      key=lambda i: str(i.get("created_at")))
+        made = []
+        for item in paid:
+            if str(item["id"]) in self.settled:
+                continue
+            done = self.settle(str(item["id"]))
+            if done is not None and done.status != "pending":
+                made.append(done)
+        return made
 
     def settle(self, intent_id: str) -> Settlement | None:
         """Paid, refunded or pending, from Airwallex's own record. None if the intent is not an ACP checkout of ours."""
