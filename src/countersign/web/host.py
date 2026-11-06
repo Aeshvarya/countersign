@@ -211,7 +211,8 @@ def house_from_env(environ: Mapping[str, str], *, merchant: MerchantGateway | No
         raise ValueError("COUNTERSIGN_MCP_TOKEN, COUNTERSIGN_LEVER_TOKEN and the HMAC secret must all differ")
     edge = create_edge(merchant, directory, authority=authority, signer=signer, acp=acp, store=store, **extra)
     feed = Feed()
-    edge.add_middleware(FeedMiddleware, feed=feed)  # sees Airwallex's calls and our MCP's alike
+    edge.add_middleware(FeedMiddleware, feed=feed,  # sees Airwallex's calls and our MCP's alike
+                        quote_for=edge.state.acp.quote_for if acp is not None else None)
     sync = environ.get("COUNTERSIGN_SYNC_CATALOG", "").strip().lower() in ("1", "true", "yes")
     awake = environ.get("COUNTERSIGN_KEEP_AWAKE", "").strip().lower() in ("1", "true", "yes")
     if awake and not environ.get("COUNTERSIGN_PUBLIC_URL"):

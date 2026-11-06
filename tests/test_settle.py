@@ -338,6 +338,23 @@ class HostSettleTest(unittest.TestCase):
         self.assertEqual(self.client.get(f"/receipts/{q.checkout_id}").status_code, 200)
         self.assertEqual(self.airwallex.gets, gets)
 
+    def test_airwallexs_price_requests_are_on_the_console(self):
+        sku = list(self.house.merchant.catalog)[0]
+        raw = json.dumps({"line_items": [{"id": "line-1", "item_id": sku, "requested_quantity": 1}],
+                          "currency": "EUR"}).encode()
+        r = self.client.post("/acp/create_checkout", content=raw,
+                             headers={"content-type": "application/json", **hmac_auth.sign(raw, SECRET)})
+        self.assertEqual(r.status_code, 200, r.text)
+        line = self.house.feed._events[-1]
+        self.assertEqual((line["kind"], line["level"], line["title"]), ("acp", "info", "Airwallex asked for a price: quoted"))
+        q = self.house.edge.state.acp.quote_for(r.json()["id"])
+        self.assertIn(f"{from_minor(q.total_minor, 'EUR')} EUR", line["detail"])
+        self.assertTrue(line["detail"].startswith("1 item"))
+        bad = self.client.post("/acp/create_checkout", content=raw,
+                               headers={"content-type": "application/json", **hmac_auth.sign(raw, b"x" * 32)})
+        self.assertEqual(bad.status_code, 401)
+        self.assertEqual(self.house.feed._events[-1]["title"], "Refused a price request: bad platform signature")
+
     def test_the_receipt_page_looks_up_only_our_checkouts_and_not_too_often(self):
         self.assertEqual(self.client.get("/receipts/chk_0123456789abcdef01234567").status_code, 404)
         self.assertEqual(self.airwallex.gets, 0)  # no quote of ours: Airwallex is not asked

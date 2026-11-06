@@ -121,6 +121,23 @@ def summarize(method: str, path: str, status: int, body: Any, door: str) -> tupl
             return "passkey", "no", "Passkey signature refused", {**extra, "detail": message}
         return None
 
+    if path == acp_api.CREATE_CHECKOUT and method == "POST":  # Airwallex's MCP asking us for a price (W1)
+        if status == 401:
+            return "acp", "no", "Refused a price request: bad platform signature", {**extra, "detail": message}
+        if status >= 400:
+            return "acp", "no", f"Price request refused ({status})", {**extra, "detail": message}
+        lines = data.get("line_items") or []
+        n = sum(int(li.get("requested_quantity") or 0) for li in lines)
+        short = [str(li.get("item_id")) for li in lines
+                 if int(li.get("available_quantity") or 0) < int(li.get("requested_quantity") or 0)]
+        items = f"{n} item{'s' if n != 1 else ''}"
+        if short and len(short) == len(lines):
+            return "acp", "ask", "Airwallex asked for a price: out of stock", \
+                {**extra, "detail": f"{items}, none available ({', '.join(short)}); nothing to charge"}
+        detail = " · ".join(x for x in (items, _total(data), "quote held for the payment",
+                                         f"short: {', '.join(short)}" if short else "") if x)
+        return "acp", "info", "Airwallex asked for a price: quoted", {**extra, "detail": detail}
+
     if path == acp_api.PREFIX or path.startswith(acp_api.PREFIX + "/"):
         if status == 401:
             return "acp", "no", "Refused a checkout call: bad platform signature", {**extra, "detail": message}
@@ -169,9 +186,10 @@ def summarize(method: str, path: str, status: int, body: Any, door: str) -> tupl
 class FeedMiddleware:
     """ASGI middleware for the merchant's edge: one feed line per interesting response."""
 
-    def __init__(self, app: Any, feed: Feed) -> None:
+    def __init__(self, app: Any, feed: Feed, quote_for: Any = None) -> None:
         self.app = app
         self.feed = feed
+        self.quote_for = quote_for  # create_checkout answers carry no currency; the quote it kept does
 
     async def __call__(self, scope, receive, send) -> None:
         path = scope.get("path", "")
@@ -200,6 +218,10 @@ class FeedMiddleware:
                 body = json.loads(b"".join(parts)) if parts else None
             except ValueError:
                 body = None
+            if path == acp_api.CREATE_CHECKOUT and isinstance(body, dict) and self.quote_for and body.get("id"):
+                kept = self.quote_for(str(body["id"]))
+                if kept is not None:
+                    body = {**body, "currency": kept.currency}
             out = summarize(scope["method"], path, status, body, door)
             if out is not None:
                 kind, level, title, extra = out
