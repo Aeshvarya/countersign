@@ -54,7 +54,9 @@ async function check() {
   if (result.merchant === null) {
     verdict("This browser cannot check Ed25519 signatures. Use a current browser, or python -m countersign verify-receipt.", "unknown");
   } else if (result.ok) {
-    verdict("Valid: the merchant signed exactly this, and the charge stayed within what the shopper approved.", "ok");
+    verdict(receipt.body.fulfillment
+      ? "Valid: the merchant signed exactly this, and the charge is the price it quoted."
+      : "Valid: the merchant signed exactly this, and the charge stayed within what the shopper approved.", "ok");
   } else {
     verdict("Not valid: see the check that failed.", "bad");
   }
@@ -75,7 +77,41 @@ function save() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// The shopper's view of an order: what was paid first, the checks under it, the raw receipt folded away.
+function orderLayout() {
+  const raw = document.createElement("details");
+  raw.className = "raw";
+  const summary = document.createElement("summary");
+  summary.textContent = "The receipt itself, and the key it is checked against";
+  raw.append(summary);
+  for (const id of ["receipt", "file", "key", "key-hint"]) {
+    const el = $(id);
+    const block = el.closest("p") || el;
+    const label = document.querySelector('label[for="' + id + '"]');
+    if (label) raw.append(label);
+    raw.append(block);
+  }
+  $("checks").after(raw);
+  $("check").textContent = "Check it again";
+}
+
+function showPaid(body) {
+  const box = $("paid");
+  box.replaceChildren();
+  const total = document.createElement("strong");
+  const c = body.charged || {};
+  const ship = body.fulfillment;
+  const free = !ship || Number(ship.amount) === 0;
+  total.textContent = "Paid " + c.amount + " " + c.currency + (free ? "" : " + " + ship.amount + " " + ship.currency + " shipping");
+  const who = document.createElement("span");
+  who.textContent = "to " + body.merchant_id + (ship ? ", " + ship.option_id + " delivery" + (free ? " (free)" : "") : "")
+    + (c.merchant_currency && c.merchant_currency !== c.currency
+      ? " · priced at " + c.merchant_amount + " " + c.merchant_currency + ", rate locked by Airwallex" : "");
+  box.append(total, who);
+}
+
 async function loadOrder(id) {
+  orderLayout();
   $("title").textContent = "Your receipt";
   document.title = "Your receipt · Countersign";
   document.querySelector(".eyebrow").textContent = "Order " + id;
@@ -90,8 +126,10 @@ async function loadOrder(id) {
       r = null;
     }
     if (r && r.ok) {
-      $("receipt").value = JSON.stringify(await r.json(), null, 1);
+      const signed = await r.json();
+      $("receipt").value = JSON.stringify(signed, null, 1);
       $("save").hidden = false;
+      showPaid(signed.body || {});
       await check();
       return;
     }
