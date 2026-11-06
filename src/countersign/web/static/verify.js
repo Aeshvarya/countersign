@@ -60,7 +60,50 @@ async function check() {
   }
 }
 
+// /receipt/<checkout id>: the link the agent gives the shopper after paying through Airwallex's checkout.
+// The receipt is signed when Airwallex reports the payment, usually within seconds, so wait for it.
+const ORDER = /^\/receipt\/(chk_[0-9a-f]{8,64})$/.exec(location.pathname);
+
+function save() {
+  const blob = new Blob([$("receipt").value + "\n"], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "countersign-receipt-" + (ORDER ? ORDER[1] : "order") + ".json";
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function loadOrder(id) {
+  $("title").textContent = "Your receipt";
+  document.title = "Your receipt · Countersign";
+  document.querySelector(".eyebrow").textContent = "Order " + id;
+  document.querySelector(".sub").textContent = "The merchant signs this receipt when Airwallex confirms your payment. "
+    + "It is checked below, in this browser. Save it: it proves what you were charged, to you, your bank or a dispute team.";
+  document.querySelector(".how").hidden = true;
+  for (let tries = 0; tries < 40; tries++) {
+    let r;
+    try {
+      r = await fetch("/receipts/" + id, { cache: "no-store", credentials: "omit" });
+    } catch (e) {
+      r = null;
+    }
+    if (r && r.ok) {
+      $("receipt").value = JSON.stringify(await r.json(), null, 1);
+      $("save").hidden = false;
+      await check();
+      return;
+    }
+    verdict("Waiting for Airwallex to confirm the payment…", "unknown");
+    await new Promise((done) => setTimeout(done, 3000));
+  }
+  verdict("No signed receipt for this order yet. If you have just paid, reload in a minute. "
+    + "A payment that did not match the merchant's quote is refunded instead of receipted.", "unknown");
+}
+
 $("check").addEventListener("click", check);
+$("save").addEventListener("click", save);
 $("file").addEventListener("change", async (e) => {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
@@ -78,7 +121,9 @@ $("file").addEventListener("change", async (e) => {
     await loadKey();
   }
   const m = /(?:^|&)r=([A-Za-z0-9_-]+)/.exec(location.hash.slice(1));
-  if (m) {
+  if (ORDER) {
+    await loadOrder(ORDER[1]);
+  } else if (m) {
     try {
       $("receipt").value = JSON.stringify(JSON.parse(fromB64url(m[1])), null, 1);
       check();

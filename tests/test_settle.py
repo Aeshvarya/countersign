@@ -272,6 +272,9 @@ class HostSettleTest(unittest.TestCase):
         served = self.client.get(f"/receipts/{q.checkout_id}")
         self.assertEqual(served.status_code, 200)
         self.assertTrue(receipt.verify(served.json(), self.house.signer.key.public_key(), q.approval).ok)
+        page = self.client.get(f"/receipt/{q.checkout_id}")
+        self.assertEqual(page.status_code, 200)  # the shopper's page, which fetches and checks that receipt
+        self.assertIn('id="save"', page.text)
         self.assertEqual(self.client.get("/receipts/chk_unknown").status_code, 404)
         self.assertEqual(self.client.get("/receipts/k1").status_code, 404)  # only W3's receipts, by checkout id
         self.assertTrue(self.client.get("/healthz").json()["mcp_payments"])

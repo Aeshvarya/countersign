@@ -235,7 +235,7 @@ textarea:focus, input[type=text]:focus { outline: 3px solid color-mix(in srgb, v
     <label for="key">Merchant's public key (Ed25519, base64)</label>
     <input type="text" id="key" spellcheck="false" placeholder="Loaded from this merchant's /.well-known/countersign-merchant-key">
     <p class="hint" id="key-hint">Leave it as loaded to trust this site's published key, or paste the key the merchant gave you.</p>
-    <div class="actions"><button class="btn" id="check" type="button">Check the receipt</button></div>
+    <div class="actions"><button class="btn" id="check" type="button">Check the receipt</button><button class="btn ghost" id="save" type="button" hidden>Save the receipt</button></div>
     <p class="verdict" id="verdict" role="status" aria-live="polite"></p>
     <ul class="checks" id="checks"></ul>
   </section>
