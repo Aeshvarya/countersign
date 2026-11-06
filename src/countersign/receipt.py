@@ -127,7 +127,9 @@ def _check_body(body: dict[str, Any], findings: list[str], approval: Approval | 
         return Check(False, (*findings, "charged in a different currency than approved"))
     if Decimal(charged["amount"]) > Decimal(approved["ceiling"]):
         return Check(False, (*findings, f"charged {charged['amount']} above the approved ceiling {approved['ceiling']}"))
-    findings.append(f"charged {charged['amount']} {charged['currency']}, within the approved {approved['ceiling']}")
+    findings.append(f"charged {charged['amount']} {charged['currency']}, not above the price the merchant quoted "
+                    f"({approved['ceiling']})" if "fulfillment" in body else
+                    f"charged {charged['amount']} {charged['currency']}, within the approved {approved['ceiling']}")
 
     shopper = approved.get("shopper_assertion")
     if shopper is not None:
