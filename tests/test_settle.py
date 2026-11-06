@@ -55,6 +55,9 @@ class FakeAirwallex:
 
     def get(self, path, params=None):
         self.gets += 1
+        if path == "/pa/payment_intents":  # the list, filtered by merchant_order_id
+            items = [i for i in self.intents.values() if i["merchant_order_id"] == params["merchant_order_id"]]
+            return {"has_more": False, "items": copy.deepcopy(items)}
         return copy.deepcopy(self.intents[path.rsplit("/", 1)[-1]])
 
     def post(self, path, body=None, extra_headers=None):
@@ -315,6 +318,36 @@ class HostSettleTest(unittest.TestCase):
                                  self.house.signer.key.public_key(), q.approval)
         self.assertTrue(checked.ok)
         self.assertIn("not above the price the merchant quoted", " ".join(checked.findings))
+
+    def test_the_receipt_page_settles_a_payment_whose_webhook_never_came(self):
+        api = self.house.edge.state.acp
+        sku = list(self.house.merchant.catalog)[0]
+        _, out = api.create_checkout({"line_items": [{"id": "line-1", "item_id": sku, "requested_quantity": 1}],
+                                      "currency": "EUR"})
+        q = api.quote_for(out["id"])
+        amount = format(from_minor(q.total_minor, "EUR"), "f")
+        self.airwallex.intents["int_lost"] = intent("int_lost", q.checkout_id, amount, currency="EUR",
+                                                    created=q.created + timedelta(minutes=1))
+        served = self.client.get(f"/receipts/{q.checkout_id}")  # no webhook at all
+        self.assertEqual(served.status_code, 200)
+        self.assertTrue(receipt.verify(served.json(), self.house.signer.key.public_key(), q.approval).ok)
+        line = [e for e in self.house.feed._events if e["kind"] == "payment"][-1]
+        self.assertEqual((line["level"], line["order"]), ("go", q.checkout_id))
+        gets = self.airwallex.gets
+        self.assertEqual(self.event("int_lost").json()["status"], "paid")  # the late webhook changes nothing
+        self.assertEqual(self.client.get(f"/receipts/{q.checkout_id}").status_code, 200)
+        self.assertEqual(self.airwallex.gets, gets)
+
+    def test_the_receipt_page_looks_up_only_our_checkouts_and_not_too_often(self):
+        self.assertEqual(self.client.get("/receipts/chk_0123456789abcdef01234567").status_code, 404)
+        self.assertEqual(self.airwallex.gets, 0)  # no quote of ours: Airwallex is not asked
+        api = self.house.edge.state.acp
+        sku = list(self.house.merchant.catalog)[0]
+        _, out = api.create_checkout({"line_items": [{"id": "line-1", "item_id": sku, "requested_quantity": 1}],
+                                      "currency": "EUR"})
+        for _ in range(3):  # not paid yet; the page polls every 3 s
+            self.assertEqual(self.client.get(f"/receipts/{out['id']}").status_code, 404)
+        self.assertEqual(self.airwallex.gets, 1)
 
     def test_without_airwallex_keys_there_is_no_settler(self):
         house = house_from_env({"COUNTERSIGN_ACP_HMAC_SECRET": SECRET.decode()})

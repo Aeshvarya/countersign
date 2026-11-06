@@ -26,7 +26,10 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import console, shopper
-from .host import KEY_PATH
+from starlette.concurrency import run_in_threadpool
+
+from ..airwallex import UNREACHABLE, AirwallexError
+from .host import KEY_PATH, record_settlement
 
 STATIC = Path(__file__).parent / "static"
 AIRWALLEX = "https://*.airwallex.com"
@@ -86,9 +89,19 @@ def router(house: Any) -> APIRouter:
         return FileResponse(STATIC / "verify.html", headers=PLAIN_PAGE_HEADERS)
 
     @r.get("/receipts/{checkout_id}")
-    def mcp_receipt(checkout_id: str) -> Any:
-        """The receipt the merchant signed when a payment Airwallex's MCP made matched its quote (W3)."""
-        found = house.store.get(checkout_id) if checkout_id.startswith("chk_") else None
+    async def mcp_receipt(checkout_id: str) -> Any:
+        """The receipt the merchant signed when a payment Airwallex's MCP made matched its quote (W3).
+        Not signed yet: ask Airwallex for the checkout's payments now rather than wait for the webhook."""
+        if not checkout_id.startswith("chk_"):
+            raise HTTPException(404, "no signed receipt for this checkout")
+        found = house.store.get(checkout_id)
+        if found is None and house.settler is not None:
+            try:
+                for settled in await run_in_threadpool(house.settler.settle_checkout, checkout_id):
+                    record_settlement(house, settled)
+            except (AirwallexError, *UNREACHABLE):
+                pass  # the page asks again in a few seconds, and the webhook still comes
+            found = house.store.get(checkout_id)
         if found is None:
             raise HTTPException(404, "no signed receipt for this checkout")
         return JSONResponse(found, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
