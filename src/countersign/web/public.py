@@ -79,6 +79,12 @@ def router(house: Any) -> APIRouter:
         """Anyone with a receipt (the shopper, their bank, a dispute team) checks it in their own browser."""
         return FileResponse(STATIC / "verify.html", headers=PLAIN_PAGE_HEADERS)
 
+    @r.get("/receipt/{checkout_id}")
+    def order_page(checkout_id: str) -> FileResponse:
+        """The permalink Airwallex hands the agent for a paid order: /verify, which fetches this order's
+        signed receipt from /receipts/<checkout id>, waits for it while the payment settles, and checks it."""
+        return FileResponse(STATIC / "verify.html", headers=PLAIN_PAGE_HEADERS)
+
     @r.get("/receipts/{checkout_id}")
     def mcp_receipt(checkout_id: str) -> Any:
         """The receipt the merchant signed when a payment Airwallex's MCP made matched its quote (W3)."""
