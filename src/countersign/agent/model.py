@@ -25,7 +25,7 @@ class ClaudeModel:
         import anthropic
 
         self.client = anthropic.Anthropic()
-        self.model = model or os.environ.get("COUNTERSIGN_AGENT_MODEL") or "claude-opus-5"
+        self.model = model or os.environ.get("COUNTERSIGN_AGENT_MODEL") or "claude-opus-5-5"
         self.effort = effort
 
     def respond(self, system: str, tools: list[dict], messages: list[dict]) -> Any:
