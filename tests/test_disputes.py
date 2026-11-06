@@ -332,14 +332,23 @@ class DisputeDemoTest(unittest.TestCase):
             self.assertIn(expected, text)
         self.assertEqual(self.api.posts[0][1]["stage"], "CHARGEBACK")  # the sandbox decides only from here
         self.assertEqual(self.api.posts[1][1]["product_type"], "PHYSICAL_GOODS")
+        self.assertIn("ORD-1001", self.api.posts[1][1]["refund_refusal_reason"])  # the order by default (won live 11-06)
+        self.assertIn("plus product_description, refund_refusal_reason)", self.lines[-2])
+
+    def test_the_flag_still_works_and_changes_nothing(self):
+        self.run_demo(signed_receipt(), "--base-url", "https://shop.example")
+        default = self.api.posts[1][1]
+        self.api, self.lines = FakeAirwallex(), []
+        self.run_demo(signed_receipt(), "--structured", "--base-url", "https://shop.example")
+        self.assertEqual(self.api.posts[1][1], default)
 
     def test_the_stage_can_be_rfi(self):
         self.assertEqual(self.run_demo(signed_receipt(), "--stage", "RFI"), 0)
         self.assertEqual(self.api.posts[0][1]["stage"], "RFI")
         self.assertNotIn("product_type", self.api.posts[1][1])
 
-    def test_without_the_flag_the_challenge_is_the_one_that_won_live(self):
-        self.run_demo(signed_receipt(), "--base-url", "https://shop.example")
+    def test_no_structured_is_the_challenge_that_won_on_11_05(self):
+        self.run_demo(signed_receipt(), "--no-structured", "--base-url", "https://shop.example")
         self.assertNotIn("refund_refusal_reason", self.api.posts[1][1])
         self.assertTrue(self.lines[-2].endswith("bytes)"))
 
