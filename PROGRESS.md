@@ -13,7 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-11-06_
+_Updated 2026-11-07_
+
+- **2026-11-07 (Varunika): no code change.** Main `6099f07`, 649 tests. New submission gate from HackerEarth (Open questions): at least one webinar is mandatory for every participant. Still with Varunika: V7 and V9 by 11-09. Waiting on Aeshvarya: the permalink merge and its live check, the README fixes, the widget check.
 
 - **2026-11-06 evening (Varunika): both your review asks answered, two decisions, the 401 line.** Main `762511c`, 649 tests, eight Loadbearing probes clean, the settle restart check unchanged.
   - `aeshvarya/acp-receipt-permalink`: right, merges cleanly with main, 648 tests on the merge. **OK to merge; left for you, since it redeploys the host.** One live check before the video relies on the link: the 11-06 check was made with the product link, which is the same on every quote, so it could not show *which* quote's `permalink_url` Airwallex keeps. Every `create_checkout` call is a new `chk_` id, and an update re-quotes. On one purchase whose session was updated, check that the id in `order.permalink_url` is the intent's `merchant_order_id`. If Airwallex keeps the first quote's link, the page would wait on an id that was never paid.
@@ -119,6 +121,7 @@ _Updated 2026-11-06_
 
 ## Open questions
 
+- **Mandatory webinar** (2026-11-07, Varunika): HackerEarth's email of 2026-11-06 to registered participants says "attendance at at least one webinar session during the hackathon is mandatory for all participants". It is only in that email, not in Slack. The only session so far was Base44's, 2026-11-06 20:30 to 21:15 IST (#announcements). The next date is not announced, and a #help question (2026-11-06 22:41 IST) asking for another session or a recording is unanswered. Did either of us attend? If not, both attend the next one, since "all participants" may mean each person.
 - **A paid order whose webhook never came** (2026-11-06, Aeshvarya, live): `int_sgpvzc9hjhnwj737tpz` (`chk_c0a68a909cef4d869697b3da`, €83.37) is SUCCEEDED on Airwallex with no refund, but no receipt was ever signed. It was paid about a minute after a deploy went live, so the likely cause is that the webhook reached the instance Render was replacing (the logs need the Render dashboard). The receipt page's lookup on Airwallex (`2dfc8d6`) now covers this; this one order's quote went with the next deploy. Also seen twice today: the first MCP call after a deploy answers 401, and the second, a few seconds later, works (Airwallex refetching our JWKS). **For the run book (Varunika):** after a deploy, make one throwaway MCP call before filming.
 - **R5 on Airwallex's path, and claude.ai** (2026-11-05, Aeshvarya): `render_products` returns Airwallex's native checkout widget (`ui://widget/native-checkout.html`, MCP Apps). The widget has its own card form (number, expiry, CVC) and calls `create_delegate_payment_token` and `complete_checkout_session` itself, so the card goes into Airwallex's widget, not the chat: R5 holds when Claude shows the widget. Our scripted probes passed the test card to the token tool directly, which a real chat should never do; the video must show the widget. claude.ai on the web cannot use Airwallex's MCP: its connector check gets 404 from `mcp.sandbox.airwallex.com` from Anthropic's servers (it answers 401 with metadata from a Mac), and no request reached our OAuth server. Claude Desktop with `mcp-remote`, the guide's path, works. Open: whether Claude Desktop renders the widget, seen only by a person in the app.
 - ~~**U3 on the live sandbox: two findings for Varunika's `disputes.py` / `dispute_demo.py`**~~ **Both closed 2026-11-05 (Varunika):** (1) the User-Agent fix reviewed and merged (`7d3678f`); (2) CHARGEBACK is the default (`f144607`), RFI kept as `--stage RFI`. (2026-11-05, Aeshvarya, live): (1) the evidence upload got 403 from `files.sandbox.airwallex.com` (Cloudflare error 1010, Python's default User-Agent, as on the MCP host); fixed on `aeshvarya/dispute-upload-ua` (one header and a test) for your review. (2) At `RFI` the dispute opens and takes the challenge, but resolve answers 400 `validation_error` "Dispute transition is not supported"; at `--stage CHARGEBACK` the whole run reaches `WON`. Your call whether `CHARGEBACK` becomes the default. This also answers the U3 question above: the simulator opens a dispute on an intent Airwallex's MCP paid, it takes a PDF, and it can decide for the merchant from CHARGEBACK.
@@ -179,6 +182,9 @@ uv venv && uv pip install -e '.[dev]'
 ## Log
 
 Newest first.
+
+### 2026-11-07
+- **Mandatory webinar** (Varunika): HackerEarth's 11-06 email makes at least one webinar mandatory for every participant; in Open questions. No code change, main `6099f07`, 649 tests
 
 ### 2026-11-06
 - **Audit 2, her paths** (Varunika): all seven checks pass (secrets in full history, `.env`, AI names and trailers, strategy and personal words, no local session file tracked, routes and caps, clean-clone run); one item for Aeshvarya (a tool-named branch); re-run after V7
