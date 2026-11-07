@@ -178,7 +178,7 @@ class CreateCheckoutTest(unittest.TestCase):
             self.assertIs(type(row["amount"]), int)
         self.assertEqual(self.totals(out), {"subtotal": self.price({self.sku: 1}, "USD"),
                                             "total": self.price({self.sku: 1}, "USD")})
-        self.assertEqual(out["permalink_url"], f"{PUBLIC_URL}/p/{self.sku}")
+        self.assertEqual(out["permalink_url"], f"{PUBLIC_URL}/receipt/{out['id']}")  # where its receipt appears
 
     # -- pricing: the live catalogue, a fresh rate lock per call
 
@@ -229,7 +229,7 @@ class CreateCheckoutTest(unittest.TestCase):
         out = self.checkout(("sku_shirt", 1), (self.sku, 1))
         self.assertEqual([line["available_quantity"] for line in out["line_items"]], [0, 1])
         self.assertEqual(self.totals(out)["total"], self.price({self.sku: 1}, "INR"))
-        self.assertEqual(out["permalink_url"], f"{PUBLIC_URL}/p/{self.sku}")  # the first product we sell
+        self.assertEqual(out["permalink_url"], f"{PUBLIC_URL}/receipt/{out['id']}")  # one product we sell is enough
 
     # -- the quote record the payment webhook reads (W3)
 
@@ -424,7 +424,8 @@ class HostedTest(unittest.TestCase):
         r = client.post(CHECKOUT, content=raw,
                         headers={"content-type": "application/json", **hmac_auth.sign(raw, b"s" * 32)})
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["permalink_url"], f"https://countersign-demo.onrender.com/p/{sku}")
+        out = r.json()
+        self.assertEqual(out["permalink_url"], f"https://countersign-demo.onrender.com/receipt/{out['id']}")
 
 
 if __name__ == "__main__":
