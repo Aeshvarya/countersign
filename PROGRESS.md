@@ -15,7 +15,7 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 _Updated 2026-11-07_
 
-- **2026-11-07 (Varunika): no code change.** Main `6099f07`, 649 tests. New submission gate from HackerEarth (Open questions): at least one webinar is mandatory for every participant. Still with Varunika: V7 and V9 by 11-09. Waiting on Aeshvarya: the permalink merge and its live check, the README fixes, the widget check.
+- **2026-11-07 (Varunika): no code change.** Main `6099f07`, 649 tests. New submission gate from HackerEarth (Open questions): at least one webinar is mandatory for every participant. Still with Varunika: V7 and V9 by 11-09. `aeshvarya/acp-receipt-permalink` merged (`80be3ca`, Varunika's call, deployed). Waiting on Aeshvarya: its live check (Now, 11-06 evening), the README fixes, the widget check.
 
 - **2026-11-06 evening (Varunika): both your review asks answered, two decisions, the 401 line.** Main `762511c`, 649 tests, eight Loadbearing probes clean, the settle restart check unchanged.
   - `aeshvarya/acp-receipt-permalink`: right, merges cleanly with main, 648 tests on the merge. **OK to merge; left for you, since it redeploys the host.** One live check before the video relies on the link: the 11-06 check was made with the product link, which is the same on every quote, so it could not show *which* quote's `permalink_url` Airwallex keeps. Every `create_checkout` call is a new `chk_` id, and an update re-quotes. On one purchase whose session was updated, check that the id in `order.permalink_url` is the intent's `merchant_order_id`. If Airwallex keeps the first quote's link, the page would wait on an id that was never paid.
@@ -184,6 +184,7 @@ uv venv && uv pip install -e '.[dev]'
 Newest first.
 
 ### 2026-11-07
+- **Receipt link merged** (Varunika, `80be3ca`): `aeshvarya/acp-receipt-permalink`, CI green, 649 tests; the host redeployed with no live run in progress. Still open: the live check on an updated session
 - **Mandatory webinar** (Varunika): HackerEarth's 11-06 email makes at least one webinar mandatory for every participant; in Open questions. No code change, main `6099f07`, 649 tests
 
 ### 2026-11-06
