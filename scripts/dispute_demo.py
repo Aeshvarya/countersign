@@ -5,7 +5,7 @@
     python scripts/dispute_demo.py --receipt receipt.json --intent int_...   the intent, if you name it, must be the receipt's
     python scripts/dispute_demo.py --receipt receipt.json --merchant-key <base64>          offline key, no host
     python scripts/dispute_demo.py --receipt receipt.json --stage RFI                     opens earlier; the sandbox cannot decide it
-    python scripts/dispute_demo.py --receipt receipt.json --structured                    also the order field by field (not yet run live)
+    python scripts/dispute_demo.py --receipt receipt.json --no-structured                 the PDF alone, the body that won on 2026-11-05
 
 The receipt is the signed JSON the shopper page keeps (body, key_id, alg, signature).
 
@@ -17,9 +17,10 @@ The receipt is the signed JSON the shopper page keeps (body, key_id, alg, signat
    (COUNTERSIGN_PUBLIC_URL + /.well-known/countersign-merchant-key) or given with
    --merchant-key. If it does not verify, the script stops: the merchant has no answer, and
    the dispute stays open.
-3. The receipt goes up as a PDF and the dispute is challenged with it. With --structured
-   the challenge also carries the signed order in Airwallex's own fields for that stage
-   (disputes.challenge_details); the line names the fields it added.
+3. The receipt goes up as a PDF and the dispute is challenged with it. The challenge also
+   carries the signed order in Airwallex's own fields for that stage
+   (disputes.challenge_details), and the line names the fields it added; this won live
+   from CHARGEBACK on 2026-11-06. --no-structured sends the PDF alone.
 4. The bank decides for the merchant (simulation API).
 
 Prints the dispute id and its status after each step, and what receipt.verify found. Never
@@ -114,8 +115,8 @@ def main(argv: list[str] | None = None, *, environ: Mapping[str, str] | None = N
     parser.add_argument("--merchant-key", help="base64 of the merchant's Ed25519 public key, instead of the host's")
     parser.add_argument("--base-url", default=environ.get("COUNTERSIGN_PUBLIC_URL"), help="the host, for its key")
     parser.add_argument("--stage", choices=("RFI", "CHARGEBACK"), default="CHARGEBACK", help="where the dispute opens")
-    parser.add_argument("--structured", action="store_true",
-                        help="also send the signed order in the challenge's own fields (not yet run live)")
+    parser.add_argument("--structured", action=argparse.BooleanOptionalAction, default=True,
+                        help="also send the signed order in the challenge's own fields (default; won live 2026-11-06)")
     args = parser.parse_args(argv)
 
     with open(args.receipt) as fh:
