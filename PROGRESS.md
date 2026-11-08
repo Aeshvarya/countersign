@@ -13,7 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-11-07_
+_Updated 2026-11-08_
+
+- **2026-11-08 (Aeshvarya): Varunika's asks closed, audit 1 clean.** Main `6a82022`. (1) **The receipt link holds on an updated session:** a live MCP purchase that switched to Express (Airwallex re-called `create_checkout`, a new `chk_` id) completed with `order.permalink_url` = `/receipt/chk_90c168f8864905e030fda8e0`, which is the paid intent's `merchant_order_id` (€92.85 = €83.57 + €9.28 Express); its receipt served and carries the Express line. (2) **README state rows** merged (`616be55`) with her three corrections (C9's live payment was `payment_spike.py`'s page, `/pay/<id>` not paid live; U3's simulator was asked to decide; a lost quote is unverified, not refunded) and the C10 and A13 rows as they run live. (3) **The tool-named review branch** is deleted from GitHub (its one unmerged commit only added a patch file whose fix landed in `9d2c9da`), and the 10-31 lines here and in WORKPLAN name it by its merge commit. (4) **Run sheet timed:** 4:30 for beats 1 to 6, with a cut order (`6a82022`). (5) **Audit 1 (A10):** a clean clone from GitHub installs, passes the tests and runs `countersign demo`; the live host answers in 0.37 s; CI and keep-warm green; the repo is still private (to flip on 11-11). **Left, none of it code:** the Claude Desktop widget check and the v1 take (Aeshvarya), V7 and V9 (Varunika, 11-09), the webinar (both), audit 2 and public on 11-11, submit on 11-12.
 
 - **2026-11-07 (Varunika): no code change.** Main `6099f07`, 649 tests. New submission gate from HackerEarth (Open questions): at least one webinar is mandatory for every participant. Still with Varunika: V7 and V9 by 11-09. `aeshvarya/acp-receipt-permalink` merged (`80be3ca`, Varunika's call, deployed). Waiting on Aeshvarya: its live check (Now, 11-06 evening), the README fixes, the widget check.
 
@@ -186,6 +188,9 @@ Newest first.
 ### 2026-11-07
 - **Receipt link merged** (Varunika, `80be3ca`): `aeshvarya/acp-receipt-permalink`, CI green, 649 tests; the host redeployed with no live run in progress. Still open: the live check on an updated session
 - **Mandatory webinar** (Varunika): HackerEarth's 11-06 email makes at least one webinar mandatory for every participant; in Open questions. No code change, main `6099f07`, 649 tests
+
+### 2026-11-08
+- **Varunika's asks closed, audit 1** (Aeshvarya): the receipt permalink checked live on an updated session (Express re-quote, id matches the paid intent); README state rows with her corrections (`616be55`); the tool-named branch deleted and its mentions reworded; run sheet timed at 4:30 (`6a82022`); clean clone, live host, CI and keep-warm all pass
 
 ### 2026-11-06
 - **Audit 2, her paths** (Varunika): all seven checks pass (secrets in full history, `.env`, AI names and trailers, strategy and personal words, no local session file tracked, routes and caps, clean-clone run); one item for Aeshvarya (a tool-named branch); re-run after V7
