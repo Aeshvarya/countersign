@@ -1,89 +1,248 @@
-# Countersign
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
+    <img alt="Countersign: let an agent shop, pay only what you said yes to. Three phone screens: approve the exact terms, the price moved so the shopper is asked again, then paid with a signed receipt." src="docs/assets/hero-light.png" width="100%">
+  </picture>
+</p>
 
-A merchant checkout that countersigns a verified agent and the shopper's approved terms before any money moves.
+<h3 align="center">A merchant checkout that countersigns a verified agent and the shopper's approved terms before any money moves.</h3>
 
-<!-- Pitch, why it matters, prior art, team: owner's words go here (WORKPLAN V8). -->
+<p align="center">
+  <a href="https://github.com/Aeshvarya/countersign/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Aeshvarya/countersign/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="649 tests, offline" src="https://img.shields.io/badge/tests-649%20passing-117976">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-315cde">
+  <a href="LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/licence-Apache%202.0-485271"></a>
+  <a href="https://countersign-demo.onrender.com"><img alt="Live demo" src="https://img.shields.io/badge/demo-live-117976"></a>
+  <img alt="Visa Trusted Agent Protocol" src="https://img.shields.io/badge/Visa-Trusted%20Agent%20Protocol-1a1f71">
+  <img alt="Airwallex agentic commerce" src="https://img.shields.io/badge/Airwallex-agentic%20commerce-612fff">
+</p>
 
-## Status
+<p align="center">
+  <a href="https://countersign-demo.onrender.com"><b>Live demo</b></a> ·
+  <a href="#see-it-work"><b>See it work</b></a> ·
+  <a href="#how-it-works"><b>How it works</b></a> ·
+  <a href="#quickstart"><b>Quickstart</b></a> ·
+  <a href="#use-it-from-claude"><b>Use it from Claude</b></a> ·
+  <a href="#documentation"><b>Docs</b></a>
+</p>
 
-Build phase (2026-10-27 to 2026-11-13). The product runs offline end to end: approvals bound to the terms a shopper saw, the decision that charges or asks again, Visa Trusted Agent Protocol signing and verification, rate locks, and a 100-product synthetic merchant.
+<!-- Pitch, why it matters, prior art, team: owner's words go here (WORKPLAN V7). -->
 
-| Piece | State |
-|---|---|
-| Catalogue for Airwallex's merchant MCP, in Google Merchant Center format (C11) | done live (2026-11-04): all 100 products uploaded to Airwallex and searchable through its merchant MCP |
-| Public product pages and images the catalogue links to | done |
-| Airwallex's `create_checkout` (C10 amended, guide of 2026-11-03), `/acp/create_checkout` | done live (2026-11-04 onward, registered at onboarding and called by Airwallex's MCP on every purchase): every call prices the cart from the live catalogue with a fresh rate lock and keeps the quote for the payment webhook; a line we cannot fill comes back with `available_quantity` 0, never an error; one SHIPPING method, standard free and express 9.99 USD at the quote's rate; the total never includes shipping; `scripts/ac_onboard.py` registers it with our OAuth server and image domain |
-| Our ACP checkout sessions (`/acp/checkout_sessions`, C10), on ACP 2026-04-17, for our own MCP | done offline; the shopper's ceiling holds: a re-quote above it waits for a new ceiling or, with U1, the shopper's passkey on the new terms, and a currency change waits for a ceiling in the new currency; a currency it cannot price is refused with the reason, and an Airwallex outage is a 503 to retry, never reported as the shopper's currency; the shipping address is kept and returned (not yet in the receipt); a card order's receipt shows in the session once Airwallex confirms the payment; served on the public host for our fallback MCP |
-| Claude as the shopper's agent (A13) | done on our fallback MCP: `docs/RUNBOOK.md` (clean profile, the add commands, a purchase prompt and each exception, rehearsed five times); Airwallex's MCP in Claude Desktop through `mcp-remote`: connected and signed in with a passkey on our OAuth server (C14) on 2026-11-05, purchases run live through its tools since |
-| Real card payments through Airwallex (C9) | done live (2026-11-04) with `scripts/payment_spike.py`'s own Drop-in page (a real rate lock and a card payment, PAID AS APPROVED); on our door the shopper pays in Drop-in on `/pay/<id>` (built and tested offline, not yet paid live), paid only from Airwallex's own record; a refused card leaves the order open for another card and says what Airwallex reported, and cancel closes the payment |
-| Shopper passkey approval (U1, C13) | done: verifier, edge routes, the shopper page (`/approve/<id>`), and the signature in the receipt (C13), attached only on `/acp` after it checks, never taken from an agent on the TAP door. It proves a passkey for this site signed the exact terms, not whose passkey it is (Decisions 2026-10-31) |
-| Dispute ending (U3) | done live (2026-11-05, 2026-11-06): a chargeback on a payment made through Airwallex's MCP, answered with the signed receipt as a PDF (and with `--structured`, the order in the challenge's own fields), then the sandbox simulator asked to decide for the merchant (`resolve_for_merchant`): `PRE_ARBITRATION` `WON`. Real: the dispute on a real MCP payment, the receipt verifying, the evidence accepted |
-| Payments made in Airwallex's checkout (W3) | done live (2026-11-05): Airwallex's MCP creates and charges the payment itself; `settle.py` matches it to the quote our `create_checkout` gave (amount, currency, shipping option, before expiry), signs the receipt, or refunds it in full; a payment whose quote was lost in a restart is left unverified, never refunded. The webhook settles it, and the shopper's receipt page asks Airwallex directly if the webhook is late |
-| The shopper's receipt on Airwallex's path | done live (2026-11-06; the agent is handed the link as the order's `permalink_url`, checked live on an updated session 2026-11-08): `/receipt/<checkout id>` shows what was paid and checks the signed receipt in the browser, with a Save button |
-| Our OAuth server for Airwallex's MCP (C14) | done live (2026-11-04): Claude Desktop signs the shopper in with a passkey; ES256 tokens Airwallex checks against our JWKS |
-| Receipts anyone can check (C8) | done: the shopper page and `/verify` check the merchant's signature in the browser, no server asked |
-| Merchant console and levers (A15, V6) | done: `/console` shows every checkout call and the countersign's answer live; price, stock and delivery change on cue, and a reset puts the catalogue back for the next take; `scripts/change_event.py` does the same from a terminal |
-| Colours (V8) | one token file, light and dark, with the palette and a type, space, shape and motion scale (`edge/static/tokens.css`); the catalogue pages and product images use it; the web pages move onto it on `varunika/v8-apply-web` (in review); `scripts/contrast.py` checks every pair against WCAG AA (all pass) |
-| Deploy checks (A7, A10) | `scripts/smoke.py` checks every door of the deployed host; `scripts/audit.py` (also in CI) keeps credentials, real card numbers and dead links out of the public repo |
+<br>
+
+## What it does
+
+An AI agent buys something for a person. Countersign is the merchant's side of that purchase: before it charges, the merchant runs two checks, both in code.
+
+| Check | The question | How |
+|---|---|---|
+| 🪪 **Who is asking** | Is this a known agent, signing for this merchant and this page, right now, once? | [Visa Trusted Agent Protocol](src/countersign/tap.py): an Ed25519 signature bound to the merchant's host and the exact path, with a nonce and a validity window |
+| ✍️ **What was approved** | Is this exactly what the shopper said yes to, at or under the price they accepted, in their own currency? | [A hash of the terms](src/countersign/terms.py) the shopper saw, re-checked against the live offer and a fresh rate lock; with passkeys on, [signed by the shopper's passkey](src/countersign/edge/passkey.py) |
+
+Then exactly one outcome, from [one deterministic function](src/countersign/decide.py). No model output reaches it.
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🟢 Proceed
+Terms unchanged and the price in the shopper's currency at or under the ceiling. The merchant charges and **signs a receipt** anyone can check.
+
+</td>
+<td width="33%" valign="top">
+
+### 🟡 Ask again
+The price, items, quantity, delivery, merchant or currency changed, the approval expired, or the rate moved past the ceiling. **Nothing is charged**, and the agent shows the shopper the exact change.
+
+</td>
+<td width="33%" valign="top">
+
+### 🔴 Refuse
+Unsigned, replayed, tampered, inconsistent or on a stale rate lock. **Nothing is charged**, and the reason is logged.
+
+</td>
+</tr>
+</table>
+
+<br>
+
+## See it work
+
+<p align="center">
+  <img alt="Live on 2026-11-08: Claude Desktop shows Airwallex's checkout widget for the merchant's kettle, the card is entered in the widget, and the merchant signs a receipt for 96.99 USD that verifies in the browser." src="docs/assets/live-path.png" width="100%">
+</p>
+
+That run is real: Claude Desktop on Airwallex's merchant MCP, a sandbox card payment of $96.99, and the merchant's signed receipt checked in the browser. [Open that receipt](https://countersign-demo.onrender.com/receipt/chk_4403a50a7c9843e4c1e1e281) (the host keeps receipts in memory, so a later redeploy clears it).
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/home-dark.png">
+  <img alt="The demo's first screen: send an agent shopping and watch every step." src="docs/assets/home-light.png">
+</picture>
+<p align="center"><b>The demo</b>: send an agent shopping, then move the price, the rate or the stock and watch what the countersign does</p>
+</td>
+<td width="50%" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/console-dark.png">
+  <img alt="The merchant console: a live feed of every checkout call and the countersign's answer, the orders, and the levers." src="docs/assets/console-light.png">
+</picture>
+<p align="center"><b>The merchant console</b>: every checkout call and the countersign's answer, live, plus levers that change the catalogue on cue</p>
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/receipt-dark.png">
+  <img alt="The shopper's receipt page: paid 96.99 USD to Larch Lane, and each check passing in the browser." src="docs/assets/receipt-light.png">
+</picture>
+<p align="center"><b>The receipt</b>: what was paid, and every check run in the shopper's own browser. Save it and it still verifies offline, with no server asked</p>
+</td>
+</tr>
+</table>
+
+<br>
+
+## How it works
+
+On Airwallex's path, Airwallex hosts the merchant MCP and takes the payment. Countersign prices every request, keeps the quote, and checks the payment against it before it signs anything.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Shopper
+    participant Claude
+    participant MCP as Airwallex merchant MCP
+    participant CS as Countersign (merchant)
+    participant Pay as Airwallex payments
+
+    Shopper->>Claude: "Find the kettle, up to $100"
+    Claude->>MCP: render_products
+    MCP->>CS: create_checkout (HMAC-signed)
+    CS-->>MCP: live price, quote kept for the payment
+    MCP-->>Shopper: checkout widget in the chat
+    Shopper->>Pay: card, in the widget, never the chat
+    Pay->>CS: webhook: payment_intent.succeeded
+    CS->>Pay: fetch the payment from Airwallex itself
+    alt matches the quote: amount, currency, shipping, before expiry
+        CS-->>Shopper: signed receipt at /receipt/chk_…
+    else amount, currency or shipping differ
+        CS->>Pay: full refund, with the reason
+    end
+```
+
+On the merchant's own door, an agent signs every request with TAP, and the merchant runs the decision before it charges:
+
+1. **The agent proves who it is.** Every request carries a Visa Trusted Agent Protocol signature (Ed25519, bound to the merchant's host and the exact path, with a nonce and a validity window). The merchant's edge refuses unsigned, expired, replayed or misdirected requests before anything else runs. [`tap.py`](src/countersign/tap.py)
+2. **The shopper approves exact terms.** Merchant, items, delivery, totals and a ceiling in the shopper's own currency, hashed. [`terms.py`](src/countersign/terms.py)
+3. **The merchant countersigns before it charges.** It rebuilds the live offer with a fresh rate lock and runs one deterministic function: proceed, ask again, or refuse. [`decide.py`](src/countersign/decide.py), [`checkout.py`](src/countersign/checkout.py)
+4. **The charge happens in the shopper's currency at the locked rate**, through Airwallex Multi-Currency Pricing, and returns the merchant's order number. [`fx.py`](src/countersign/fx.py), [`merchant.py`](src/countersign/merchant.py)
+5. **The merchant signs a receipt** binding the agent's identity, the approval's hash and ceiling, the charge and the order number. Anyone with the merchant's public key can check it later, offline. [`receipt.py`](src/countersign/receipt.py)
+
+```mermaid
+flowchart LR
+    A[Agent request] --> T{TAP signature valid?<br/>host, path, nonce, window}
+    T -- no --> R[🔴 Refuse<br/>nothing charged]
+    T -- yes --> L[Rebuild the live offer<br/>fresh rate lock]
+    L --> D{Same terms as approved?<br/>at or under the ceiling?}
+    D -- yes --> P[🟢 Charge, sign the receipt]
+    D -- changed --> Q[🟡 Ask the shopper again<br/>nothing charged]
+    D -- broken --> R
+```
+
+<br>
 
 ## Quickstart
 
+Offline, no keys, in under a minute:
+
 ```bash
 uv venv && uv pip install -e '.[dev]'
-.venv/bin/python -m countersign demo                    # the contrast pairs and a dispute, offline, no keys
+.venv/bin/python -m countersign demo                    # the contrast pairs and a dispute, offline
 .venv/bin/uvicorn countersign.web.app:app --port 8000   # the demo app: http://127.0.0.1:8000
-.venv/bin/python -m unittest discover -s tests          # tests, offline
+.venv/bin/python -m unittest discover -s tests          # 649 tests, offline
 ```
 
 The app uses Claude when `ANTHROPIC_API_KEY` is set, and a scripted stand-in otherwise (`COUNTERSIGN_MODEL=scripted` forces it). Open `/?q=Buy+me+a+kettle` to start straight away, or `/?s=<session id>` to watch a running session from a second screen.
 
-Against the Airwallex sandbox (copy `.env.example` to `.env` and fill it in):
+Check any receipt, offline:
 
 ```bash
-set -a; . ./.env; set +a
-.venv/bin/python -m countersign fx --merchant USD --shopper INR   # lock a real rate
-.venv/bin/python scripts/payment_spike.py --shopper INR          # rate lock + payment with the sandbox test card, checked end to end
-.venv/bin/python scripts/upload_catalog.py --dry-run             # build and check the 100 catalogue rows, call nothing
-.venv/bin/python scripts/upload_catalog.py --base-url https://<public host>   # upsert them to Airwallex
-.venv/bin/python scripts/ac_onboard.py                          # is Kit 10 onboarding on this account, are we onboarded
-.venv/bin/python scripts/ac_onboard.py --check-host --base-url https://<public host>   # does the host serve /acp/create_checkout, /p and the OAuth server
-.venv/bin/python scripts/ac_onboard.py --onboard --base-url https://<public host>      # onboard once (add --dry-run to see the body, secrets hidden)
-.venv/bin/python scripts/ac_onboard.py --update --base-url https://<public host>       # change create_checkout, secret and OAuth together (config/update)
-.venv/bin/python scripts/smoke.py --base-url https://<public host>       # every door of the deployed host (more with each secret in .env)
-.venv/bin/python scripts/smoke.py --base-url https://<public host> --buy # one purchase end to end: you approve and pay, it checks the receipt
-.venv/bin/python scripts/change_event.py --base-url https://<public host> --sku <sku> --percent 12   # the price moves on cue (also --price, --stock, --delivery)
-.venv/bin/python scripts/change_event.py --base-url https://<public host> --reset                    # every moved product back as uploaded
-.venv/bin/python scripts/dispute_demo.py --receipt countersign-receipt-<order>.json                   # a sandbox dispute on that payment, answered with the receipt
-eval "$(.venv/bin/python scripts/mcp_token.py)"                          # an Airwallex login token into the shell, never on screen (not used on the Claude Desktop path)
-.venv/bin/python scripts/contrast.py                                     # WCAG AA contrast of every colour pair, light and dark (--strict exits 1)
-.venv/bin/python scripts/audit.py                                        # before the repo goes public: credentials, .env, card numbers, links
+KEY=$(curl -s https://countersign-demo.onrender.com/.well-known/countersign-merchant-key | python3 -c 'import json,sys; print(json.load(sys.stdin)["public_key"])')
+.venv/bin/python -m countersign verify-receipt countersign-receipt-<order>.json --merchant-key "$KEY"
 ```
 
-The upload sends whole products per call (an upsert replaces a product with all its variants) and never uses the file-ingest replace mode. It exits 1 if any row failed. `COUNTERSIGN_PUBLIC_URL` can stand in for `--base-url`; that host must serve the edge's `/p/<sku>` and `/img/<sku>.svg`.
+Against the Airwallex sandbox (real rate locks, card payments, the catalogue upload, onboarding, disputes) and deploying the public host: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
-The checkout API Airwallex calls (`create_checkout` = `https://<host>/acp/create_checkout`) and our own ACP sessions (`/acp/checkout_sessions`, what our MCP calls) are mounted when the edge is built with `acp=AcpConfig.from_env(os.environ)`; set `COUNTERSIGN_ACP_HMAC_SECRET` (the secret given to Airwallex at onboarding). Without it the routes do not exist. `COUNTERSIGN_ACP_OBSERVE=1` logs the header names and body keys of a refused call, never values, to learn an unpublished contract from the first call.
+<br>
 
-With `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1` (it needs `COUNTERSIGN_PUBLIC_URL`, whose origin and host name the passkey is checked against) a session waits for the shopper: `not_ready_for_payment`, an `approval_required` message and an `approval` link to `/approve/<id>`. The approval page calls `GET /acp/approvals/<id>` (the terms to show, plus `webauthn.challenge`, `rp_id` and `origin`) and `POST /acp/approvals/<id>` with `credential_id`, `public_key_spki_der` (from `getPublicKey()` at registration), `authenticator_data`, `client_data_json` and `signature` from `navigator.credentials.get()`, all base64url. These two routes take no HMAC: the caller is the shopper's browser. The challenge covers the terms, the session and the approval's expiry, and any requote clears the signature.
+## Use it from Claude
 
-**The shopper's page** (`/approve/<id>`, the same page at `/pay/<id>`, `web/static/shopper.html`) takes the shopper from the agent's request to the receipt: it shows the exact terms and signs them with a passkey (a device's first approval creates one; the page keeps its credential id and public key, and signs the server's challenge bytes, never the terms hash, refetching the challenge first so it never signs terms the shopper has not seen), waits for the agent to complete, mounts Airwallex's Drop-in when the order is a card payment (`GET /api/checkout/<id>` hands it the intent's client secret and the locked quote; the card never touches this service), asks the merchant to check the payment with Airwallex after Drop-in's success (`POST /api/checkout/<id>/confirm`, throttled; the webhook settles it too), and shows the signed receipt with every check run in the browser. The order's `permalink_url` points here, and our MCP gives the agent this link as `pay_url` while a payment is open. `/verify` checks any receipt the same way, in the browser that opens it (a `#r=` link carries the receipt in the fragment, which never reaches a server).
+Add Airwallex's merchant MCP to Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
-**The merchant console** (`/console#t=<COUNTERSIGN_LEVER_TOKEN>`; the token moves to the tab and leaves the address bar at once) shows each checkout call as it lands, from Airwallex, our MCP, TAP-signed agents and shoppers' passkeys, with the countersign's answer, plus checkouts, orders and receipts. Its levers raise a price, empty the stock or slow the delivery of the product in the latest checkout; a script calls the same functions at `POST /api/levers/price|stock|delivery|reset` with the same bearer token (`web/levers.py`, `scripts/change_event.py`: exit 1 if the host changed but Airwallex's catalogue did not). With `COUNTERSIGN_SYNC_CATALOG=1` a lever also upserts the product, all its variants in one call, to Airwallex's catalogue. The feed reads response status and our own response JSON, never a request body. The host serves that page at `/approve/<id>` (`web/static/approve.html`): it creates a passkey on a device's first approval, keeps its credential id and public key in the browser, and signs the server's challenge bytes, never the terms hash.
+```json
+{
+  "mcpServers": {
+    "agentic-commerce": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote@0.16.0", "https://mcp.sandbox.airwallex.com/pa/ai/<merchantId>/acp/mcp"]
+    }
+  }
+}
+```
 
-The probe is read-only and asks both config paths (`/pa/agentic_commerce/config`, documented, and `/agentic-commerce/config`, where another team saw a 401 with a scoped key): a 401 on either means the key needs full access, not that onboarding is missing. Onboarding happens once: Airwallex ignores a second `POST /onboard`. `ac_onboard.py --onboard` first checks that the host answers an unsigned call from the `/acp` door (not the TAP door, not a 404) and sends nothing if it does not. It reads the PSP key from `AIRWALLEX_PSP_CLIENT_ID` and `AIRWALLEX_PSP_API_KEY`, or the login key if those are empty. It exits 1 when something is not ready, 2 when Airwallex refuses.
+Restart Claude Desktop, sign in with a passkey on the merchant's page, and ask in a new chat:
 
-Deploy: Render → New → Blueprint → this repository (`render.yaml`). The one service is the whole public host (`src/countersign/web/host.py`): the demo page, plus one long-lived merchant behind the real edge that serves `/acp/create_checkout` (Airwallex's `create_checkout`), `/acp/checkout_sessions` (our MCP's ACP door), `/p/<sku>` and `/img/<sku>.svg` (the catalogue links), the TAP door (`/products`, `/offers`, `/checkout`, `/orders/<key>`) and `/.well-known/countersign-merchant-key` (the key that verifies its receipts). Set in the dashboard: `COUNTERSIGN_PUBLIC_URL` (the service's https URL, also the TAP authority), `COUNTERSIGN_ACP_HMAC_SECRET`, `COUNTERSIGN_MERCHANT_SIGNING_KEY` (the private line of `python -m countersign keygen`, so receipts verify across restarts) and the Airwallex keys (real rate locks). `COUNTERSIGN_MERCHANT=airwallex` makes the house merchant take real card payments (intent, Drop-in, then `/webhooks/airwallex` settles it under `AIRWALLEX_WEBHOOK_SECRET` and only then signs the receipt); the default pays instantly, offline. `COUNTERSIGN_MCP_TOKEN` also serves our own merchant MCP at `/acp/mcp` (`web/merchant_mcp.py`): the fallback for when Airwallex's merchant MCP is not available, which calls `/acp` with the HMAC secret exactly as Airwallex does. Connect it with `claude mcp add --transport http countersign <url>/acp/mcp --header "Authorization: Bearer <token>"`. `COUNTERSIGN_LEVER_TOKEN` (32+ characters, different from the MCP token and the HMAC secret) turns on the merchant console and the lever route. `/healthz` says what is switched on. After a deploy, run `scripts/smoke.py --base-url <url>` and keep an uptime monitor on `/healthz` every 5 minutes: the house keeps checkout sessions in memory, so a sleep forgets them. Set `ANTHROPIC_API_KEY` to run Claude as the demo agent.
+```text
+I'm shopping from the US. Using the merchant, find the Pour-over kettle Lite and price one, with a ceiling of $100. Show me the options. Show me the total and wait for my yes before paying. Keep replies short.
+```
 
-## How it works
+Every step, each exception, and our own fallback MCP for Claude Code are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
-1. **The agent proves who it is.** Every request to the merchant carries a Visa Trusted Agent Protocol signature (Ed25519, bound to the merchant's host and the exact path, with a nonce and a validity window). The merchant's edge refuses unsigned, expired, replayed or misdirected requests before anything else runs. `src/countersign/tap.py`
-2. **The shopper approves exact terms.** Merchant, items, delivery, totals and a ceiling in the shopper's own currency, hashed. `src/countersign/terms.py`
-3. **The merchant countersigns before it charges.** It rebuilds the live offer with a fresh rate lock and runs one deterministic function: proceed, ask again, or refuse. No model output reaches it. `src/countersign/decide.py`, `src/countersign/checkout.py`
-4. **The charge happens in the shopper's currency at the locked rate**, through Airwallex Multi-Currency Pricing, and returns the merchant's order number. `src/countersign/fx.py`, `src/countersign/merchant.py`
-5. **The merchant signs a receipt** binding the agent's identity, the approval's hash and ceiling, the charge and the order number. Anyone with the merchant's public key can check it later, offline: `python -m countersign verify-receipt`. `src/countersign/receipt.py`
+<br>
 
-TAP interop with Visa's reference implementation is checked in both directions by `scripts/tap_interop.py`.
+## What's live
 
-## Layout
+| | Piece | Proven |
+|---|---|---|
+| ✅ | **Airwallex's `create_checkout`**: every call prices the cart from the live catalogue with a fresh rate lock, and keeps the quote for the payment | live since 2026-11-04 |
+| ✅ | **Payments made in Airwallex's checkout** checked against that quote: a signed receipt, or a full refund if it does not match | live since 2026-11-05 |
+| ✅ | **Claude Desktop on Airwallex's merchant MCP**: passkey sign-in on our OAuth server, the checkout widget, the card kept out of the chat | live 2026-11-05 and 2026-11-08 |
+| ✅ | **The shopper's receipt page**, handed to the agent as the order's link, settling from Airwallex directly if a webhook is late | live since 2026-11-06 |
+| ✅ | **Disputes answered with the receipt**: a chargeback on a real MCP payment, the receipt as evidence, and the sandbox simulator asked to decide for the merchant | live 2026-11-05 and 2026-11-06 |
+| ✅ | **The catalogue on Airwallex**: 100 products in Google Merchant Center format, searchable through the merchant MCP | live since 2026-11-04 |
+| ✅ | **The countersign on our own door**: TAP, the shopper's passkey on the exact terms (when switched on), ask again on any change | offline, and rehearsed through Claude Code |
+
+Every piece, with what is real and what is simulated: [docs/STATUS.md](docs/STATUS.md).
+
+<br>
+
+## Built to be checked
+
+- **649 tests, all offline.** No network, no keys. CI runs them on every push, plus an [audit](scripts/audit.py) that keeps credentials, real card numbers and dead links out of the repo.
+- **TAP interop with Visa's reference code**, checked in both directions by [`scripts/tap_interop.py`](scripts/tap_interop.py).
+- **Receipts verify without us.** The merchant's public key is at `/.well-known/countersign-merchant-key`; [`receipt.js`](src/countersign/web/static/receipt.js) checks the signature in the browser, and `verify-receipt` checks it from a terminal.
+- **The card never touches this service.** It goes into Airwallex's widget or Drop-in, and the merchant trusts only Airwallex's own record of the payment.
+- **Accessible.** Every colour pair passes WCAG AA, light and dark ([`scripts/contrast.py`](scripts/contrast.py)).
+
+<br>
+
+## Documentation
+
+| | |
+|---|---|
+| [SPEC.md](SPEC.md) | The statement the product is built against |
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | What to type to Claude and what should come back |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | The Airwallex sandbox, routes, settings and deploy |
+| [docs/STATUS.md](docs/STATUS.md) | Every piece and its state |
+| [docs/VIDEO_RUN.md](docs/VIDEO_RUN.md) | The video, shot by shot |
+| [PROGRESS.md](PROGRESS.md) · [WORKPLAN.md](WORKPLAN.md) | Where the work stands, who does what |
+
+<details>
+<summary><b>Project layout</b></summary>
+
+<br>
 
 | Path | What |
 |---|---|
@@ -121,11 +280,13 @@ TAP interop with Visa's reference implementation is checked in both directions b
 | `scripts/change_event.py` | V6 from a terminal: price, stock, delivery or reset on the running host, through its lever routes |
 | `scripts/dispute_demo.py` | U3 the dispute ending, step by step, stopping if the receipt does not verify |
 | `scripts/mcp_token.py` | an Airwallex login token, straight into the shell; not used on the Claude Desktop path |
+| `scripts/screens.py` | every screen as a picture, desktop and phone, light and dark |
 | `scripts/audit.py` | the audit before the repo goes public (A10), also run in CI |
-| `docs/VIDEO_RUN.md` | the video, shot by shot: what is on screen and what to type (A9) |
-| `docs/RUNBOOK.md` | A13 what to type to Claude and what should come back: Claude Desktop on Airwallex's MCP, our fallback MCP, the purchase, each exception |
-| `PROGRESS.md`, `WORKPLAN.md` | where the work stands, who does what |
+
+</details>
+
+<br>
 
 ## Licence
 
-Apache 2.0.
+[Apache 2.0](LICENSE).
