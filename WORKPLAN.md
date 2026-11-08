@@ -78,7 +78,7 @@ Aeshvarya's time is light until Fri 10-30 (another deadline). V4′ and V10 need
 | V8 | Visual identity: palette Wed 10-28, applied to the console and receipt Fri 11-06 | V | 11-06 | palette done 11-02 (`cd33407`, cobalt, all pairs AA); type, space, shape and motion scale + catalogue page (`dc3f1d8`); his four pages on `varunika/v8-apply-web` (`2f5a1a4`) for his review |
 | V7 ✍ | SPEC claim and README narrative | V | Mon 11-09 | todo |
 | U3 | Dispute ending: a sandbox dispute on the paid intent, answered with the signed receipt, decided for the merchant | V (moved 10-29) | Mon 11-09 | done live 11-05 (WON) and 11-06 with `--structured` (WON) |
-| V9 ✍ | Video script and voice: outline Mon 11-02, voice Mon 11-09 | V | 11-09 | outline done 11-02 (facts checked against main, beats, time budget; kept outside the repo); her script next |
+| V9 ✍ | Video script and voice: outline Mon 11-02, voice Mon 11-09 | A (moved 11-08) | 11-11 | outline done 11-02 by Varunika (kept outside the repo); from 11-08 Aeshvarya writes the script and voices it with the filming (A9), in US dollars |
 | A9 | Video production: setup, Claude configuration, purchase, exception, order confirmation, receipt, bots | A | v1 Sun 11-08, final Wed 11-11 | run sheet rewritten 11-06 for Claude Desktop on Airwallex's MCP (`docs/VIDEO_RUN.md`); v1 Sun 11-08 |
 | A10 | Audits 11-08, 11-11, 11-12; submission | A | Thu 11-12 | `scripts/audit.py` in CI; audit 1 dry run 11-06 clean (0 to fix); the audits on 11-08, 11-11, 11-12 |
 
