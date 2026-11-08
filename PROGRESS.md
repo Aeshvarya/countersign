@@ -191,6 +191,7 @@ Newest first.
 
 ### 2026-11-08
 - **Varunika's asks closed, audit 1** (Aeshvarya): the receipt permalink checked live on an updated session (Express re-quote, id matches the paid intent); README state rows with her corrections (`616be55`); the tool-named branch deleted and its mentions reworded; run sheet timed at 4:30 (`6a82022`); clean clone, live host, CI and keep-warm all pass
+- **The widget take rehearsed live; the video films in dollars** (Aeshvarya): Claude Desktop shows Airwallex's widget for the kettle, and a widget payment settled with a Larch Lane receipt (`chk_4403a50a7c9843e4c1e1e281`, $96.99). The widget makes its own checkout in the catalogue's currency (USD) whatever Claude quoted, so RUNBOOK and VIDEO_RUN move to dollars ($100 ceiling, $110 after the +12% lever). Airwallex's catalogue re-uploaded: it still said "Countersign Store"
 
 ### 2026-11-06
 - **Audit 2, her paths** (Varunika): all seven checks pass (secrets in full history, `.env`, AI names and trailers, strategy and personal words, no local session file tracked, routes and caps, clean-clone run); one item for Aeshvarya (a tool-named branch); re-run after V7

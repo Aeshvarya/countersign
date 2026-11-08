@@ -72,12 +72,12 @@ Put `--header` last: it takes several values, so placed before the name it swall
 Start a new chat in Claude Desktop (on our fallback: `claude` in the empty folder) and type, exactly:
 
 ```text
-I'm shopping from Germany. Using the countersign merchant, find the Pour-over kettle Lite and price one in EUR, with a ceiling of €92. Show me the total in euros and wait for my yes before paying. Keep replies short.
+I'm shopping from the US. Using the countersign merchant, find the Pour-over kettle Lite and price one, with a ceiling of $100. Show me the total and wait for my yes before paying. Keep replies short.
 ```
 
-On Airwallex's MCP, say "the merchant" instead of "the countersign merchant", and add *"show me the options"*: asking for the options is what makes Claude call `render_products`, which returns Airwallex's card widget (Aeshvarya, 2026-11-05, seen with earbuds; not yet tried with the kettle). Film in euros (from 2026-11-05 the demo page has no rupees either).
+On Airwallex's MCP, say "the merchant" instead of "the countersign merchant", and add *"show me the options"*: asking for the options is what makes Claude call `render_products`, which returns Airwallex's card widget (seen with the earbuds on 2026-11-05 and the kettle on 2026-11-08). Film in US dollars (decided 2026-11-08): Airwallex's widget makes its own checkout in the catalogue's currency, USD, whatever currency Claude quoted in, so a euro take would show three prices (Claude's euros, the widget's dollars, the receipt's dollars).
 
-**Expect:** Claude searches, prices `KIT-265-0`, shows the total in euros, the rate, delivery and the ceiling, says nothing was charged, and waits. Offline that is €89.23 ($96.99 at 0.92); live, the rate is Airwallex's. **Check the live total before going on:** the €92 ceiling must sit above it and below the total after the +12% lever, and section 4's new €101 ceiling above that total. Both hold only while the rate is between about 0.847 and 0.929 euros to the dollar. Outside that, start again with a ceiling about 3% above the total Claude shows, and in section 4 say a number about 1% above the new total. The approval lasts 15 minutes: say yes inside it, or the terms are quoted again.
+**Expect:** Claude searches, prices `KIT-265-0`, shows the total ($96.99), delivery and the ceiling, says nothing was charged, and waits. In dollars there is no exchange rate, so the numbers hold on any day: the $100 ceiling sits above $96.99 and below $108.63 (the total after section 4's +12% lever), and section 4's new $110 ceiling sits above that. The approval lasts 15 minutes: say yes inside it, or the terms are quoted again.
 
 Then:
 
@@ -85,14 +85,15 @@ Then:
 Yes, go ahead and pay.
 ```
 
-**Expect:** an order number (`ORD-…`), the amount charged in euros, and a signed receipt. With `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1`, Claude first gives the approval link: approve on the phone, then tell it *"Approved on my phone."* With `COUNTERSIGN_MERCHANT=airwallex`, it gives a pay link: pay in Airwallex's Drop-in, then tell it *"Paid."*, and it reads back the order and the receipt.
+**Expect:** an order number (`ORD-…`), the amount charged, and a signed receipt. With `COUNTERSIGN_REQUIRE_SHOPPER_SIGNATURE=1`, Claude first gives the approval link: approve on the phone, then tell it *"Approved on my phone."* With `COUNTERSIGN_MERCHANT=airwallex`, it gives a pay link: pay in Airwallex's Drop-in, then tell it *"Paid."*, and it reads back the order and the receipt.
 
 **On Airwallex's MCP** (not rehearsed in this run book; run live twice on 2026-11-05, PROGRESS Log): Airwallex asks our `create_checkout` for the price, then creates and charges the payment itself.
 
-- **Expect first:** the total in euros and two shipping options, Standard (5-7 business days, free) and Express (2 business days, €9.19 offline at 0.92). Our total never includes shipping: Airwallex adds the option the shopper picks (€98.42 offline with Express).
-- **The ceiling stays with Claude:** `create_checkout` carries no ceiling, so on this path the €92 never reaches the merchant. Airwallex also has no way for `create_checkout` to tell the agent that an order needs someone's approval (#commerce-kits-9-and-10, 2026-11-05), so this path cannot ask again either.
+- **Expect first:** the total ($96.99) and two shipping options, Standard (5-7 business days, free) and Express (2 business days, $9.99). Our total never includes shipping: Airwallex adds the option the shopper picks ($106.98 with Express).
+- **The ceiling stays with Claude:** `create_checkout` carries no ceiling, so on this path the $100 never reaches the merchant. Airwallex also has no way for `create_checkout` to tell the agent that an order needs someone's approval (#commerce-kits-9-and-10, 2026-11-05), so this path cannot ask again either.
 - **Then:** the live runs went create, choose shipping, delegate the test card's token, complete. Sandbox test cards take any future expiry and any three-digit CVV (Airwallex, 2026-11-05). The order id Claude is given is our checkout id (`chk_…`).
-- **The card goes into Airwallex's widget, never the chat** (Kit 10 R5). `render_products` returns Airwallex's checkout widget (`ui://widget/native-checkout.html`, MCP Apps), which has its own card form and calls `create_delegate_payment_token` and `complete_checkout_session` itself (PROGRESS Open questions, 2026-11-05). Never type the card number into the conversation, and never film a take where Claude asks for it. Whether Claude Desktop shows the widget is not confirmed yet (Aeshvarya is checking it, 2026-11-05): if it does not appear in a take, stop before paying.
+- **The card goes into Airwallex's widget, never the chat** (Kit 10 R5). `render_products` returns Airwallex's checkout widget (`ui://widget/native-checkout.html`, MCP Apps), which has its own card form and calls `create_delegate_payment_token` and `complete_checkout_session` itself (PROGRESS Open questions, 2026-11-05). Never type the card number into the conversation, and never film a take where Claude asks for it. Claude Desktop shows it (Chat tab, not the Code tab: checked 2026-11-08 with the kettle). If it does not appear in a take, stop before paying.
+- **What the widget does** (rehearsed live 2026-11-08, `chk_4403a50a7c9843e4c1e1e281`, $96.99 USD, receipt signed by Larch Lane): Checkout makes a new checkout session of its own, in USD, so its order id is not the one Claude priced earlier in the chat. It fills in Airwallex's sandbox buyer (Jane Merchant, a San Francisco address, `jane.merchant@example.com`): say on camera that it is test data. After the payment it puts a "Checkout completed successfully" report in the message box under a caution banner; send it, so Claude reads the order back and gives the receipt link.
 - **After the payment:** Airwallex's webhook reaches us and W3 checks the paid intent against the quote it belongs to: the currency, the shipping option, the amount to the cent, and that it was created before the quote expired. All hold: the merchant signs the receipt and serves it at `https://<host>/receipts/<checkout id>`. Anything else, including a second payment for a checkout already paid: a full refund with the reason, and no receipt (the first receipt stays). Only `payment_intent.succeeded` settles. A payment whose quote was lost in a restart is not refunded: the console shows **Payment not checked** and there is no receipt (fixed 2026-11-05, `7db45cd`). W3 does not check a shopper passkey on this path.
 - **Save the receipt at once** (it lives in memory, and a redeploy loses it): `curl -s https://<host>/receipts/<checkout id> -o countersign-receipt-<checkout id>.json`. That file is what `scripts/dispute_demo.py --receipt` takes for the dispute ending.
 
@@ -102,8 +103,8 @@ Each starts from a fresh purchase (step 3, first message only), then a lever bef
 
 | Exception | Lever, in the recording terminal | Expect |
 | --- | --- | --- |
-| Price change | `python scripts/change_event.py --sku KIT-265-0 --percent 12` | Not paid, nothing charged; the old and new totals in euros (€89.23 → €99.94 offline), over the €92 ceiling; Claude asks before doing anything |
-| ... then a new yes | Type: *"OK, I'll go up to €101. Pay the new price."* | Claude sends the new ceiling, then pays: €99.94 offline, an order number, a receipt. Completing again without a new ceiling charges nothing |
+| Price change | `python scripts/change_event.py --sku KIT-265-0 --percent 12` | Not paid, nothing charged; the old and new totals ($96.99 → $108.63), over the $100 ceiling; Claude asks before doing anything |
+| ... then a new yes | Type: *"OK, I'll go up to $110. Pay the new price."* | Claude sends the new ceiling, then pays: $108.63, an order number, a receipt. Completing again without a new ceiling charges nothing |
 | Out of stock | `python scripts/change_event.py --sku KIT-265-0 --stock 0` | Not bought, not charged; Claude says it sold out and asks what to do |
 | Declined card (our MCP, Drop-in) | Pay with `4646 4646 4646 4644` (any future expiry, any CVC), which Airwallex's risk engine declines at any amount (`risk_declined`, Airwallex's test-card page, checked 2026-11-05) | Not charged; Claude says the card was declined and the order stays open for another card. Built offline, not rehearsed live; whether it declines inside Drop-in with a quote attached is still open (PROGRESS Open questions) |
 
@@ -112,7 +113,7 @@ On Airwallex's MCP (not rehearsed):
 | Exception | Lever | Expect |
 | --- | --- | --- |
 | Out of stock | `python scripts/change_event.py --sku KIT-265-0 --stock 0` before the first message | Our `create_checkout` answers `available_quantity: 0`; how Claude words it is Airwallex's MCP |
-| Express shipping | The shopper picks Express | The paid total is ours plus Express: €98.42 offline |
+| Express shipping | The shopper picks Express | The paid total is ours plus Express: $106.98 |
 | Declined card | In Airwallex's card widget, pay with `4646 4646 4646 4644` (any future expiry, any CVC). Not the amount-triggered cards: they decline only at amounts like 80.05, which this take never reaches | Airwallex's risk engine declines it at any amount (`risk_declined`, "Declined by fraud risk engine"): no `payment_intent.succeeded`, so W3 signs no receipt and sends no refund, and nothing is charged. How Claude words the decline is Airwallex's MCP. Not documented whether the card declines the same way through the delegate token: rehearse once before filming. Backup if it does not: out of stock, above |
 | Price change after the last update | `--percent 12` after the shopper's last change to the session, before paying | Paid at the price already quoted, with a receipt: W3 checks the payment against its own quote, never today's price (run live 2026-11-05) |
 | Price change before an update | `--percent 12`, then the shopper changes the session (for example the shipping) | The update calls our `create_checkout` again and the total moves (₹8,794.23 → ₹9,673.75 on the 2026-11-05 live run, in rupees) with no message to the agent: only Claude can ask the shopper again. For the re-ask on screen, film it on our MCP (section 4, first table) |
@@ -127,7 +128,7 @@ After every exception: `python scripts/change_event.py --reset`.
 
 ## Rehearsed
 
-Against our fallback MCP on a local host with the offline merchant, from a fresh session each time, in rupees (before the video moved to euros on 2026-11-05):
+Against our fallback MCP on a local host with the offline merchant, from a fresh session each time, in rupees (before the video moved to euros on 2026-11-05, then to dollars on 2026-11-08):
 
 | Run | What | Result |
 | --- | --- | --- |
