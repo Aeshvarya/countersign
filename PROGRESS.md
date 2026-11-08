@@ -13,7 +13,9 @@ Where Countersign is, what happens next, and what has already happened. **Now**,
 
 ## Now
 
-_Updated 2026-11-08_
+_Updated 2026-11-09_
+
+- **2026-11-09 (Varunika): the README redesign reviewed, two overclaims for Aeshvarya.** Main `8928dd8`, 649 tests. (1) **The line under the hero and *What it does*** say the merchant checks a verified agent and the shopper's approved terms before any money moves. That holds on our own door only. On Airwallex's path, the one the video films, no TAP signature reaches us (A14 cut 11-06), the shopper's ceiling stays with Claude (`create_checkout` has no field for it), and our check runs after the payment: a signed receipt, or a refund (W3). *How it works* already splits the two doors; the top two sections should too, or say "on our own door". (2) **The `Visa · Trusted Agent Protocol` badge** is in Visa's brand colour beside Airwallex's badge, so it can read as a Visa integration. TAP here is an open protocol checked against Visa's reference code, and Visa said on 11-06 it is not tooling for this hackathon. Plain `TAP`, or no badge. Smaller: the tests badge is a fixed 649 and goes stale when the count changes. **Also:** V9 is Aeshvarya's from 11-08 (`2772db3`); V7 lands on top of `e8b2ba8` by 11-09. `varunika/v8-colours` (11-01) is unmerged and superseded by `v8-blue`; deleting it is Varunika's call.
 
 - **2026-11-08 (Aeshvarya): Varunika's asks closed, audit 1 clean.** Main `6a82022`. (1) **The receipt link holds on an updated session:** a live MCP purchase that switched to Express (Airwallex re-called `create_checkout`, a new `chk_` id) completed with `order.permalink_url` = `/receipt/chk_90c168f8864905e030fda8e0`, which is the paid intent's `merchant_order_id` (€92.85 = €83.57 + €9.28 Express); its receipt served and carries the Express line. (2) **README state rows** merged (`616be55`) with her three corrections (C9's live payment was `payment_spike.py`'s page, `/pay/<id>` not paid live; U3's simulator was asked to decide; a lost quote is unverified, not refunded) and the C10 and A13 rows as they run live. (3) **The tool-named review branch** is deleted from GitHub (its one unmerged commit only added a patch file whose fix landed in `9d2c9da`), and the 10-31 lines here and in WORKPLAN name it by its merge commit. (4) **Run sheet timed:** 4:30 for beats 1 to 6, with a cut order (`6a82022`). (5) **Audit 1 (A10):** a clean clone from GitHub installs, passes the tests and runs `countersign demo`; the live host answers in 0.37 s; CI and keep-warm green; the repo is still private (to flip on 11-11). **Left, none of it code:** the Claude Desktop widget check and the v1 take (Aeshvarya), V7 and V9 (Varunika, 11-09), the webinar (both), audit 2 and public on 11-11, submit on 11-12.
 
@@ -186,6 +188,7 @@ uv venv && uv pip install -e '.[dev]'
 Newest first.
 
 ### 2026-11-09
+- **README redesign reviewed** (Varunika): two overclaims for Aeshvarya in Now, the top two sections claiming the check before payment on both paths, and the Visa-coloured badge
 - **Webinar question closed** (Varunika): optional, per Dan Kim in #help on 2026-11-06; the 11-07 lines saying it was unanswered were wrong
 
 ### 2026-11-07
