@@ -1,7 +1,7 @@
 [project]
 name = "countersign"
 version = "0.1.0"
-description = "A merchant checkout that countersigns a verified agent and the shopper's approved terms before any money moves."
+description = "A merchant checkout that countersigns an agent's payment only when it matches the agreed terms, with a receipt anyone can check offline."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"

@@ -10,10 +10,10 @@ The exact, repeatable steps the video is filmed from: connect Claude to the merc
 
 **Recording terminal** (from `.env`, loaded with `set -a; . ./.env; set +a`): `COUNTERSIGN_PUBLIC_URL` and `COUNTERSIGN_LEVER_TOKEN` (for the levers), and on our MCP `COUNTERSIGN_MCP_TOKEN`.
 
-**A clean Claude profile.** Claude reads the recording machine's own instructions and memory, and in rehearsal it brought them into its replies. In Claude Desktop, record from an account with no personal preferences and memory off, and a config with no MCP server but `agentic-commerce`. For our fallback in Claude Code, record from a profile that has none:
+**A clean Claude profile.** Claude Desktop and Claude Code bring a profile's own instructions and memory into their replies, so record from a profile with none. In Claude Desktop, use an account with no personal preferences and memory off, and a config with no MCP server but `agentic-commerce`. For our fallback in Claude Code, record from a profile that has none:
 
 ```bash
-export CLAUDE_CONFIG_DIR="$HOME/countersign-recording"   # a fresh profile: no CLAUDE.md, memory, hooks or plugins
+export CLAUDE_CONFIG_DIR="$HOME/countersign-recording"   # a fresh profile: no instructions, memory, hooks or plugins
 claude                                                     # sign in once (the recording key), then /exit
 ```
 
@@ -43,7 +43,7 @@ Start every take from an empty folder, so no project instructions load either.
    }
    ```
 
-   `mcp-remote` is pinned to 0.16.0, the version that ran live on 2026-11-04 and 11-05: without a version, `npx` fetches whatever is newest on the day of the take, and no newer one has been tried.
+   `mcp-remote` is pinned to 0.16.0, the version that ran live on 2026-11-05: without a version, `npx` fetches whatever is newest on the day of the take, and no newer one has been tried.
 
 4. Quit Claude Desktop fully (Cmd+Q; closing the window is not enough) and open it again.
 5. A browser opens on our sign-in page: sign in with the passkey. Shoppers are guests, so there are no saved cards or addresses. Be quick: Claude Desktop gives a server 60 seconds to start, and the first sign-in on 2026-11-05 ran past it, so it took one reconnect (quit and reopen; the saved sign-in is used).
@@ -51,7 +51,7 @@ Start every take from an empty folder, so no project instructions load either.
 
 Before a take, the host's `/healthz` must say `"oauth": true` and `"keep_awake": true`. The OAuth server's key is `COUNTERSIGN_OAUTH_SIGNING_KEY` on the host; without it every restart makes a new key and signs everyone out. **After any deploy, make one throwaway call before the take:** ask Claude in a scratch chat to list the merchant's products, and retry once if it fails. On 2026-11-06 the first MCP call after a deploy answered 401 twice, and a retry a few seconds later worked both times (Airwallex fetching our JWKS again, as far as we can tell). No deploy between that call and the end of the take: quotes and receipts live in memory.
 
-**It does not connect:** `tail -f ~/Library/Logs/Claude/mcp-server-agentic-commerce.log`, and `python scripts/ac_onboard.py --check-host` (the OAuth server must pass). A 401 in the log after a good sign-in is the access token. First rule out a slow JWKS: `--check-host` prints how long it took, and a JWKS slower than Airwallex's timeout was the whole cause of another team's 401s (#commerce-kits-9-and-10, 2026-11-04). Airwallex's MCP accepted our tokens live on 2026-11-04 with header `typ` `JWT` (it refused `at+jwt`), `alg` ES256 and a `kid` in our JWKS, and `aud` the ACP MCP URL that `mcp-remote` sends as its `resource`. Its verifier fetches our JWKS several times per sign-in (user agent `Java/17`); `/healthz` lists the last five fetches under `jwks_fetches`, so an empty list after a 401 means Airwallex never reached our key.
+**It does not connect:** `tail -f ~/Library/Logs/Claude/mcp-server-agentic-commerce.log`, and `python scripts/ac_onboard.py --check-host` (the OAuth server must pass). A 401 in the log after a good sign-in is the access token. First rule out a slow JWKS: `--check-host` prints how long it took, and Airwallex attributed earlier 401s to a JWKS slower than its timeout (#commerce-kits-9-and-10, 2026-11-04). Airwallex's MCP accepted our tokens live on 2026-11-04 with header `typ` `JWT` (it refused `at+jwt`), `alg` ES256 and a `kid` in our JWKS, and `aud` the ACP MCP URL that `mcp-remote` sends as its `resource`. Its verifier fetches our JWKS several times per sign-in (user agent `Java/17`); `/healthz` lists the last five fetches under `jwks_fetches`, so an empty list after a 401 means Airwallex never reached our key.
 
 **Sign in again from scratch** (a take that must show the sign-in, or a stuck one): quit Claude Desktop, delete `mcp-remote`'s saved sign-in in `~/.mcp-auth` (its documented default; not checked on the recording machine), and open Claude Desktop again.
 
@@ -104,17 +104,17 @@ Each starts from a fresh purchase (step 3, first message only), then a lever bef
 | Exception | Lever, in the recording terminal | Expect |
 | --- | --- | --- |
 | Price change | `python scripts/change_event.py --sku KIT-265-0 --percent 12` | Not paid, nothing charged; the old and new totals ($96.99 → $108.63), over the $100 ceiling; Claude asks before doing anything |
-| ... then a new yes | Type: *"OK, I'll go up to $110. Pay the new price."* | Claude sends the new ceiling, then pays: $108.63, an order number, a receipt. Completing again without a new ceiling charges nothing |
+| ... then a new yes | Type: *"OK, I'll go up to $110. Pay the new price."* | With passkeys on (the live host): Claude gives the approval link, the shopper approves the new terms with a passkey, then it pays: $108.63, an order number, a receipt, from the host's offline merchant, so no card is charged. With passkeys off: the new ceiling alone. Completing again without either charges nothing |
 | Out of stock | `python scripts/change_event.py --sku KIT-265-0 --stock 0` | Not bought, not charged; Claude says it sold out and asks what to do |
-| Declined card (our MCP, Drop-in) | Pay with `4646 4646 4646 4644` (any future expiry, any CVC), which Airwallex's risk engine declines at any amount (`risk_declined`, Airwallex's test-card page, checked 2026-11-05) | Not charged; Claude says the card was declined and the order stays open for another card. Built offline, not rehearsed live; whether it declines inside Drop-in with a quote attached is still open (PROGRESS Open questions) |
+| Declined card (our MCP, Drop-in) | Pay with `4646 4646 4646 4644` (any future expiry, any CVC), which Airwallex's risk engine declines at any amount (`risk_declined`, Airwallex's test-card page, checked 2026-11-05) | Not charged; Claude says the card was declined and the order stays open for another card. Built offline, not rehearsed live on this door; whether it declines inside Drop-in with a quote attached is still open (PROGRESS Open questions). On Airwallex's path it ran live on 2026-11-06 (below) |
 
-On Airwallex's MCP (not rehearsed):
+On Airwallex's MCP (the declined card ran live 2026-11-06, both price-change cases 2026-11-05, Express 2026-11-08; out of stock not yet):
 
 | Exception | Lever | Expect |
 | --- | --- | --- |
 | Out of stock | `python scripts/change_event.py --sku KIT-265-0 --stock 0` before the first message | Our `create_checkout` answers `available_quantity: 0`; how Claude words it is Airwallex's MCP |
 | Express shipping | The shopper picks Express | The paid total is ours plus Express: $106.98 |
-| Declined card | In Airwallex's card widget, pay with `4646 4646 4646 4644` (any future expiry, any CVC). Not the amount-triggered cards: they decline only at amounts like 80.05, which this take never reaches | Airwallex's risk engine declines it at any amount (`risk_declined`, "Declined by fraud risk engine"): no `payment_intent.succeeded`, so W3 signs no receipt and sends no refund, and nothing is charged. How Claude words the decline is Airwallex's MCP. Not documented whether the card declines the same way through the delegate token: rehearse once before filming. Backup if it does not: out of stock, above |
+| Declined card | In Airwallex's card widget, pay with `4646 4646 4646 4644` (any future expiry, any CVC). Not the amount-triggered cards: they decline only at amounts like 80.05, which this take never reaches | Airwallex's risk engine declines it at any amount (`risk_declined`, "Declined by fraud risk engine"): no `payment_intent.succeeded`, so W3 signs no receipt and sends no refund, and nothing is charged. How Claude words the decline is Airwallex's MCP. It does decline the same way through the delegate token: run live 2026-11-06, `risk_declined`, nothing charged, then the good card paid once. Backup if a take fails: out of stock, above |
 | Price change after the last update | `--percent 12` after the shopper's last change to the session, before paying | Paid at the price already quoted, with a receipt: W3 checks the payment against its own quote, never today's price (run live 2026-11-05) |
 | Price change before an update | `--percent 12`, then the shopper changes the session (for example the shipping) | The update calls our `create_checkout` again and the total moves (₹8,794.23 → ₹9,673.75 on the 2026-11-05 live run, in rupees) with no message to the agent: only Claude can ask the shopper again. For the re-ask on screen, film it on our MCP (section 4, first table) |
 
@@ -138,6 +138,6 @@ Against our fallback MCP on a local host with the offline merchant, from a fresh
 | 4 | Purchase | Paid, `ORD-1002`, ₹8,156.86 |
 | 5 | Out of stock | Not charged; Claude asked what to do |
 
-Run live outside a take (Aeshvarya, 2026-11-04 and 11-05, PROGRESS Log): Claude Desktop with `mcp-remote` 0.16.0, our OAuth sign-in, Airwallex's MCP, and two purchases paid with the test card, the second ending in a signed receipt.
+Run live outside a take (Aeshvarya, PROGRESS Log): on 2026-11-05 Claude Desktop with `mcp-remote` 0.16.0 connected and signed in on our OAuth server, while that day's two paid purchases were scripted calls; the first purchase in Claude Desktop's widget was 2026-11-08 ($96.99, a signed receipt); the declined card then one payment on 2026-11-06.
 
-Not rehearsed yet as a take: all of that from the clean profile in section 1, the passkey on a phone, Drop-in, and any exception on Airwallex's MCP.
+Not rehearsed yet as a take: all of that from the clean profile in section 1, the passkey on a phone, and Drop-in.
