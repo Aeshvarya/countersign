@@ -103,7 +103,7 @@ def verify_assertion(*, public_key_spki_der: bytes, authenticator_data: bytes, c
     # 1
     try:
         client = json.loads(client_data_json.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         return "clientDataJSON is not valid JSON"
     if not isinstance(client, dict):
         return "clientDataJSON is not a JSON object"

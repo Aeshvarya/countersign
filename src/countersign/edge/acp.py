@@ -169,10 +169,15 @@ class AcpConfig:
 
 def to_minor(amount: Decimal, currency: str) -> int:
     """Integer minor units, or ValueError if the amount does not convert exactly."""
+    if not Decimal(amount).is_finite():
+        raise ValueError(f"{amount} {currency} is not a finite amount")
     scaled = Decimal(amount).scaleb(minor_units(currency))
     if scaled != scaled.to_integral_value():
         raise ValueError(f"{amount} {currency} is not a whole number of minor units")
     return int(scaled)
+
+
+MAX_CEILING_MINOR = 10 ** 15  # the shopper's "up to": above any real purchase, below where Decimal quantizing fails
 
 
 def from_minor(value: Any, currency: str) -> Decimal:
@@ -388,7 +393,7 @@ def _read_currency(body: dict[str, Any]) -> str | None:
     cur = body.get("currency")
     if cur is None:
         return None
-    if not isinstance(cur, str) or len(cur) != 3 or not cur.isalpha():
+    if not isinstance(cur, str) or len(cur) != 3 or not (cur.isascii() and cur.isalpha()):
         raise AcpError(400, "invalid", "currency must be a three-letter code", "$.currency")
     return cur.upper()
 
@@ -747,6 +752,8 @@ class AcpApi:
                 from_minor(ceiling, s.currency)
             except ValueError as err:
                 raise AcpError(400, "invalid", str(err), "$.ceiling") from None
+            if ceiling > MAX_CEILING_MINOR:
+                raise AcpError(400, "invalid", "the ceiling is out of range", "$.ceiling")
             s.ceiling_minor, s.ceiling_currency = ceiling, s.currency
 
     def _session(self, session_id: str) -> Session:
@@ -1064,7 +1071,7 @@ def router(api: AcpApi) -> APIRouter:
                                  "supported_versions": list(SUPPORTED_VERSIONS)}, status_code=400, headers=echo)
         try:
             body = json.loads(raw) if raw else {}
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: nested past json's limit, under the body cap
             return JSONResponse(AcpError(400, "invalid", "the body is not JSON").body(), status_code=400, headers=echo)
         if not isinstance(body, dict):
             return JSONResponse(AcpError(400, "invalid", "the body must be a JSON object").body(),
@@ -1138,7 +1145,7 @@ def router(api: AcpApi) -> APIRouter:
         raw = await request.body()
         try:
             body = json.loads(raw) if raw else {}
-        except ValueError:
+        except (ValueError, RecursionError):
             return JSONResponse(AcpError(400, "invalid", "the body is not JSON").body(), status_code=400)
         if not isinstance(body, dict):
             return JSONResponse(AcpError(400, "invalid", "the body must be a JSON object").body(), status_code=400)
@@ -1164,7 +1171,7 @@ def observe(request: Request, raw: bytes) -> None:
     try:
         parsed = json.loads(raw) if raw else {}
         keys = sorted(parsed) if isinstance(parsed, dict) else [type(parsed).__name__]
-    except ValueError:
+    except (ValueError, RecursionError):
         keys = ["<not json>"]
     log.warning("acp observe: %s %s headers=%s body_keys=%s", request.method, request.url.path,
                 sorted(k.lower() for k in request.headers.keys()), keys)
