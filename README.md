@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/Aeshvarya/countersign/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Aeshvarya/countersign/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="649 tests, offline" src="https://img.shields.io/badge/tests-649%20passing-117976">
+  <img alt="663 tests, offline" src="https://img.shields.io/badge/tests-663%20passing-117976">
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-315cde">
   <a href="LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/licence-Apache%202.0-485271"></a>
   <a href="https://countersign-demo.onrender.com"><img alt="Live demo" src="https://img.shields.io/badge/demo-live-117976"></a>
@@ -177,7 +177,7 @@ Runs offline with no keys (the install step needs the network):
 uv venv && uv pip install -e '.[dev]'
 .venv/bin/python -m countersign demo                    # the contrast pairs and a dispute, offline
 .venv/bin/uvicorn countersign.web.app:app --port 8000   # the demo app: http://127.0.0.1:8000
-.venv/bin/python -m unittest discover -s tests          # 649 tests, offline
+.venv/bin/python -m unittest discover -s tests          # 663 tests, offline
 ```
 
 The app uses Claude when `ANTHROPIC_API_KEY` is set, and a scripted stand-in otherwise (`COUNTERSIGN_MODEL=scripted` forces it). Open `/?q=Buy+me+a+kettle` to start straight away, or `/?s=<session id>` to watch a running session from a second screen.
@@ -265,7 +265,7 @@ Airwallex APIs called: conversion quotes and convertible currencies ([`fx.py`](s
 
 ## Built to be checked
 
-- **649 tests, all offline.** No network, no keys. CI runs them on every push, plus an [audit](scripts/audit.py) that keeps credentials, real card numbers and dead links out of the repo.
+- **663 tests, all offline.** No network, no keys. CI runs them on every push, plus an [audit](scripts/audit.py) that keeps credentials, real card numbers and dead links out of the repo.
 - **TAP interop with Visa's reference code**, checked in both directions by [`scripts/tap_interop.py`](scripts/tap_interop.py).
 - **Receipts verify without us.** The merchant's public key is at `/.well-known/countersign-merchant-key`; [`receipt.js`](src/countersign/web/static/receipt.js) checks the signature in the browser, and `verify-receipt` checks it from a terminal.
 - **The card stays with Airwallex.** It goes into Airwallex's widget or Drop-in, card fields an ACP client sends are stripped before anything is stored or logged, and the merchant trusts only Airwallex's own record of the payment.
