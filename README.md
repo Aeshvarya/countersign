@@ -13,7 +13,7 @@
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-315cde">
   <a href="LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/licence-Apache%202.0-485271"></a>
   <a href="https://countersign-demo.onrender.com"><img alt="Live demo" src="https://img.shields.io/badge/demo-live-117976"></a>
-  <img alt="Visa Trusted Agent Protocol" src="https://img.shields.io/badge/Visa-Trusted%20Agent%20Protocol-1a1f71">
+  <img alt="Trusted Agent Protocol" src="https://img.shields.io/badge/TAP-Trusted%20Agent%20Protocol-485271">
   <img alt="Airwallex agentic commerce" src="https://img.shields.io/badge/Airwallex-agentic%20commerce-612fff">
 </p>
 
@@ -41,12 +41,12 @@ Countersign is the merchant's side of that purchase, built on Airwallex's agenti
 
 ## What it does
 
-An AI agent buys something for a person. Countersign is the merchant's side of that purchase: before it charges, the merchant runs two checks, both in code.
+An AI agent buys something for a person. Countersign is the merchant's side of that purchase. On its own door, before it charges, the merchant runs two checks, both in code (on Airwallex's path, see [How it works](#how-it-works)).
 
 | Check | The question | How |
 |---|---|---|
 | 🪪 **Who is asking** | Is this a known agent, signing for this merchant and this page, right now, once? | [Visa Trusted Agent Protocol](src/countersign/tap.py): an Ed25519 signature bound to the merchant's host and the exact path, with a nonce and a validity window |
-| ✍️ **What was approved** | Is this exactly what the shopper said yes to, at or under the price they accepted, in their own currency? | [A hash of the terms](src/countersign/terms.py) the shopper saw, re-checked against the live offer and a fresh rate lock; with passkeys on, [signed by the shopper's passkey](src/countersign/edge/passkey.py) |
+| ✍️ **What was approved** | Is this exactly what the shopper said yes to, at or under the price they accepted, in their own currency? | [A hash of the terms](src/countersign/terms.py) the shopper saw, re-checked against the live offer, with a fresh rate lock when the currencies differ; with passkeys on, [signed with a passkey on the merchant's page](src/countersign/edge/passkey.py) |
 
 Then exactly one outcome, from [one deterministic function](src/countersign/decide.py). No model output reaches it.
 
@@ -145,7 +145,7 @@ On the merchant's own door, an agent signs every request with TAP, and the merch
 
 1. **The agent proves who it is.** Every request carries a Visa Trusted Agent Protocol signature (Ed25519, bound to the merchant's host and the exact path, with a nonce and a validity window). The merchant's edge refuses unsigned, expired, replayed or misdirected requests before anything else runs. [`tap.py`](src/countersign/tap.py)
 2. **The shopper approves exact terms.** Merchant, items, delivery, totals and a ceiling in the shopper's own currency, hashed. [`terms.py`](src/countersign/terms.py)
-3. **The merchant countersigns before it charges.** It rebuilds the live offer with a fresh rate lock and runs one deterministic function: proceed, ask again, or refuse. [`decide.py`](src/countersign/decide.py), [`checkout.py`](src/countersign/checkout.py)
+3. **The merchant countersigns before it charges.** It rebuilds the live offer (with a fresh rate lock when the currencies differ) and runs one deterministic function: proceed, ask again, or refuse. [`decide.py`](src/countersign/decide.py), [`checkout.py`](src/countersign/checkout.py)
 4. **The charge happens in the shopper's currency at the locked rate**, through Airwallex Multi-Currency Pricing, and returns the merchant's order number. [`fx.py`](src/countersign/fx.py), [`merchant.py`](src/countersign/merchant.py)
 5. **The merchant signs a receipt** binding the agent's identity, the approval's hash and ceiling, the charge and the order number. Anyone with the merchant's public key can check it later, offline. [`receipt.py`](src/countersign/receipt.py)
 
@@ -215,13 +215,13 @@ Every step, each exception, and our own fallback MCP for Claude Code are in [doc
 
 | | Piece | Proven |
 |---|---|---|
-| ✅ | **Airwallex's `create_checkout`**: every call prices the cart from the live catalogue with a fresh rate lock, and keeps the quote for the payment | live since 2026-11-04 |
+| ✅ | **Airwallex's `create_checkout`**: every call prices the cart from the live catalogue, with a fresh rate lock when the shopper's currency is not the merchant's, and keeps the quote for the payment | live since 2026-11-04 |
 | ✅ | **Payments made in Airwallex's checkout** checked against that quote: a signed receipt, or a full refund if it does not match | live since 2026-11-05 |
 | ✅ | **Claude Desktop on Airwallex's merchant MCP**: passkey sign-in on our OAuth server, the checkout widget, the card kept out of the chat | live 2026-11-05 and 2026-11-08 |
 | ✅ | **The shopper's receipt page**, handed to the agent as the order's link, settling from Airwallex directly if a webhook is late | live since 2026-11-06 |
 | ✅ | **Disputes answered with the receipt**: a chargeback on a real MCP payment, the receipt as evidence, and the sandbox simulator asked to decide for the merchant | live 2026-11-05 and 2026-11-06 |
 | ✅ | **The catalogue on Airwallex**: 100 products in Google Merchant Center format, searchable through the merchant MCP | live since 2026-11-04 |
-| ✅ | **The countersign on our own door**: TAP, the shopper's passkey on the exact terms (when switched on), ask again on any change | offline, and rehearsed through Claude Code |
+| ✅ | **The countersign on our own door**: TAP, a passkey on the exact terms (when switched on), ask again on any change | offline, and rehearsed through Claude Code |
 
 Every piece, with what is real and what is simulated: [docs/STATUS.md](docs/STATUS.md).
 
@@ -283,7 +283,7 @@ Every piece, with what is real and what is simulated: [docs/STATUS.md](docs/STAT
 | `src/countersign/edge/` | the merchant's HTTP API behind the TAP check, plus the public product pages (`edge/pages.py`) |
 | `src/countersign/edge/static/tokens.css`, `edge/tokens.py` | V8 the colour tokens, light and dark, and their reader |
 | `src/countersign/edge/acp.py` | C10 the checkout API: Airwallex's `create_checkout` (a fresh quote per call, kept for the payment webhook), and our ACP sessions, where complete runs the countersign and REASK messages |
-| `src/countersign/edge/passkey.py` | U1 the shopper's passkey: the approval challenge and the six-check WebAuthn verifier |
+| `src/countersign/edge/passkey.py` | U1 the passkey on the terms: the approval challenge and the six-check WebAuthn verifier |
 | `src/countersign/edge/hmac_auth.py`, `edge/idempotency.py` | the platform HMAC check (one scheme by config) and ACP idempotency rules |
 | `src/countersign/catalog_gmc.py` | C11 the catalogue as GMC rows, chunking that keeps a product's variants together, the upload |
 | `src/countersign/airwallex.py` | Airwallex REST client |
