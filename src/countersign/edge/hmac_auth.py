@@ -46,7 +46,8 @@ def _within(ts_seconds: float, now: float) -> str | None:
 
 def _int(value: str | None) -> int | None:
     # ASCII digits only: str.isdigit() also passes "²", which int() then rejects with a ValueError.
-    if value is None or not (value.strip().isascii() and value.strip().isdigit()):
+    # Over 19 digits is no timestamp, and over 4,300 int() itself refuses with a ValueError.
+    if value is None or not (value.strip().isascii() and value.strip().isdigit()) or len(value.strip()) > 19:
         return None
     return int(value.strip())
 

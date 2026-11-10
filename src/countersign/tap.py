@@ -288,6 +288,8 @@ def parse_input(signature_input: str) -> tuple[list[str], dict[str, str | int]] 
     components = [c.strip('"') for c in match["components"].split()]
     attrs: dict[str, str | int] = {}
     for key, value in _ATTR.findall(match["attrs"]):
+        if not value.startswith('"') and len(value) > 19:
+            return None  # no real created/expires is that long, and past 4,300 digits int() raises
         attrs[key] = value[1:-1] if value.startswith('"') else int(value)
     return components, attrs
 

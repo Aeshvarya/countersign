@@ -15,6 +15,7 @@ from __future__ import annotations
 import threading
 from dataclasses import replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Callable
 
 from fastapi import FastAPI, Query, Request
@@ -52,13 +53,15 @@ def required_tag(method: str, path: str) -> str | None:
 # before the TAP check; without a cap, any caller, signed or not, could make the
 # edge hold an arbitrarily large body in memory. A real approval is a few KiB.
 MAX_BODY = 64 * 1024
+MAX_CEILING = Decimal(10) ** 12  # above any real purchase in any currency; past it Decimal quantizing fails
 
 
 def body_refusal(content_length: str | None) -> tuple[int, str] | None:
     """Why a request body is refused before a byte of it is read, or None."""
     if content_length is None:  # chunked: the cap could not be checked up front
         return 411, "a request body must declare its Content-Length"
-    if not content_length.isdigit() or int(content_length) > MAX_BODY:
+    if not (content_length.isascii() and content_length.isdigit()) or len(content_length) > 12 \
+            or int(content_length) > MAX_BODY:
         return 413, f"the request body is over {MAX_BODY} bytes"
     return None
 
@@ -89,8 +92,13 @@ def read_approval(data: dict[str, Any]) -> Approval:
         raise ValueError(f"the approval could not be read ({type(err).__name__})") from None
     if not approval.terms.items:
         raise ValueError("the approval has no items")
-    if not approval.ceiling.is_finite():
-        raise ValueError("the approval's ceiling is not a number")
+    # The agent writes the approval, so its quantities are checked here as /offers checks a cart:
+    # a quantity of 0 or below would charge nothing, or net a dear item against a cheap one.
+    if any(isinstance(i.quantity, bool) or not isinstance(i.quantity, int) or i.quantity < 1
+           for i in approval.terms.items):
+        raise ValueError("every quantity must be at least 1")
+    if not approval.ceiling.is_finite() or approval.ceiling > MAX_CEILING:
+        raise ValueError("the approval's ceiling is not a number in range")
     # The agent writes this approval, so a shopper_assertion in it is the agent's claim, not the
     # shopper's: anyone can sign one with a key of their own. Only /acp attaches an assertion,
     # after checking it against the challenge it issued for that session (C13).
@@ -148,7 +156,8 @@ def create_app(
         # authenticated by the shared HMAC secret in its own routes, not by TAP.
         # The body cap still applies. Without an ACP config these paths stay behind TAP.
         if acp is not None and acp_api.is_acp(request.url.path):
-            if request.method in ("POST", "PUT", "PATCH"):
+            has_body = request.headers.get("transfer-encoding") or request.headers.get("content-length") not in (None, "0")
+            if request.method in ("POST", "PUT", "PATCH") or has_body:
                 refusal = body_refusal(request.headers.get("content-length"))
                 if refusal is not None:
                     status, reason = refusal
