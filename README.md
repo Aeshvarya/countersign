@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<h3 align="center">A merchant checkout that keeps an agent's payment only if it matches the agreed terms, and signs a receipt anyone can check offline.</h3>
+<h3 align="center">A merchant checkout that countersigns an agent's payment only when it matches the agreed terms, with a receipt anyone can check offline.</h3>
 
 <p align="center">
   <a href="https://github.com/Aeshvarya/countersign/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Aeshvarya/countersign/actions/workflows/ci.yml/badge.svg"></a>
@@ -30,12 +30,12 @@ An AI agent can now pay for a person. Between the person's yes and the charge, t
 
 Countersign is the merchant's side of that purchase, built on Airwallex's agentic commerce for Kit 10 (Merchant-Enabled Agentic Checkout). It does two things:
 
-- **It holds the payment to what was agreed.** On the merchant's own door, it checks the agent's signature and the approved terms before charging, with the ceiling in the shopper's own currency, and asks the shopper again if anything moved. On Airwallex's path, where Airwallex's merchant MCP takes the payment, it checks every payment against the merchant's quote afterwards: a signed receipt if it matches, a full refund with the reason if it does not.
+- **It holds the payment to what was agreed.** On the merchant's own door, it checks the agent's signature and the approved terms before charging, with the ceiling in the shopper's own currency, and asks the shopper again if anything moved. On Airwallex's path, where Airwallex's merchant MCP takes the payment, it checks the payment against the merchant's quote afterwards: a signed receipt if it matches, a full refund with the reason if it does not.
 - **It signs a receipt anyone can check.** The terms, the charge and the order number, signed with the merchant's key and verifiable offline. On a real sandbox payment, that receipt went in as the merchant's dispute evidence and Airwallex accepted it; the sandbox simulator was asked to decide for the merchant.
 
 **Built on, and what is ours.** Airwallex provides the hosted merchant MCP, the checkout widget, payments, conversion quotes and disputes. Countersign adds the pricing behind `create_checkout`, the payment-to-quote check, the signed receipts, its own checkout door with TAP and passkeys, and the OAuth server behind the passkey sign-in. Visa's Trusted Agent Protocol is the open format our agent check follows, tested against Visa's reference code; this is not a Visa integration. Google's AP2 has a similar shape (terms hashed, signed by the user on a page the agent does not control, a receipt that carries the hash): our door is AP2-shaped, not an AP2 implementation.
 
-**Team.** Varunika Rai (the merchant's edge: TAP verification, the checkout API and `create_checkout`, the passkey check, onboarding, disputes, the run book) and Aeshvarya Awasthi (the agent, the terms and decision core, receipts, rate locks and payments, settling Airwallex's payments, the OAuth server, the catalogue, the web app, the video).
+**Team.** Varunika Rai (the merchant's edge: TAP verification, the checkout API and `create_checkout`, the passkey check; the catalogue export and product pages; onboarding; disputes; the colours and type; the run book) and Aeshvarya Awasthi (the agent, the terms and decision core, receipts, rate locks and payments, settling Airwallex's payments, the OAuth server, the web app, the video).
 
 <br>
 
