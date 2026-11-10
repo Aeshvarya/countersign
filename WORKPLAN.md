@@ -76,7 +76,7 @@ Aeshvarya's time is light until Fri 10-30 (another deadline). V4′ and V10 need
 | V3′ | Registry shaped like Visa's agent directory (keep the reference-registry API); ask in Slack for a Visa contact | V | Fri 11-06 | **cut 11-06** (Varunika confirmed): no Visa agent directory or TAP sandbox is available to this hackathon |
 | U1 | **C13 shopper passkey** (agreed 10-29): verifier `edge/passkey.py`, `/acp/approvals/{id}` routes, `complete` waits for the signature (V); approval page in `web/` (A) | V + A | C13 shape Mon 11-02, verifier Thu 11-05 | verifier and routes merged 10-30; approval page done 10-31 (`/approve/<id>`); C13 merged 10-31 with Aeshvarya's TAP-door fix (`f379319`); open: a key, not a shopper (PROGRESS) |
 | V8 | Visual identity: palette Wed 10-28, applied to the console and receipt Fri 11-06 | V | 11-06 | palette done 11-02 (`cd33407`, cobalt, all pairs AA); type, space, shape and motion scale + catalogue page (`dc3f1d8`); his four pages on `varunika/v8-apply-web` (`2f5a1a4`) for his review |
-| V7 ✍ | SPEC claim and README narrative | V | Mon 11-09 | todo |
+| V7 ✍ | SPEC claim and README narrative | V | Mon 11-09 | done 11-10 (`3389c0c`, corrected `66d33aa`) |
 | U3 | Dispute ending: a sandbox dispute on the paid intent, answered with the signed receipt, decided for the merchant | V (moved 10-29) | Mon 11-09 | done live 11-05 (WON) and 11-06 with `--structured` (WON) |
 | V9 ✍ | Video script and voice: outline Mon 11-02, voice Mon 11-09 | A (moved 11-08) | 11-11 | outline done 11-02 by Varunika (kept outside the repo); from 11-08 Aeshvarya writes the script and voices it with the filming (A9), in US dollars |
 | A9 | Video production: setup, Claude configuration, purchase, exception, order confirmation, receipt, bots | A | v1 Sun 11-08, final Wed 11-11 | run sheet rewritten 11-06 for Claude Desktop on Airwallex's MCP (`docs/VIDEO_RUN.md`); v1 Sun 11-08 |
@@ -113,7 +113,7 @@ New contracts: **C10** checkout callback (Varunika), **C11** GMC catalogue mappi
 | V4 | Airwallex merchant enablement and catalog | tech | 3 | follow-up Wed 10-14, upload within 2 days of access | todo |
 | V5 | `AirwallexMerchant` (C3 on the real APIs) | tech | 6 | Wed 11-04 | todo |
 | V6 | Change events on the merchant side | tech | 3 | Fri 11-06 | todo |
-| V7 | SPEC claim and README narrative ✍ | non-tech | 3 | Mon 11-09 | todo |
+| V7 | SPEC claim and README narrative ✍ | non-tech | 3 | Mon 11-09 | done 11-10 |
 | V8 | Visual identity | non-tech | 3 | palette Sun 10-18, rest Fri 11-06 | todo |
 | V9 | Video script and voice ✍ | non-tech | 3 | outline Mon 11-02, voice Mon 11-09 | todo |
 
