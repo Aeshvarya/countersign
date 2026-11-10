@@ -2,17 +2,15 @@
 
 The statement both builders work against. If a feature does not serve this, it does not ship.
 
-<!-- Problem and claim are drafts: the final words are the owners' (WORKPLAN V7). -->
-
 ## Problem
 
 An AI agent buys something for a person. Between the moment the person says yes and the moment money moves, things change: the price, the stock, the delivery date, and, when the shop is in another country, the exchange rate. And the merchant can't easily tell a shopper's agent from a scraper or a bot replaying a request.
 
-Today either the agent re-asks for everything (and nobody uses it) or it charges whatever the checkout says (and nobody trusts it).
+Today either the agent re-asks for everything (and nobody uses it) or it charges whatever the checkout says (and nobody trusts it). And afterwards, if the shopper disputes the charge, the merchant usually cannot show what was agreed.
 
 ## What Countersign does
 
-The merchant countersigns before it charges. Two checks, both in code:
+On its own door (`/acp/checkout_sessions`, and our fallback MCP), the merchant countersigns before it charges. Two checks, both in code:
 
 | Check | Question | How |
 |---|---|---|
@@ -29,7 +27,11 @@ Then exactly one outcome:
 
 ## The claim we defend
 
-An agent's purchase is charged only if the merchant can verify the agent and the shopper's approval still covers the live price in the shopper's own currency. Every other case asks again or refuses, and the code that decides is small enough to read.
+**On the merchant's own door**, an agent's purchase is charged only if the merchant can verify the agent and the approved terms still cover the live price, under a ceiling in the shopper's own currency. Anything else asks the shopper again or refuses, before any money moves. With passkeys on, those terms are signed with a passkey on the merchant's own page; without them, the agent sends the ceiling.
+
+**On Airwallex's path**, Airwallex's merchant MCP takes the payment. Its `create_checkout` call reaches the merchant signed by Airwallex (HMAC), with no TAP signature from the agent and no field for the shopper's ceiling. So the check runs after the payment, against the last quote the merchant gave. The payment gets a signed receipt if its amount, currency and shipping option match that quote and it was paid before the quote expired, and a full refund with the reason if not. If the quote was lost, the payment is left unverified, not signed.
+
+Either way, the code that decides is small enough to read, and every receipt can be checked offline with the merchant's public key.
 
 ## Rules the code keeps
 
@@ -43,7 +45,7 @@ An agent's purchase is charged only if the merchant can verify the agent and the
 | Piece | Job |
 |---|---|
 | Airwallex merchant-side Agentic Commerce | Catalog, merchant MCP for product discovery, checkout, merchant order number |
-| Airwallex Multi-Currency Pricing | `conversion_quotes`: locks the rate; the quote id rides on the payment intent so the shopper is charged at exactly that rate |
+| Airwallex Multi-Currency Pricing | `conversion_quotes`: locks the rate when the shopper's currency is not the merchant's; on our own door the quote id rides on the payment intent, so the shopper is charged at exactly that rate |
 | Airwallex payment intents + hosted payment component | Card details only ever in Airwallex's component |
-| Visa Trusted Agent Protocol | Agent identity at the merchant's edge |
+| Visa Trusted Agent Protocol | Agent identity on the merchant's own door (an open protocol, checked against Visa's reference code) |
 | Claude | The shopping agent |
