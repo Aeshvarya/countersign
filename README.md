@@ -5,6 +5,8 @@
   </picture>
 </p>
 
+<p align="center"><sub>The merchant's own ACP door in an offline run, with the demo merchant. The live purchase on Airwallex's path is under <a href="#see-it-work">See it work</a>.</sub></p>
+
 <h3 align="center">A merchant checkout that countersigns an agent's payment only when it matches the agreed terms, with a receipt anyone can check offline.</h3>
 
 <p align="center">
@@ -81,7 +83,12 @@ Unsigned, replayed, tampered, inconsistent or on a stale rate lock. **Nothing is
   <img alt="Live on 2026-11-08: Claude Desktop shows Airwallex's checkout widget for the merchant's kettle, the card is entered in the widget, and the merchant signs a receipt for 96.99 USD that verifies in the browser." src="docs/assets/live-path.png" width="100%">
 </p>
 
-That run is real: Claude Desktop on Airwallex's merchant MCP, a sandbox card payment of $96.99, and the merchant's signed receipt checked in the browser. [Open that receipt](https://countersign-demo.onrender.com/receipt/chk_4403a50a7c9843e4c1e1e281) (the host keeps receipts in memory, so a later redeploy clears it).
+That run is real: Claude Desktop on Airwallex's merchant MCP, a sandbox card payment of $96.99, and the merchant's signed receipt checked in the browser. [Open that receipt](https://countersign-demo.onrender.com/receipt/chk_4403a50a7c9843e4c1e1e281) (the host keeps receipts in memory, so a later redeploy clears it). A signed copy is kept in [docs/receipts/](docs/receipts/) with the merchant's public key: [check it in the browser](https://countersign-demo.onrender.com/verify#r=eyJib2R5Ijp7InYiOjEsIm1lcmNoYW50X2lkIjoiTGFyY2ggTGFuZSIsIm9yZGVyX251bWJlciI6ImNoa180NDAzYTUwYTdjOTg0M2U0YzFlMWUyODEiLCJwYXltZW50X2lkIjoiaW50X3NncHZ0ZGg0bmhueXlpcGt3bWUiLCJpZGVtcG90ZW5jeV9rZXkiOiJjaGtfNDQwM2E1MGE3Yzk4NDNlNGMxZTFlMjgxIiwiYWdlbnQiOm51bGwsImFwcHJvdmFsIjp7Imhhc2giOiI3N2E4NDA4ZGE1ZTY4ZTJlOTYxM2YwYTk3NzU5MTU4NzhlZWJkNDg1NDRhNGFiYjZjMDAzOTI3M2YxMDFkODljIiwiY2VpbGluZyI6Ijk2Ljk5IiwiY3VycmVuY3kiOiJVU0QiLCJhcHByb3ZlciI6ImFjcDpqYW5lLm1lcmNoYW50QGV4YW1wbGUuY29tIiwiYXBwcm92ZWRfYXQiOiIyMDI2LTExLTA4VDEzOjI0OjU3LjA0OTg1NyswMDowMCIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTA4VDE0OjI0OjU3LjA0OTg1NyswMDowMCJ9LCJjaGFyZ2VkIjp7ImFtb3VudCI6Ijk2Ljk5IiwiY3VycmVuY3kiOiJVU0QiLCJtZXJjaGFudF9hbW91bnQiOiI5Ni45OSIsIm1lcmNoYW50X2N1cnJlbmN5IjoiVVNEIiwiZnhfcXVvdGVfaWQiOm51bGwsInJhdGUiOm51bGx9LCJpdGVtcyI6W3sic2t1IjoiS0lULTI2NS0wIiwicXVhbnRpdHkiOjEsInVuaXRfcHJpY2UiOiI5Ni45OSJ9XSwiZGVsaXZlcnkiOiJzdGFuZGFyZCwgNS03IGJ1c2luZXNzIGRheXMiLCJkZWNpZGVkX2F0IjoiMjAyNi0xMS0wOFQxMzoyNDo1Ny4wNDk4NTcrMDA6MDAiLCJmdWxmaWxsbWVudCI6eyJvcHRpb25faWQiOiJzdGFuZGFyZCIsImFtb3VudCI6IjAuMDAiLCJjdXJyZW5jeSI6IlVTRCJ9fSwia2V5X2lkIjoibWVyY2hhbnQta2V5LTEiLCJhbGciOiJlZDI1NTE5Iiwic2lnbmF0dXJlIjoiSXlrUGQ3TU9RZTNkR1ZHdE1XbUVWdFhDRUxSbk5XNHlCNElWcHZma3Zna2JSVFZtenBxNkIya1cyV3VpMkpteDRETXVsbGp2ZHZTb3dsNFpOTDl5Q1E9PSJ9), or offline:
+
+```bash
+.venv/bin/python -m countersign verify-receipt docs/receipts/chk_4403a50a7c9843e4c1e1e281.json \
+  --merchant-key "$(python3 -c 'import json; print(json.load(open("docs/receipts/merchant-key-1.json"))["public_key"])')"
+```
 
 <table>
 <tr>
@@ -224,6 +231,24 @@ Every step, each exception, and our own fallback MCP for Claude Code are in [doc
 | ✅ | **The countersign on our own door**: TAP, a passkey on the exact terms (when switched on), ask again on any change | offline, and rehearsed through Claude Code |
 
 Every piece, with what is real and what is simulated: [docs/STATUS.md](docs/STATUS.md).
+
+<br>
+
+## Kit 10, requirement by requirement
+
+| | Requirement | Where it is met |
+|---|---|---|
+| R1 | Merchant access and a sandbox storefront | Onboarded on Airwallex's Singapore sandbox as Larch Lane, 2026-11-04 ([`ac_onboard.py`](scripts/ac_onboard.py)) |
+| R2 | At least 100 synthetic products in Airwallex's format | 100 products live since 2026-11-04 ([`catalog_gmc.py`](src/countersign/catalog_gmc.py), [`upload_catalog.py`](scripts/upload_catalog.py)) |
+| R3 | The merchant MCP in Claude, searching the catalogue | Claude Desktop on Airwallex's merchant MCP through `mcp-remote`, signed in on our OAuth server, 2026-11-05 ([Use it from Claude](#use-it-from-claude)) |
+| R4 | Confirm merchant, product, quantity, delivery and total before payment; ask again on a change | Our doors: [`decide.py`](src/countersign/decide.py) before any charge. Airwallex's path: the payment held to the quote afterwards ([`settle.py`](src/countersign/settle.py)) |
+| R5 | Card details only in Airwallex's hosted component | Airwallex's checkout widget in Claude Desktop, 2026-11-08 |
+| R6 | The merchant order number with the outcome | The checkout id is the payment's `merchant_order_id`, with the signed receipt at `/receipt/<id>` |
+| R7 | One changed-price, unavailable or declined path, no duplicate payment | On Airwallex's path: a declined card then one payment, 2026-11-06; a price change, with the quoted price held, 2026-11-05 |
+| R8 | The video | [docs/VIDEO_RUN.md](docs/VIDEO_RUN.md) |
+| R9 | Airwallex's retry rules; stop if the first attempt cannot be verified | Idempotency keys ([`idempotency.py`](src/countersign/edge/idempotency.py)), a 503 to retry, and an unverifiable payment never refunded blind ([`settle.py`](src/countersign/settle.py)) |
+
+Airwallex APIs called: conversion quotes and convertible currencies ([`fx.py`](src/countersign/fx.py)), payment intents and refunds ([`payments.py`](src/countersign/payments.py), [`settle.py`](src/countersign/settle.py)), agentic commerce onboarding, config and products ([`ac_onboard.py`](scripts/ac_onboard.py), [`upload_catalog.py`](scripts/upload_catalog.py)), and the dispute simulation and challenge ([`disputes.py`](src/countersign/disputes.py)).
 
 <br>
 
