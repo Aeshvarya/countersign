@@ -304,12 +304,22 @@ def challenge_details(signed: dict[str, Any], stage: str, *, store_url: str | No
     charged = body.get("charged") or {}
     amount, currency, merchant_currency = charged.get("amount"), charged.get("currency"), charged.get("merchant_currency")
     items = [i for i in body.get("items") or [] if isinstance(i, dict)]
+    # On Airwallex's path the receipt's charge is the items, and the card also paid the shipping
+    # option chosen (`fulfillment`, W3): the evidence states what the card paid, and that option.
+    fulfillment = body.get("fulfillment") if isinstance(body.get("fulfillment"), dict) else {}
+    option = str(fulfillment["option_id"]) if fulfillment.get("option_id") else None
+    shipping = None
+    if fulfillment.get("currency") == currency and _number(fulfillment.get("amount")) and _number(amount) is not None:
+        shipping = str(fulfillment["amount"])
+        amount = str(Decimal(str(amount)) + Decimal(shipping))
     order = body.get("order_number")
     store = store_url.rstrip("/") if store_url else None
 
     if stage == "CHARGEBACK":
         sold = "; ".join(f"{i.get('quantity')} x {i.get('sku')} at {i.get('unit_price')} {merchant_currency}"
                          for i in items) or "see the receipt"
+        if shipping:
+            sold += f"; {option or 'shipping'} shipping {shipping} {currency}"
         reason = (f"The receipt the merchant signed for order {order} records this charge, {amount} {currency} "
                   f"({signed.get('alg')} key {signed.get('key_id')})")
         if verify_url:
@@ -342,6 +352,7 @@ def challenge_details(signed: dict[str, Any], stage: str, *, store_url: str | No
     details: dict[str, Any] = {"order_info": {k: v for k, v in order_info.items() if v is not None}}
     if store:
         details["seller_info"] = {"store_url": store}
-    if body.get("delivery"):
-        details["delivery_info"] = {"shipping_method": str(body["delivery"])}
+    method = option if shipping else (str(body["delivery"]) if body.get("delivery") else option)
+    if method:
+        details["delivery_info"] = {"shipping_method": method}
     return details

@@ -466,5 +466,40 @@ class DisputeDemoTest(unittest.TestCase):
             self.assertNotIn(secret, printed)
 
 
+class DisputeShippingTest(unittest.TestCase):
+    """A receipt from Airwallex's path carries the shipping the card also paid for."""
+
+    signed = {"alg": "ed25519", "key_id": "m-1", "body": {
+        "order_number": "chk_1", "decided_at": "2026-11-08T13:24:57+00:00",
+        "charged": {"amount": "89.99", "currency": "USD", "merchant_amount": "89.99", "merchant_currency": "USD"},
+        "items": [{"sku": "KIT-265-0", "quantity": 1, "unit_price": "89.99"}],
+        "delivery": "standard, 5-7 business days",
+        "fulfillment": {"option_id": "express", "amount": "9.99", "currency": "USD"}}}
+
+    def test_the_rfi_total_is_what_the_card_paid_and_the_shipping_is_the_one_chosen(self):
+        details = disputes.challenge_details(self.signed, "RFI", store_url="https://shop.example")
+        self.assertEqual(details["order_info"]["total_amount"], 99.98)
+        self.assertIn("express", details["delivery_info"]["shipping_method"])
+
+    def test_the_chargeback_text_names_the_full_charge(self):
+        details = disputes.challenge_details(self.signed, "CHARGEBACK")
+        self.assertIn("99.98 USD", details["refund_refusal_reason"])
+        self.assertIn("99.98 USD", details["product_description"])
+
+    def test_free_standard_shipping_keeps_the_delivery_promise(self):
+        free = json.loads(json.dumps(self.signed))
+        free["body"]["fulfillment"] = {"option_id": "standard", "amount": "0.00", "currency": "USD"}
+        details = disputes.challenge_details(free, "RFI")
+        self.assertEqual(details["order_info"]["total_amount"], 89.99)
+        self.assertEqual(details["delivery_info"]["shipping_method"], "standard, 5-7 business days")
+
+    def test_a_receipt_without_fulfillment_is_unchanged(self):
+        plain = json.loads(json.dumps(self.signed))
+        del plain["body"]["fulfillment"]
+        details = disputes.challenge_details(plain, "RFI")
+        self.assertEqual(details["order_info"]["total_amount"], 89.99)
+        self.assertEqual(details["delivery_info"]["shipping_method"], "standard, 5-7 business days")
+
+
 if __name__ == "__main__":
     unittest.main()
