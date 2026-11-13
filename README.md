@@ -20,6 +20,7 @@
 </p>
 
 <p align="center">
+  <a href="https://youtu.be/fGukD2h7KoE"><b>Video (4:12)</b></a> ·
   <a href="https://countersign-demo.onrender.com"><b>Live demo</b></a> ·
   <a href="#see-it-work"><b>See it work</b></a> ·
   <a href="#how-it-works"><b>How it works</b></a> ·
@@ -245,7 +246,7 @@ Every piece, with what is real and what is simulated: [docs/STATUS.md](docs/STAT
 | R5 | Card details only in Airwallex's hosted component | Airwallex's checkout widget in Claude Desktop, 2026-11-08 |
 | R6 | The merchant order number with the outcome | The checkout id is the payment's `merchant_order_id`, with the signed receipt at `/receipt/<id>` |
 | R7 | One changed-price, unavailable or declined path, no duplicate payment | On Airwallex's path: a declined card then one payment, 2026-11-06; a price change, with the quoted price held, 2026-11-05 |
-| R8 | The video | [docs/VIDEO_RUN.md](docs/VIDEO_RUN.md) |
+| R8 | The video | [youtu.be/fGukD2h7KoE](https://youtu.be/fGukD2h7KoE) (4:12), shot by shot in [docs/VIDEO_RUN.md](docs/VIDEO_RUN.md) |
 | R9 | Airwallex's retry rules; stop if the first attempt cannot be verified | Idempotency keys ([`idempotency.py`](src/countersign/edge/idempotency.py)), a 503 to retry, and an unverifiable payment never refunded blind ([`settle.py`](src/countersign/settle.py)) |
 
 Airwallex APIs called: conversion quotes and convertible currencies ([`fx.py`](src/countersign/fx.py)), payment intents and refunds ([`payments.py`](src/countersign/payments.py), [`settle.py`](src/countersign/settle.py)), agentic commerce onboarding, config and products ([`ac_onboard.py`](scripts/ac_onboard.py), [`upload_catalog.py`](scripts/upload_catalog.py)), and the dispute simulation and challenge ([`disputes.py`](src/countersign/disputes.py)).
