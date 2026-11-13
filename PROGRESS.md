@@ -201,6 +201,7 @@ uv venv && uv pip install -e '.[dev]'
 Newest first.
 
 ### 2026-11-13
+- **Submitted** (Aeshvarya, 22:05 IST): Build Phase entry Published on HackerEarth, repo public. Judged commit tagged `submitted-2026-11-13` (`223eceb`). The old review branch's 9 Actions runs deleted (Varunika); README links the video (Varunika).
 - **Deadline settled** (Varunika): plan to Sun 2026-11-15 23:59 IST (HackerEarth's form; Airwallex's is 11:59 PM PST, later). The 11-13 18:00 IST submit was missed. Open items before Submit in Now.
 
 ### 2026-11-11
